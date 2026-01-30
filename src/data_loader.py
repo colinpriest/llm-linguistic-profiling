@@ -4,17 +4,60 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import uuid
+from concurrent.futures import ProcessPoolExecutor
 from typing import List, Optional
 
-import langid
 import numpy as np
 import pandas as pd
 
 from src.schemas import Complaint
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Language detection — fasttext (fast, C-backed) with langid fallback
+# ---------------------------------------------------------------------------
+
+_ft_model = None
+
+
+def _get_fasttext_model():
+    """Lazy-load the fasttext language-identification model."""
+    global _ft_model
+    if _ft_model is None:
+        import fasttext
+        import urllib.request
+        from pathlib import Path
+
+        model_path = Path(__file__).parent.parent / "data" / "lid.176.ftz"
+        if not model_path.exists():
+            logger.info("Downloading fasttext language-id model (once)...")
+            url = "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz"
+            model_path.parent.mkdir(parents=True, exist_ok=True)
+            urllib.request.urlretrieve(url, str(model_path))
+            logger.info("Model saved to %s", model_path)
+        # Suppress fasttext's stderr warning about "\n" in input
+        _ft_model = fasttext.load_model(str(model_path))
+    return _ft_model
+
+
+def _detect_lang_batch(texts: List[str]) -> List[str]:
+    """Detect language for a batch of texts using fasttext."""
+    model = _get_fasttext_model()
+    # fasttext expects no newlines inside a single "document"
+    cleaned = [t.replace("\n", " ") for t in texts]
+    predictions = model.predict(cleaned)
+    # predictions is (labels_list, probs_list); label looks like "__label__en"
+    return [lbl[0].replace("__label__", "") for lbl in predictions[0]]
+
+
+def _detect_lang_fallback(texts: List[str]) -> List[str]:
+    """Fallback: langid (slow, pure Python)."""
+    import langid
+    return [langid.classify(t)[0] for t in texts]
 
 # ---------------------------------------------------------------------------
 # Column mapping: CFPB name -> internal name
@@ -98,8 +141,13 @@ def load_and_clean(
     logger.info("After length filter (300-2000): %d", len(df))
 
     # Step 3: Language detection – keep English only
-    logger.info("Running language detection (this may take a while)...")
-    df["_lang"] = df["narrative"].apply(lambda t: langid.classify(t)[0])
+    n_texts = len(df)
+    try:
+        logger.info("Running language detection via fasttext on %d texts...", n_texts)
+        df["_lang"] = _detect_lang_batch(df["narrative"].tolist())
+    except Exception as e:
+        logger.warning("fasttext unavailable (%s), falling back to langid (slower)...", e)
+        df["_lang"] = _detect_lang_fallback(df["narrative"].tolist())
     df = df[df["_lang"] == "en"].copy()
     logger.info("After English filter: %d", len(df))
 
