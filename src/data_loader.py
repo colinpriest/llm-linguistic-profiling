@@ -123,32 +123,33 @@ def _pipeline_dir(data_path: str) -> Path:
     return d
 
 
-def _step_cache_path(data_path: str, step: int) -> Path:
-    return _pipeline_dir(data_path) / f"step{step}.parquet"
+def _step_cache_path(data_path: str, step: int, suffix: str = "") -> Path:
+    name = f"step{step}{suffix}.parquet"
+    return _pipeline_dir(data_path) / name
 
 
 def _csv_mtime(data_path: str) -> float:
     return Path(data_path).stat().st_mtime
 
 
-def _step_is_cached(data_path: str, step: int) -> bool:
+def _step_is_cached(data_path: str, step: int, suffix: str = "") -> bool:
     """True if step cache exists and is newer than the source CSV."""
-    path = _step_cache_path(data_path, step)
+    path = _step_cache_path(data_path, step, suffix)
     if not path.exists():
         return False
     return path.stat().st_mtime >= _csv_mtime(data_path)
 
 
-def _save_step(df: pd.DataFrame, data_path: str, step: int) -> None:
+def _save_step(df: pd.DataFrame, data_path: str, step: int, suffix: str = "") -> None:
     """Persist a DataFrame as the checkpoint for *step*."""
-    path = _step_cache_path(data_path, step)
+    path = _step_cache_path(data_path, step, suffix)
     df.to_parquet(path, index=False)
     logger.info("  ✓ Clean %d cached (%d rows) → %s", step, len(df), path.name)
 
 
-def _load_step(data_path: str, step: int) -> pd.DataFrame:
+def _load_step(data_path: str, step: int, suffix: str = "") -> pd.DataFrame:
     """Load a previously cached step checkpoint."""
-    path = _step_cache_path(data_path, step)
+    path = _step_cache_path(data_path, step, suffix)
     df = pd.read_parquet(path)
     logger.info("  ✓ Clean %d loaded from cache (%d rows)", step, len(df))
     return df
@@ -264,13 +265,14 @@ def load_and_clean(
 ) -> List[Complaint]:
     """Load CFPB CSV, clean, and return sampled Complaint list.
 
-    Steps 1-6 are individually cached as parquet files in
+    All eight steps are individually cached as parquet files in
     ``data/.pipeline/``.  On re-runs, the pipeline resumes from the
     latest valid checkpoint, skipping expensive steps like language
     detection (Step 3).
 
-    Steps 7-8 (ID generation and stratified sampling) depend on the
-    random seed and are always re-run.
+    Steps 7-8 (ID generation and stratified sampling) are cached with
+    seed/sample-size suffixes so different configurations get their own
+    checkpoints.
     """
 
     # --- Find the latest valid cached step ---
@@ -295,35 +297,45 @@ def load_and_clean(
         df = step_fn(df)
         _save_step(df, data_path, step_num)
 
-    # --- Step 7: ID generation (seed-dependent, always re-run) ---
-    logger.info("[Data Clean 7/8] ID generation & date parsing (%d rows)...", len(df))
-    rng = np.random.RandomState(seed)
-    df = df.copy()
-    df["case_id"] = [
-        uuid.UUID(int=int(rng.randint(0, 2**31)) | (int(rng.randint(0, 2**31)) << 31)
-                  | (int(rng.randint(0, 2**31)) << 62) | (int(rng.randint(0, 2**31)) << 93)).hex
-        for _ in range(len(df))
-    ]
-    df["date_received"] = pd.to_datetime(df["date_received"], errors="coerce").dt.strftime("%Y-%m-%d")
-    df["year"] = pd.to_datetime(df["date_received"], errors="coerce").dt.strftime("%Y")
-
-    # Category groupings
-    df["product_category"] = df["product"].map(PRODUCT_CATEGORIES).fillna("Other")
-    df["issue_category"] = df["issue"].map(ISSUE_CATEGORIES).fillna("Other")
-
-    # --- Step 8: Stratified sampling ---
-    df["_bucket"] = df["product_category"] + "|" + df["issue_category"]
-    n = min(num_complaints, len(df))
-
-    if n < len(df):
-        logger.info("[Data Clean 8/8] Stratified sampling %d from %d complaints", n, len(df))
-        sampled = _stratified_sample(df, n, seed)
+    # --- Step 7: ID generation (seed-dependent, cached with seed suffix) ---
+    s7_suffix = f"_seed{seed}"
+    if _step_is_cached(data_path, 7, s7_suffix):
+        df = _load_step(data_path, 7, s7_suffix)
     else:
-        sampled = df.copy()
-        logger.info("[Data Clean 8/8] Using all %d complaints (fewer than requested %d)", len(df), num_complaints)
+        logger.info("[Data Clean 7/8] ID generation & date parsing (%d rows)...", len(df))
+        rng = np.random.RandomState(seed)
+        df = df.copy()
+        df["case_id"] = [
+            uuid.UUID(int=int(rng.randint(0, 2**31)) | (int(rng.randint(0, 2**31)) << 31)
+                      | (int(rng.randint(0, 2**31)) << 62) | (int(rng.randint(0, 2**31)) << 93)).hex
+            for _ in range(len(df))
+        ]
+        df["date_received"] = pd.to_datetime(df["date_received"], errors="coerce").dt.strftime("%Y-%m-%d")
+        df["year"] = pd.to_datetime(df["date_received"], errors="coerce").dt.strftime("%Y")
 
-    # Drop temp columns
-    sampled = sampled.drop(columns=[c for c in sampled.columns if c.startswith("_")], errors="ignore")
+        # Category groupings
+        df["product_category"] = df["product"].map(PRODUCT_CATEGORIES).fillna("Other")
+        df["issue_category"] = df["issue"].map(ISSUE_CATEGORIES).fillna("Other")
+        _save_step(df, data_path, 7, s7_suffix)
+
+    # --- Step 8: Stratified sampling (seed + sample-size dependent) ---
+    s8_suffix = f"_seed{seed}_n{num_complaints}"
+    if _step_is_cached(data_path, 8, s8_suffix):
+        sampled = _load_step(data_path, 8, s8_suffix)
+    else:
+        df["_bucket"] = df["product_category"] + "|" + df["issue_category"]
+        n = min(num_complaints, len(df))
+
+        if n < len(df):
+            logger.info("[Data Clean 8/8] Stratified sampling %d from %d complaints", n, len(df))
+            sampled = _stratified_sample(df, n, seed)
+        else:
+            sampled = df.copy()
+            logger.info("[Data Clean 8/8] Using all %d complaints (fewer than requested %d)", len(df), num_complaints)
+
+        # Drop temp columns
+        sampled = sampled.drop(columns=[c for c in sampled.columns if c.startswith("_")], errors="ignore")
+        _save_step(sampled, data_path, 8, s8_suffix)
 
     # Convert to Complaint objects
     complaints = [

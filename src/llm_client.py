@@ -67,7 +67,10 @@ class LLMClient:
                 is_reasoning = request.model.startswith(_REASONING_PREFIXES)
                 kwargs: Dict[str, Any] = {}
                 if is_reasoning:
-                    kwargs["max_completion_tokens"] = self.config.max_tokens
+                    # Reasoning models use internal reasoning tokens from the
+                    # same budget, so we need a much larger ceiling to leave
+                    # room for the actual JSON output.
+                    kwargs["max_completion_tokens"] = max(self.config.max_tokens, 16_000)
                 else:
                     kwargs["max_tokens"] = self.config.max_tokens
                     kwargs["temperature"] = self.config.temperature
@@ -121,6 +124,14 @@ class LLMClient:
 
             except Exception as e:
                 latency_ms = int((time.perf_counter() - t0) * 1000)
+                err_str = str(e).lower()
+                # Token-limit truncation is non-retryable — the same
+                # prompt will hit the same limit every time.
+                if "max_tokens" in err_str or "length limit" in err_str or "incomplete" in err_str:
+                    raise RuntimeError(
+                        f"Fatal: output truncated by token limit for model "
+                        f"{request.model!r} on {request.task}: {e}"
+                    ) from e
                 if attempt < MAX_ATTEMPTS:
                     logger.debug(
                         "Attempt %d failed for %s (%s): %s. Retrying...",
