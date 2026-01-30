@@ -105,7 +105,7 @@ class Experiment:
             api_key=api_key,
             models=self.models,
             temperature=0.0,
-            max_tokens=1000,
+            max_tokens=4096,
             timeout=60,
             max_retries=3,
             retry_delay=1.0,

@@ -127,11 +127,38 @@ class LLMClient:
                 err_str = str(e).lower()
                 # Token-limit truncation is non-retryable — the same
                 # prompt will hit the same limit every time.
-                if "max_tokens" in err_str or "length limit" in err_str or "incomplete" in err_str:
-                    raise RuntimeError(
-                        f"Fatal: output truncated by token limit for model "
-                        f"{request.model!r} on {request.task}: {e}"
-                    ) from e
+                is_token_limit = (
+                    "max_tokens" in err_str
+                    or "length limit" in err_str
+                    or "incomplete" in err_str
+                )
+                if is_token_limit:
+                    is_reasoning = request.model.startswith(_REASONING_PREFIXES)
+                    if is_reasoning:
+                        # For reasoning models this is systematic (budget
+                        # consumed by reasoning tokens) — abort the batch.
+                        raise RuntimeError(
+                            f"Fatal: output truncated by token limit for model "
+                            f"{request.model!r} on {request.task}: {e}"
+                        ) from e
+                    # For standard models it's likely an outlier input —
+                    # log a warning and fail just this request.
+                    logger.warning(
+                        "Token limit hit for %s (%s/%s): skipping. %s",
+                        request.case_id, request.model, request.task, e,
+                    )
+                    self._record_failure(request.task)
+                    return LLMResponse(
+                        request_id=request.request_id,
+                        case_id=request.case_id,
+                        model=request.model,
+                        task=request.task,
+                        success=False,
+                        error_message=f"Token limit exceeded: {e}",
+                        latency_ms=latency_ms,
+                        timestamp=datetime.now(),
+                        attempt_number=attempt,
+                    )
                 if attempt < MAX_ATTEMPTS:
                     logger.debug(
                         "Attempt %d failed for %s (%s): %s. Retrying...",
