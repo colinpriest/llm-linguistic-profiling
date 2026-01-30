@@ -17,6 +17,7 @@ env/
 # Data (too large for git)
 data/complaints.csv
 data/lid.176.ftz
+data/.pipeline/
 
 # Cache (regenerable)
 cache/

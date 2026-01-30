@@ -38,8 +38,8 @@ def parse_args() -> argparse.Namespace:
         help="Clear all cached LLM responses before run",
     )
     parser.add_argument(
-        "--models", nargs="+", default=["gpt-4o-mini", "gpt-5.2-mini"],
-        help='Models to test (default: ["gpt-4o-mini", "gpt-5.2-mini"])',
+        "--models", nargs="+", default=["gpt-4o-mini", "gpt-5-mini"],
+        help='Models to test (default: ["gpt-4o-mini", "gpt-5-mini"])',
     )
     parser.add_argument(
         "--threads", type=int, default=100,
@@ -80,6 +80,11 @@ def setup_logging(output_dir: str, verbose: bool) -> None:
 
     root = logging.getLogger()
     root.setLevel(logging.DEBUG if verbose else logging.INFO)
+
+    # Silence noisy third-party loggers
+    logging.getLogger("openai").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     # Console handler: INFO+
     console = logging.StreamHandler(sys.stdout)

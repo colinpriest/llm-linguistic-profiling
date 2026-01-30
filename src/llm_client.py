@@ -101,7 +101,7 @@ class LLMClient:
             except (JSONExtractionError, JSONParseError, SchemaValidationError) as e:
                 latency_ms = int((time.perf_counter() - t0) * 1000)
                 if attempt < MAX_ATTEMPTS:
-                    logger.warning(
+                    logger.debug(
                         "Attempt %d failed for %s (%s): %s. Retrying...",
                         attempt, request.case_id, request.task, e,
                     )
@@ -109,6 +109,10 @@ class LLMClient:
                     continue
                 else:
                     self._record_failure(request.task)
+                    logger.error(
+                        "All %d attempts failed for %s (%s): %s",
+                        MAX_ATTEMPTS, request.case_id, request.task, e,
+                    )
                     return LLMResponse(
                         request_id=request.request_id,
                         case_id=request.case_id,
@@ -129,7 +133,7 @@ class LLMClient:
             except Exception as e:
                 latency_ms = int((time.perf_counter() - t0) * 1000)
                 if attempt < MAX_ATTEMPTS:
-                    logger.warning(
+                    logger.debug(
                         "API error on attempt %d for %s (%s): %s. Retrying...",
                         attempt, request.case_id, request.task, e,
                     )
@@ -137,6 +141,10 @@ class LLMClient:
                     continue
                 else:
                     self._record_failure(request.task)
+                    logger.error(
+                        "All %d attempts failed for %s (%s): %s",
+                        MAX_ATTEMPTS, request.case_id, request.task, e,
+                    )
                     return LLMResponse(
                         request_id=request.request_id,
                         case_id=request.case_id,

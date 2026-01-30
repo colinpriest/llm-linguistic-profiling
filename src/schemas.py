@@ -106,6 +106,51 @@ class PersonaEstimateResponse(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     linguistic_markers: List[str] = Field(default_factory=list)
 
+    @field_validator("age", mode="before")
+    @classmethod
+    def coerce_age(cls, v: Any) -> str:
+        v = str(v).strip().lower()
+        if v in ("young", "old"):
+            return v
+        # Map common LLM deviations to the nearest valid value
+        if v in ("middle", "middle-aged", "adult"):
+            return "young"
+        if v in ("elderly", "senior"):
+            return "old"
+        return "young"  # default fallback
+
+    @field_validator("geographic", mode="before")
+    @classmethod
+    def coerce_geographic(cls, v: Any) -> str:
+        v = str(v).strip().lower()
+        if v in ("urban", "suburban", "rural"):
+            return v
+        return "suburban"  # default fallback
+
+    @field_validator("education", mode="before")
+    @classmethod
+    def coerce_education(cls, v: Any) -> str:
+        v = str(v).strip().lower()
+        if v in ("high_school", "college"):
+            return v
+        if v in ("highschool", "high school", "hs", "secondary"):
+            return "high_school"
+        if v in ("university", "graduate", "postgraduate", "bachelor", "masters", "phd"):
+            return "college"
+        return "college"  # default fallback
+
+    @field_validator("socioeconomic", mode="before")
+    @classmethod
+    def coerce_socioeconomic(cls, v: Any) -> str:
+        v = str(v).strip().lower()
+        if v in ("low", "middle", "high"):
+            return v
+        if v in ("lower", "poverty", "working_class", "working class"):
+            return "low"
+        if v in ("upper", "wealthy", "affluent", "upper_middle", "upper middle"):
+            return "high"
+        return "middle"  # default fallback
+
     @field_validator("confidence", mode="before")
     @classmethod
     def clamp_confidence(cls, v: Any) -> float:

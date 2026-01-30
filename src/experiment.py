@@ -89,7 +89,7 @@ class Experiment:
         self.num_complaints = num_complaints
         self.causal_sample_pct = causal_sample_pct
         self.materiality_threshold = materiality_threshold
-        self.models = models or ["gpt-4o-mini", "gpt-5.2-mini"]
+        self.models = models or ["gpt-4o-mini", "gpt-5-mini"]
         self.threads = threads
         self.seed = seed
         self.skip_steps = skip_steps or set()

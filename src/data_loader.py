@@ -1,14 +1,19 @@
-"""CFPB data ingestion, cleaning, and sampling."""
+"""CFPB data ingestion, cleaning, and sampling.
+
+The cleaning pipeline (Steps 1-6) is split into individually cached stages.
+Each step saves a parquet checkpoint in ``data/.pipeline/``.  On subsequent
+runs, completed steps are skipped by loading the most recent valid checkpoint.
+Steps 7-8 (ID generation and sampling) are seed-dependent and always re-run.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import re
 import uuid
-from concurrent.futures import ProcessPoolExecutor
-from typing import List, Optional
+from pathlib import Path
+from typing import List
 
 import numpy as np
 import pandas as pd
@@ -30,7 +35,6 @@ def _get_fasttext_model():
     if _ft_model is None:
         import fasttext
         import urllib.request
-        from pathlib import Path
 
         model_path = Path(__file__).parent.parent / "data" / "lid.176.ftz"
         if not model_path.exists():
@@ -39,7 +43,6 @@ def _get_fasttext_model():
             model_path.parent.mkdir(parents=True, exist_ok=True)
             urllib.request.urlretrieve(url, str(model_path))
             logger.info("Model saved to %s", model_path)
-        # Suppress fasttext's stderr warning about "\n" in input
         _ft_model = fasttext.load_model(str(model_path))
     return _ft_model
 
@@ -47,10 +50,8 @@ def _get_fasttext_model():
 def _detect_lang_batch(texts: List[str]) -> List[str]:
     """Detect language for a batch of texts using fasttext."""
     model = _get_fasttext_model()
-    # fasttext expects no newlines inside a single "document"
     cleaned = [t.replace("\n", " ") for t in texts]
     predictions = model.predict(cleaned)
-    # predictions is (labels_list, probs_list); label looks like "__label__en"
     return [lbl[0].replace("__label__", "") for lbl in predictions[0]]
 
 
@@ -58,6 +59,7 @@ def _detect_lang_fallback(texts: List[str]) -> List[str]:
     """Fallback: langid (slow, pure Python)."""
     import langid
     return [langid.classify(t)[0] for t in texts]
+
 
 # ---------------------------------------------------------------------------
 # Column mapping: CFPB name -> internal name
@@ -110,14 +112,55 @@ ISSUE_CATEGORIES = {
 }
 
 
-def load_and_clean(
-    data_path: str,
-    num_complaints: int = 5000,
-    seed: int = 42,
-) -> List[Complaint]:
-    """Load CFPB CSV, clean, and return sampled Complaint list."""
+# ---------------------------------------------------------------------------
+# Pipeline cache helpers
+# ---------------------------------------------------------------------------
 
-    logger.info("Loading data from %s", data_path)
+def _pipeline_dir(data_path: str) -> Path:
+    """Return the directory used for step-level caches."""
+    d = Path(data_path).parent / ".pipeline"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _step_cache_path(data_path: str, step: int) -> Path:
+    return _pipeline_dir(data_path) / f"step{step}.parquet"
+
+
+def _csv_mtime(data_path: str) -> float:
+    return Path(data_path).stat().st_mtime
+
+
+def _step_is_cached(data_path: str, step: int) -> bool:
+    """True if step cache exists and is newer than the source CSV."""
+    path = _step_cache_path(data_path, step)
+    if not path.exists():
+        return False
+    return path.stat().st_mtime >= _csv_mtime(data_path)
+
+
+def _save_step(df: pd.DataFrame, data_path: str, step: int) -> None:
+    """Persist a DataFrame as the checkpoint for *step*."""
+    path = _step_cache_path(data_path, step)
+    df.to_parquet(path, index=False)
+    logger.info("  ✓ Step %d cached (%d rows) → %s", step, len(df), path.name)
+
+
+def _load_step(data_path: str, step: int) -> pd.DataFrame:
+    """Load a previously cached step checkpoint."""
+    path = _step_cache_path(data_path, step)
+    df = pd.read_parquet(path)
+    logger.info("  ✓ Step %d loaded from cache (%d rows)", step, len(df))
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Individual pipeline steps (1-6: deterministic and cacheable)
+# ---------------------------------------------------------------------------
+
+def _step_0_load(data_path: str) -> pd.DataFrame:
+    """Load raw CSV and drop rows without narrative."""
+    logger.info("[Step 0] Loading raw CSV...")
     df = pd.read_csv(
         data_path,
         usecols=list(COLUMN_MAP.keys()),
@@ -125,56 +168,141 @@ def load_and_clean(
         low_memory=False,
     )
     df.rename(columns=COLUMN_MAP, inplace=True)
-    initial = len(df)
-    logger.info("Loaded %d raw records", initial)
-
-    # Drop rows without narrative
+    logger.info("  Loaded %d raw records", len(df))
     df = df.dropna(subset=["narrative"])
-    logger.info("After dropping null narratives: %d", len(df))
+    logger.info("  After dropping null narratives: %d", len(df))
+    return df
 
-    # Step 1: Whitespace normalisation
+
+def _step_1_whitespace(df: pd.DataFrame) -> pd.DataFrame:
+    """Step 1: Whitespace normalisation."""
+    logger.info("[Step 1] Whitespace normalisation (%d rows)...", len(df))
+    df = df.copy()
     df["narrative"] = df["narrative"].apply(lambda t: re.sub(r"\s+", " ", str(t)).strip())
+    return df
 
-    # Step 2: Length filter (300-2000 chars)
-    df["_len"] = df["narrative"].str.len()
-    df = df[(df["_len"] >= 300) & (df["_len"] <= 2000)].copy()
-    logger.info("After length filter (300-2000): %d", len(df))
 
-    # Step 3: Language detection – keep English only
-    n_texts = len(df)
+def _step_2_length(df: pd.DataFrame) -> pd.DataFrame:
+    """Step 2: Length filter 300-2000 characters."""
+    logger.info("[Step 2] Length filter (%d rows)...", len(df))
+    lengths = df["narrative"].str.len()
+    df = df[(lengths >= 300) & (lengths <= 2000)].copy()
+    logger.info("  After length filter: %d", len(df))
+    return df
+
+
+def _step_3_language(df: pd.DataFrame) -> pd.DataFrame:
+    """Step 3: Language detection – keep English only."""
+    n = len(df)
+    logger.info("[Step 3] Language detection (%d texts)...", n)
     try:
-        logger.info("Running language detection via fasttext on %d texts...", n_texts)
+        df = df.copy()
         df["_lang"] = _detect_lang_batch(df["narrative"].tolist())
     except Exception as e:
-        logger.warning("fasttext unavailable (%s), falling back to langid (slower)...", e)
+        logger.warning("  fasttext unavailable (%s), falling back to langid...", e)
+        df = df.copy()
         df["_lang"] = _detect_lang_fallback(df["narrative"].tolist())
-    df = df[df["_lang"] == "en"].copy()
-    logger.info("After English filter: %d", len(df))
+    df = df[df["_lang"] == "en"].drop(columns=["_lang"]).copy()
+    logger.info("  After English filter: %d", len(df))
+    return df
 
-    # Step 4: ASCII ratio filter >= 0.85
+
+def _step_4_ascii(df: pd.DataFrame) -> pd.DataFrame:
+    """Step 4: ASCII ratio filter >= 0.85."""
+    logger.info("[Step 4] ASCII ratio filter (%d rows)...", len(df))
+
     def ascii_ratio(text: str) -> float:
         if not text:
             return 0.0
-        ascii_chars = sum(1 for c in text if ord(c) < 128)
-        return ascii_chars / len(text)
+        return sum(1 for c in text if ord(c) < 128) / len(text)
 
-    df["_ascii"] = df["narrative"].apply(ascii_ratio)
-    df = df[df["_ascii"] >= 0.85].copy()
-    logger.info("After ASCII ratio filter: %d", len(df))
+    ratios = df["narrative"].apply(ascii_ratio)
+    df = df[ratios >= 0.85].copy()
+    logger.info("  After ASCII filter: %d", len(df))
+    return df
 
-    # Step 5: Null handling for product / issue
+
+def _step_5_nulls(df: pd.DataFrame) -> pd.DataFrame:
+    """Step 5: Fill missing product / issue with 'Unknown'."""
+    logger.info("[Step 5] Null handling (%d rows)...", len(df))
+    df = df.copy()
     df["product"] = df["product"].fillna("Unknown")
     df["issue"] = df["issue"].fillna("Unknown")
+    return df
 
-    # Step 6: Deduplication by Blake2b hash of narrative
-    df["_hash"] = df["narrative"].apply(
+
+def _step_6_dedup(df: pd.DataFrame) -> pd.DataFrame:
+    """Step 6: Deduplication by Blake2b hash of narrative."""
+    logger.info("[Step 6] Deduplication (%d rows)...", len(df))
+    hashes = df["narrative"].apply(
         lambda t: hashlib.blake2b(t.encode(), digest_size=16).hexdigest()
     )
-    df = df.drop_duplicates(subset=["_hash"], keep="first")
-    logger.info("After deduplication: %d", len(df))
+    df = df[~hashes.duplicated(keep="first")].copy()
+    logger.info("  After deduplication: %d", len(df))
+    return df
 
-    # Step 7: ID generation
-    df["case_id"] = [uuid.uuid4().hex for _ in range(len(df))]
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+# Steps 1-6 in order, each taking and returning a DataFrame
+_CLEANING_STEPS = [
+    (1, _step_1_whitespace),
+    (2, _step_2_length),
+    (3, _step_3_language),
+    (4, _step_4_ascii),
+    (5, _step_5_nulls),
+    (6, _step_6_dedup),
+]
+
+
+def load_and_clean(
+    data_path: str,
+    num_complaints: int = 5000,
+    seed: int = 42,
+) -> List[Complaint]:
+    """Load CFPB CSV, clean, and return sampled Complaint list.
+
+    Steps 1-6 are individually cached as parquet files in
+    ``data/.pipeline/``.  On re-runs, the pipeline resumes from the
+    latest valid checkpoint, skipping expensive steps like language
+    detection (Step 3).
+
+    Steps 7-8 (ID generation and stratified sampling) depend on the
+    random seed and are always re-run.
+    """
+
+    # --- Find the latest valid cached step ---
+    resume_from = 0  # 0 = must start from raw CSV
+    for step_num, _ in _CLEANING_STEPS:
+        if _step_is_cached(data_path, step_num):
+            resume_from = step_num
+        else:
+            break
+
+    # --- Load starting point ---
+    if resume_from > 0:
+        logger.info("Pipeline: resuming from cached Step %d", resume_from)
+        df = _load_step(data_path, resume_from)
+    else:
+        df = _step_0_load(data_path)
+
+    # --- Run remaining steps, caching each ---
+    for step_num, step_fn in _CLEANING_STEPS:
+        if step_num <= resume_from:
+            continue
+        df = step_fn(df)
+        _save_step(df, data_path, step_num)
+
+    # --- Step 7: ID generation (seed-dependent, always re-run) ---
+    logger.info("[Step 7] ID generation & date parsing (%d rows)...", len(df))
+    rng = np.random.RandomState(seed)
+    df = df.copy()
+    df["case_id"] = [
+        uuid.UUID(int=int(rng.randint(0, 2**63)) | (int(rng.randint(0, 2**63)) << 63)).hex
+        for _ in range(len(df))
+    ]
     df["date_received"] = pd.to_datetime(df["date_received"], errors="coerce").dt.strftime("%Y-%m-%d")
     df["year"] = pd.to_datetime(df["date_received"], errors="coerce").dt.strftime("%Y")
 
@@ -182,16 +310,16 @@ def load_and_clean(
     df["product_category"] = df["product"].map(PRODUCT_CATEGORIES).fillna("Other")
     df["issue_category"] = df["issue"].map(ISSUE_CATEGORIES).fillna("Other")
 
-    # Step 8: Stratified sampling
+    # --- Step 8: Stratified sampling ---
     df["_bucket"] = df["product_category"] + "|" + df["issue_category"]
     n = min(num_complaints, len(df))
 
     if n < len(df):
-        logger.info("Stratified sampling %d from %d complaints", n, len(df))
+        logger.info("[Step 8] Stratified sampling %d from %d complaints", n, len(df))
         sampled = _stratified_sample(df, n, seed)
     else:
         sampled = df.copy()
-        logger.info("Using all %d complaints (fewer than requested %d)", len(df), num_complaints)
+        logger.info("[Step 8] Using all %d complaints (fewer than requested %d)", len(df), num_complaints)
 
     # Drop temp columns
     sampled = sampled.drop(columns=[c for c in sampled.columns if c.startswith("_")], errors="ignore")
@@ -213,8 +341,8 @@ def load_and_clean(
     ]
 
     logger.info(
-        "Data pipeline complete: %d → %d complaints (%.1f%% retained)",
-        initial, len(complaints), 100 * len(complaints) / initial,
+        "Data pipeline complete: %d cleaned → %d sampled complaints",
+        len(df), len(complaints),
     )
     return complaints
 

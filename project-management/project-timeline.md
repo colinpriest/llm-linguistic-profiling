@@ -6,7 +6,7 @@
 
 **February 1-2 (Weekend): Infrastructure Setup**
 
-* Set up API access for both GPT-4o-mini and GPT-5.2-mini
+* Set up API access for both GPT-4o-mini and GPT-5-mini
 * Design prompt templates for all 7 steps
 * Create demographic persona definitions (36 combinations)
 * Test API rate limits and cost estimation

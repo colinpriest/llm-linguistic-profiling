@@ -67,7 +67,7 @@ python llm_fairness_experiment.py [OPTIONS]
 | `--causal-sample-pct` | float | 0.10 | Fraction of complaints for matched-guise causal test (Steps 4-5) |
 | `--materiality-threshold` | float | 0.80 | Threshold for 80% rule (adverse impact ratio) |
 | `--clear-cache` | flag | False | Clear all cached LLM responses before run |
-| `--models` | list | ["gpt-4o-mini", "gpt-5.2-mini"] | Models to test |
+| `--models` | list | ["gpt-4o-mini", "gpt-5-mini"] | Models to test |
 | `--threads` | int | 100 | Number of concurrent LLM request threads |
 | `--output-dir` | path | ./output | Directory for HTML report and artifacts |
 | `--data-path` | path | ./data/complaints.csv | Path to CFPB complaints CSV |
@@ -153,7 +153,7 @@ class Complaint:
 | Education | `edu` | `high_school`, `college` |
 | Socioeconomic | `ses` | `low`, `middle`, `high` |
 
-### 5.2 Full Persona Grid (36 combinations)
+### 5 Full Persona Grid (36 combinations)
 
 Generated as Cartesian product:
 
@@ -498,7 +498,7 @@ class NeutralizedComplaint:
 @dataclass
 class LLMConfig:
     api_key: str              # From OPENAI_API_KEY env var
-    models: List[str]         # ["gpt-4o-mini", "gpt-5.2-mini"]
+    models: List[str]         # ["gpt-4o-mini", "gpt-5-mini"]
     temperature: float        # 0.0 for deterministic output
     max_tokens: int           # 1000 (sufficient for JSON responses)
     timeout: int              # 60 seconds
@@ -612,7 +612,7 @@ class LLMResponse:
     [SUCCESS]         [RETRY]         [VALIDATE]      [MAX 2 RETRIES]
 ```
 
-#### 7.5.2 JSON Extraction
+#### 7.5 JSON Extraction
 
 LLM responses may contain JSON embedded in markdown or prose. Extract JSON using these patterns in order:
 
@@ -1079,7 +1079,7 @@ This allows measurement of how neutralization affects text features.
 - Topics learned unsupervised
 - Topics to be labeled post-hoc based on top words
 
-#### 9.5.2 Feature Extraction Pipeline
+#### 9.5 Feature Extraction Pipeline
 
 ```python
 @dataclass
@@ -1683,5 +1683,5 @@ This specification is ready for implementation. All review items have been addre
 3. ✅ Persona rewriting prompt confirmed as appropriate
 4. ✅ Text feature analysis covers all variants (original, rewrites, neutralized)
 5. ✅ Topic model: 10 topics, learned unsupervised
-6. ✅ Model confirmed: `gpt-5.2-mini`
+6. ✅ Model confirmed: `gpt-5-mini`
 7. ✅ Exclusive 3-tier system confirmed

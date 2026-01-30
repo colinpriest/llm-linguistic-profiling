@@ -75,7 +75,7 @@ python llm_fairness_experiment.py --models gpt-4o-mini --verbose
 | `--causal-sample-pct` | 0.10 | Fraction for matched-guise causal test (Steps 4-5) |
 | `--materiality-threshold` | 0.80 | Threshold for adverse impact ratio (80% rule) |
 | `--clear-cache` | false | Clear all cached LLM responses before run |
-| `--models` | gpt-4o-mini gpt-5.2-mini | Models to test |
+| `--models` | gpt-4o-mini gpt-5-mini | Models to test |
 | `--threads` | 100 | Concurrent LLM request threads |
 | `--output-dir` | ./output | Directory for report and artifacts |
 | `--data-path` | ./data/complaints.csv | Path to CFPB CSV |
