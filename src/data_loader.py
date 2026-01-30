@@ -300,7 +300,8 @@ def load_and_clean(
     rng = np.random.RandomState(seed)
     df = df.copy()
     df["case_id"] = [
-        uuid.UUID(int=int(rng.randint(0, 2**63)) | (int(rng.randint(0, 2**63)) << 63)).hex
+        uuid.UUID(int=int(rng.randint(0, 2**31)) | (int(rng.randint(0, 2**31)) << 31)
+                  | (int(rng.randint(0, 2**31)) << 62) | (int(rng.randint(0, 2**31)) << 93)).hex
         for _ in range(len(df))
     ]
     df["date_received"] = pd.to_datetime(df["date_received"], errors="coerce").dt.strftime("%Y-%m-%d")
