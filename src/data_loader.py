@@ -143,14 +143,14 @@ def _save_step(df: pd.DataFrame, data_path: str, step: int) -> None:
     """Persist a DataFrame as the checkpoint for *step*."""
     path = _step_cache_path(data_path, step)
     df.to_parquet(path, index=False)
-    logger.info("  ✓ Step %d cached (%d rows) → %s", step, len(df), path.name)
+    logger.info("  ✓ Clean %d cached (%d rows) → %s", step, len(df), path.name)
 
 
 def _load_step(data_path: str, step: int) -> pd.DataFrame:
     """Load a previously cached step checkpoint."""
     path = _step_cache_path(data_path, step)
     df = pd.read_parquet(path)
-    logger.info("  ✓ Step %d loaded from cache (%d rows)", step, len(df))
+    logger.info("  ✓ Clean %d loaded from cache (%d rows)", step, len(df))
     return df
 
 
@@ -160,7 +160,7 @@ def _load_step(data_path: str, step: int) -> pd.DataFrame:
 
 def _step_0_load(data_path: str) -> pd.DataFrame:
     """Load raw CSV and drop rows without narrative."""
-    logger.info("[Step 0] Loading raw CSV...")
+    logger.info("[Data Clean] Loading raw CSV...")
     df = pd.read_csv(
         data_path,
         usecols=list(COLUMN_MAP.keys()),
@@ -176,7 +176,7 @@ def _step_0_load(data_path: str) -> pd.DataFrame:
 
 def _step_1_whitespace(df: pd.DataFrame) -> pd.DataFrame:
     """Step 1: Whitespace normalisation."""
-    logger.info("[Step 1] Whitespace normalisation (%d rows)...", len(df))
+    logger.info("[Data Clean 1/8] Whitespace normalisation (%d rows)...", len(df))
     df = df.copy()
     df["narrative"] = df["narrative"].apply(lambda t: re.sub(r"\s+", " ", str(t)).strip())
     return df
@@ -184,7 +184,7 @@ def _step_1_whitespace(df: pd.DataFrame) -> pd.DataFrame:
 
 def _step_2_length(df: pd.DataFrame) -> pd.DataFrame:
     """Step 2: Length filter 300-2000 characters."""
-    logger.info("[Step 2] Length filter (%d rows)...", len(df))
+    logger.info("[Data Clean 2/8] Length filter (%d rows)...", len(df))
     lengths = df["narrative"].str.len()
     df = df[(lengths >= 300) & (lengths <= 2000)].copy()
     logger.info("  After length filter: %d", len(df))
@@ -194,7 +194,7 @@ def _step_2_length(df: pd.DataFrame) -> pd.DataFrame:
 def _step_3_language(df: pd.DataFrame) -> pd.DataFrame:
     """Step 3: Language detection – keep English only."""
     n = len(df)
-    logger.info("[Step 3] Language detection (%d texts)...", n)
+    logger.info("[Data Clean 3/8] Language detection (%d texts)...", n)
     try:
         df = df.copy()
         df["_lang"] = _detect_lang_batch(df["narrative"].tolist())
@@ -209,7 +209,7 @@ def _step_3_language(df: pd.DataFrame) -> pd.DataFrame:
 
 def _step_4_ascii(df: pd.DataFrame) -> pd.DataFrame:
     """Step 4: ASCII ratio filter >= 0.85."""
-    logger.info("[Step 4] ASCII ratio filter (%d rows)...", len(df))
+    logger.info("[Data Clean 4/8] ASCII ratio filter (%d rows)...", len(df))
 
     def ascii_ratio(text: str) -> float:
         if not text:
@@ -224,7 +224,7 @@ def _step_4_ascii(df: pd.DataFrame) -> pd.DataFrame:
 
 def _step_5_nulls(df: pd.DataFrame) -> pd.DataFrame:
     """Step 5: Fill missing product / issue with 'Unknown'."""
-    logger.info("[Step 5] Null handling (%d rows)...", len(df))
+    logger.info("[Data Clean 5/8] Null handling (%d rows)...", len(df))
     df = df.copy()
     df["product"] = df["product"].fillna("Unknown")
     df["issue"] = df["issue"].fillna("Unknown")
@@ -233,7 +233,7 @@ def _step_5_nulls(df: pd.DataFrame) -> pd.DataFrame:
 
 def _step_6_dedup(df: pd.DataFrame) -> pd.DataFrame:
     """Step 6: Deduplication by Blake2b hash of narrative."""
-    logger.info("[Step 6] Deduplication (%d rows)...", len(df))
+    logger.info("[Data Clean 6/8] Deduplication (%d rows)...", len(df))
     hashes = df["narrative"].apply(
         lambda t: hashlib.blake2b(t.encode(), digest_size=16).hexdigest()
     )
@@ -283,7 +283,7 @@ def load_and_clean(
 
     # --- Load starting point ---
     if resume_from > 0:
-        logger.info("Pipeline: resuming from cached Step %d", resume_from)
+        logger.info("Data pipeline: resuming from cached clean step %d/8", resume_from)
         df = _load_step(data_path, resume_from)
     else:
         df = _step_0_load(data_path)
@@ -296,7 +296,7 @@ def load_and_clean(
         _save_step(df, data_path, step_num)
 
     # --- Step 7: ID generation (seed-dependent, always re-run) ---
-    logger.info("[Step 7] ID generation & date parsing (%d rows)...", len(df))
+    logger.info("[Data Clean 7/8] ID generation & date parsing (%d rows)...", len(df))
     rng = np.random.RandomState(seed)
     df = df.copy()
     df["case_id"] = [
@@ -315,11 +315,11 @@ def load_and_clean(
     n = min(num_complaints, len(df))
 
     if n < len(df):
-        logger.info("[Step 8] Stratified sampling %d from %d complaints", n, len(df))
+        logger.info("[Data Clean 8/8] Stratified sampling %d from %d complaints", n, len(df))
         sampled = _stratified_sample(df, n, seed)
     else:
         sampled = df.copy()
-        logger.info("[Step 8] Using all %d complaints (fewer than requested %d)", len(df), num_complaints)
+        logger.info("[Data Clean 8/8] Using all %d complaints (fewer than requested %d)", len(df), num_complaints)
 
     # Drop temp columns
     sampled = sampled.drop(columns=[c for c in sampled.columns if c.startswith("_")], errors="ignore")
