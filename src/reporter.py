@@ -18,7 +18,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import seaborn as sns  # noqa: E402
 
-from src.schemas import Complaint, PERSONA_LABELS
+from src.schemas import Complaint, ESTIMATE_DIMS, CAUSAL_DIMS, PERSONA_LABELS
 
 logger = logging.getLogger(__name__)
 
@@ -110,11 +110,13 @@ def _chart_persona_distribution(complaints: List[Complaint], analysis_results: D
     if not rates:
         return ""
 
-    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+    n_dims = len(ESTIMATE_DIMS)
+    n_cols = 3
+    n_rows = (n_dims + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, 4 * n_rows))
     fig.suptitle("Persona Distribution (Estimated)", fontsize=14, fontweight="bold")
 
-    dims = ["age", "geographic", "education", "socioeconomic"]
-    for ax, dim in zip(axes.flat, dims):
+    for ax, dim in zip(axes.flat, ESTIMATE_DIMS):
         dim_rates = rates.get(dim, {})
         if dim_rates:
             labels = list(dim_rates.keys())
@@ -125,6 +127,10 @@ def _chart_persona_distribution(complaints: List[Complaint], analysis_results: D
         else:
             ax.text(0.5, 0.5, "No data", ha="center", va="center")
             ax.set_title(dim.capitalize())
+
+    # Hide unused axes
+    for ax in axes.flat[len(ESTIMATE_DIMS):]:
+        ax.set_visible(False)
 
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     return _fig_to_base64(fig)
@@ -142,13 +148,13 @@ def _chart_tier_by_persona(analysis_results: Dict[str, Any]) -> str:
     if not rates_dim:
         return ""
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    n_dims = len(ESTIMATE_DIMS)
+    n_cols = 3
+    n_rows = (n_dims + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(14, 4 * n_rows))
     fig.suptitle("Favorable Outcome Rate by Demographic Dimension", fontsize=14, fontweight="bold")
 
-    dims = ["age", "geographic", "education", "socioeconomic"]
-    tier_colors = ["#e74c3c", "#f39c12", "#2ecc71"]
-
-    for ax, dim in zip(axes.flat, dims):
+    for ax, dim in zip(axes.flat, ESTIMATE_DIMS):
         dim_data = rates_dim.get(dim, {})
         if dim_data:
             cats = list(dim_data.keys())
@@ -166,6 +172,10 @@ def _chart_tier_by_persona(analysis_results: Dict[str, Any]) -> str:
         else:
             ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
             ax.set_title(dim.capitalize())
+
+    # Hide unused axes
+    for ax in axes.flat[len(ESTIMATE_DIMS):]:
+        ax.set_visible(False)
 
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     return _fig_to_base64(fig)
@@ -305,12 +315,14 @@ def _chart_info_request_rate(analysis_results: Dict[str, Any], model: str) -> st
     if not info_rates:
         return ""
 
-    dims = ["age", "geographic", "education", "socioeconomic"]
-    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+    n_dims = len(ESTIMATE_DIMS)
+    n_cols = 3
+    n_rows = (n_dims + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, 4 * n_rows))
     fig.suptitle(f"Information Request Rate by Dimension ({model})", fontsize=14, fontweight="bold")
     palette = sns.color_palette("Set2", 6)
 
-    for ax, dim in zip(axes.flat, dims):
+    for ax, dim in zip(axes.flat, ESTIMATE_DIMS):
         rates = info_rates.get(dim, {})
         if rates:
             cats = list(rates.keys())
@@ -326,6 +338,10 @@ def _chart_info_request_rate(analysis_results: Dict[str, Any], model: str) -> st
         else:
             ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
             ax.set_title(dim.capitalize())
+
+    # Hide unused axes
+    for ax in axes.flat[len(ESTIMATE_DIMS):]:
+        ax.set_visible(False)
 
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     return _fig_to_base64(fig)
@@ -568,7 +584,7 @@ def _get_dimension_flags(model_res: Dict[str, Any], threshold: float = 0.80) -> 
     air_data = corr.get("air_by_persona", {})
     rows = []
 
-    for dim in ["age", "geographic", "education", "socioeconomic"]:
+    for dim in ESTIMATE_DIMS:
         chi2_info = corr.get(f"{dim}_chi2", {})
         p_val = chi2_info.get("p_value")
         cramers_v = chi2_info.get("cramers_v")
@@ -930,6 +946,33 @@ def _build_tab_executive_summary(
                 parts.append(f'<div class="metric-card"><div class="value">{_pct(proc_vr)}</div><div class="label">Process Variance Reduction</div></div>')
             parts.append("</div></div></div>")
 
+    # GPT-5.2 Commentary sections
+    # Step 3 cross-model commentary
+    step3_commentary = analysis_results.get("step3_commentary")
+    if step3_commentary:
+        parts.append('<div class="collapsible">')
+        parts.append('<div class="collapsible-header">GPT-5.2 Step 3 Cross-Model Commentary</div>')
+        parts.append('<div class="collapsible-body">')
+        parts.append(f'<p>{html.escape(step3_commentary)}</p>')
+        parts.append("</div></div>")
+
+    # Per-model GPT commentary (tier bias + process bias)
+    for model in models:
+        model_res = analysis_results.get(model, {})
+        gpt_commentary = model_res.get("gpt_commentary")
+        if gpt_commentary:
+            parts.append(f'<div class="collapsible">')
+            parts.append(f'<div class="collapsible-header">GPT-5.2 Commentary: {html.escape(model)} (Tier Bias &amp; Process Bias)</div>')
+            parts.append('<div class="collapsible-body">')
+            # Split paragraphs for display
+            for para in gpt_commentary.split("\n\n"):
+                para = para.strip()
+                if para:
+                    parts.append(f'<p>{html.escape(para)}</p>')
+            if not gpt_commentary.strip():
+                parts.append(f'<p>{html.escape(gpt_commentary)}</p>')
+            parts.append("</div></div>")
+
     # Color key
     parts.append('<div class="note">')
     parts.append("<strong>Traffic Light Key:</strong> ")
@@ -984,7 +1027,7 @@ def _build_tab_disparate_impact(
         parts.append('<th>p-value <span class="sort-arrow">&#8597;</span></th>')
         parts.append('<th>Cramer\'s V <span class="sort-arrow">&#8597;</span></th>')
         parts.append("</tr></thead><tbody>")
-        for dim in ["age", "geographic", "education", "socioeconomic"]:
+        for dim in ESTIMATE_DIMS:
             d = corr.get(f"{dim}_chi2", {})
             parts.append(f'<tr><td>{dim.capitalize()}</td>')
             parts.append(f'<td data-sort-value="{d.get("chi2", 0)}">{_fmt(d.get("chi2"))}</td>')
@@ -1173,7 +1216,7 @@ def _build_tab_process_discrimination(
             parts.append('<th>Category <span class="sort-arrow">&#8597;</span></th>')
             parts.append('<th>Info Request Rate <span class="sort-arrow">&#8597;</span></th>')
             parts.append("</tr></thead><tbody>")
-            for dim in ["age", "geographic", "education", "socioeconomic"]:
+            for dim in ESTIMATE_DIMS:
                 dim_rates = info_rates.get(dim, {})
                 for cat, rate in sorted(dim_rates.items()):
                     parts.append(f'<tr><td>{dim.capitalize()}</td><td>{html.escape(cat)}</td>')
@@ -1223,7 +1266,7 @@ def _build_tab_process_discrimination(
             parts.append("</tbody></table>")
 
         # ANOVA results
-        for dim in ["age", "geographic", "education", "socioeconomic"]:
+        for dim in ESTIMATE_DIMS:
             anova = info_content.get(f"length_anova_{dim}", {})
             if anova:
                 parts.append(f'<p class="muted">ANOVA ({dim}): F = {_fmt(anova.get("f_statistic"))}, p = {_fmt(anova.get("p_value"))}</p>')
@@ -1401,7 +1444,7 @@ def _build_tab_model_comparison(
     parts.append('<div class="collapsible-header">Per-Dimension Assessment Comparison</div>')
     parts.append('<div class="collapsible-body">')
 
-    for dim in ["age", "geographic", "education", "socioeconomic"]:
+    for dim in ESTIMATE_DIMS:
         parts.append(f"<h4>{dim.capitalize()}</h4>")
         parts.append("<table><thead><tr><th>Model</th><th>Chi2</th><th>p-value</th><th>Cramer's V</th></tr></thead><tbody>")
         for model in models:

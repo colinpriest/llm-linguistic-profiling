@@ -18,6 +18,14 @@ AGE_VALUES = ["young", "old"]
 GEO_VALUES = ["urban", "suburban", "rural"]
 EDU_VALUES = ["high_school", "college"]
 SES_VALUES = ["low", "middle", "high"]
+GENDER_VALUES = ["male", "female"]
+ESL_VALUES = ["native", "esl"]
+
+# Dimensions used in persona estimation (6 dimensions including gender and ESL)
+ESTIMATE_DIMS = ["age", "geographic", "education", "socioeconomic", "gender", "esl"]
+
+# Dimensions used in causal rewrites (4 dimensions, excluding gender and ESL)
+CAUSAL_DIMS = ["age", "geographic", "education", "socioeconomic"]
 
 
 def generate_persona_grid() -> List[Dict[str, str]]:
@@ -103,6 +111,8 @@ class PersonaEstimateResponse(BaseModel):
     geographic: Literal["urban", "suburban", "rural"]
     education: Literal["high_school", "college"]
     socioeconomic: Literal["low", "middle", "high"]
+    gender: Literal["male", "female"]
+    esl: Literal["native", "esl"]
     confidence: float = Field(ge=0.0, le=1.0)
     linguistic_markers: List[str] = Field(default_factory=list)
 
@@ -112,7 +122,6 @@ class PersonaEstimateResponse(BaseModel):
         v = str(v).strip().lower()
         if v in ("young", "old"):
             return v
-        # Map common LLM deviations to the nearest valid value
         if v in ("middle", "middle-aged", "adult"):
             return "young"
         if v in ("elderly", "senior"):
@@ -150,6 +159,30 @@ class PersonaEstimateResponse(BaseModel):
         if v in ("upper", "wealthy", "affluent", "upper_middle", "upper middle"):
             return "high"
         return "middle"  # default fallback
+
+    @field_validator("gender", mode="before")
+    @classmethod
+    def coerce_gender(cls, v: Any) -> str:
+        v = str(v).strip().lower()
+        if v in ("male", "female"):
+            return v
+        if v in ("man", "boy", "m"):
+            return "male"
+        if v in ("woman", "girl", "f"):
+            return "female"
+        return "male"  # default fallback
+
+    @field_validator("esl", mode="before")
+    @classmethod
+    def coerce_esl(cls, v: Any) -> str:
+        v = str(v).strip().lower()
+        if v in ("native", "esl"):
+            return v
+        if v in ("native_speaker", "native speaker", "l1", "first_language", "no"):
+            return "native"
+        if v in ("non-native", "non_native", "l2", "second_language", "yes"):
+            return "esl"
+        return "native"  # default fallback
 
     @field_validator("confidence", mode="before")
     @classmethod
@@ -205,6 +238,8 @@ class PersonaEstimate:
     geographic: str
     education: str
     socioeconomic: str
+    gender: str
+    esl: str
     confidence: float
     linguistic_markers: List[str]
     persona_label: str

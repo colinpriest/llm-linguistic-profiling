@@ -85,9 +85,25 @@ class LLMClient:
     # Single request (with retry)
     # ------------------------------------------------------------------
 
-    def _call_once(self, request: LLMRequest) -> LLMResponse:
-        """Execute a single LLM request with instructor-managed validation."""
-        MAX_ATTEMPTS = self.config.max_retries  # 3
+    def _call_once(
+        self,
+        request: LLMRequest,
+        timeout_override: Optional[int] = None,
+        max_attempts: Optional[int] = None,
+    ) -> LLMResponse:
+        """Execute a single LLM request with instructor-managed validation.
+
+        Parameters
+        ----------
+        timeout_override : int, optional
+            Per-request timeout in seconds, overriding ``config.timeout``.
+        max_attempts : int, optional
+            Override the number of retry attempts (default: ``config.max_retries``).
+            Use ``max_attempts=1`` for escalated-timeout retries to avoid
+            compounding the timeout (e.g. 3 attempts × 240s = 720s).
+        """
+        MAX_ATTEMPTS = max_attempts if max_attempts is not None else self.config.max_retries
+        effective_timeout = timeout_override or self.config.timeout
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             t0 = time.perf_counter()
@@ -109,7 +125,7 @@ class LLMClient:
                     model=request.model,
                     response_model=request.expected_schema,
                     max_retries=0,  # we handle retries ourselves
-                    timeout=self.config.timeout,
+                    timeout=effective_timeout,
                     messages=[
                         {"role": "system", "content": request.prompt_system},
                         {"role": "user", "content": request.prompt_user},
@@ -198,7 +214,7 @@ class LLMClient:
                     continue
                 else:
                     self._record_failure(request.task)
-                    logger.error(
+                    logger.debug(
                         "All %d attempts failed for %s (%s): %s",
                         MAX_ATTEMPTS, request.case_id, request.task, e,
                     )
@@ -210,7 +226,11 @@ class LLMClient:
                         success=False,
                         response_raw=None,
                         response_parsed=None,
-                        error_message=f"Failed after {MAX_ATTEMPTS} attempts: {e}",
+                        error_message=(
+                            f"Failed after {MAX_ATTEMPTS} attempts "
+                            f"(prompt_len={len(request.prompt_user)} chars, "
+                            f"timeout={effective_timeout}s): {e}"
+                        ),
                         latency_ms=latency_ms,
                         tokens_prompt=0,
                         tokens_completion=0,
@@ -235,7 +255,13 @@ class LLMClient:
     # Cached single call
     # ------------------------------------------------------------------
 
-    def call_with_cache(self, request: LLMRequest, narrative: str) -> LLMResponse:
+    def call_with_cache(
+        self,
+        request: LLMRequest,
+        narrative: str,
+        timeout_override: Optional[int] = None,
+        max_attempts: Optional[int] = None,
+    ) -> LLMResponse:
         """Check cache first; on miss call LLM and cache the result."""
         cached = self.cache.get(request.model, request.task, narrative)
         if cached is not None:
@@ -256,7 +282,7 @@ class LLMClient:
             except Exception:
                 pass  # Cache entry invalid; fall through to API call
 
-        response = self._call_once(request)
+        response = self._call_once(request, timeout_override=timeout_override, max_attempts=max_attempts)
 
         if response.success and response.response_parsed is not None:
             self.cache.put(

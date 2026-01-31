@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
 
+from src.schemas import ESTIMATE_DIMS
+
 logger = logging.getLogger(__name__)
 
 
@@ -186,14 +188,21 @@ def logistic_regression_analysis(
 def correlation_analysis(
     decisions_df: pd.DataFrame,
     personas_df: pd.DataFrame,
+    dims: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Run full correlation analysis between personas and remedy decisions.
 
     Parameters
     ----------
     decisions_df : DataFrame with columns [case_id, model, tier, confidence]
-    personas_df  : DataFrame with columns [case_id, model, age, geographic, education, socioeconomic, persona_label]
+    personas_df  : DataFrame with columns [case_id, model, age, geographic, education, socioeconomic, gender, esl, persona_label]
+    dims : List of persona dimensions to analyze (default: ESTIMATE_DIMS)
     """
+    if dims is None:
+        dims = ESTIMATE_DIMS
+    # Filter to dims that actually exist in the personas_df
+    available_dims = [d for d in dims if d in personas_df.columns]
+
     merged = decisions_df.merge(personas_df, on=["case_id", "model"], how="inner", suffixes=("", "_persona"))
     results: Dict[str, Any] = {}
 
@@ -203,7 +212,7 @@ def correlation_analysis(
         results["overall_chi2"] = chi_squared_test(ct)
 
     # 2. Per-dimension association
-    for dim in ["age", "geographic", "education", "socioeconomic"]:
+    for dim in available_dims:
         ct_dim = pd.crosstab(merged[dim], merged["tier"])
         if ct_dim.shape[0] > 1 and ct_dim.shape[1] > 1:
             results[f"{dim}_chi2"] = chi_squared_test(ct_dim)
@@ -211,14 +220,14 @@ def correlation_analysis(
     # 3. Logistic regression: favorable (tier >= 1) ~ demographics
     merged["favorable"] = (merged["tier"] >= 1).astype(int)
     results["logistic_favorable"] = logistic_regression_analysis(
-        merged, "favorable", ["age", "geographic", "education", "socioeconomic"]
+        merged, "favorable", available_dims
     )
 
     # 4. Adverse impact ratios by persona
     results["air_by_persona"] = _compute_air_by_persona(merged)
 
     # 5. Per-dimension favorable rates
-    results["rates_by_dimension"] = _rates_by_dimension(merged)
+    results["rates_by_dimension"] = _rates_by_dimension(merged, available_dims)
 
     return results
 
@@ -240,11 +249,14 @@ def _compute_air_by_persona(df: pd.DataFrame) -> Dict[str, Any]:
     return air_dict
 
 
-def _rates_by_dimension(df: pd.DataFrame) -> Dict[str, Dict[str, float]]:
+def _rates_by_dimension(df: pd.DataFrame, dims: Optional[List[str]] = None) -> Dict[str, Dict[str, float]]:
     """Favorable outcome rates grouped by each demographic dimension."""
+    if dims is None:
+        dims = ESTIMATE_DIMS
     result = {}
-    for dim in ["age", "geographic", "education", "socioeconomic"]:
-        result[dim] = df.groupby(dim)["favorable"].mean().to_dict()
+    for dim in dims:
+        if dim in df.columns:
+            result[dim] = df.groupby(dim)["favorable"].mean().to_dict()
     return result
 
 

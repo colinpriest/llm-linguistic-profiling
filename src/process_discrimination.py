@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
 
+from src.schemas import ESTIMATE_DIMS
 from src.statistics import (
     adverse_impact_ratio,
     bootstrap_ci,
@@ -64,14 +65,20 @@ def information_request_rate(decisions: pd.DataFrame) -> float:
 def process_correlation_analysis(
     decisions_df: pd.DataFrame,
     personas_df: pd.DataFrame,
+    dims: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Assess correlation between persona and information request burden.
 
     Parameters
     ----------
     decisions_df : DataFrame [case_id, model, tier, confidence, information_needed]
-    personas_df  : DataFrame [case_id, model, age, geographic, education, socioeconomic, persona_label]
+    personas_df  : DataFrame [case_id, model, age, geographic, education, socioeconomic, gender, esl, persona_label]
+    dims : List of persona dimensions to analyze (default: ESTIMATE_DIMS)
     """
+    if dims is None:
+        dims = ESTIMATE_DIMS
+    available_dims = [d for d in dims if d in personas_df.columns]
+
     merged = decisions_df.merge(personas_df, on=["case_id", "model"], how="inner", suffixes=("", "_persona"))
     merged["need_info"] = (merged["confidence"] == "need_more_info").astype(int)
     results: Dict[str, Any] = {}
@@ -82,14 +89,14 @@ def process_correlation_analysis(
         results["overall_chi2"] = chi_squared_test(ct)
 
     # 2. Per-dimension
-    for dim in ["age", "geographic", "education", "socioeconomic"]:
+    for dim in available_dims:
         ct_dim = pd.crosstab(merged[dim], merged["need_info"])
         if ct_dim.shape[0] > 1 and ct_dim.shape[1] > 1:
             results[f"{dim}_chi2"] = chi_squared_test(ct_dim)
 
     # 3. Logistic regression
     results["logistic_need_info"] = logistic_regression_analysis(
-        merged, "need_info", ["age", "geographic", "education", "socioeconomic"]
+        merged, "need_info", available_dims
     )
 
     # 4. Process AIR by persona
@@ -109,7 +116,8 @@ def process_correlation_analysis(
     # 5. Per-dimension info request rates
     results["info_rates_by_dimension"] = {
         dim: merged.groupby(dim)["need_info"].mean().to_dict()
-        for dim in ["age", "geographic", "education", "socioeconomic"]
+        for dim in available_dims
+        if dim in merged.columns
     }
 
     return results
@@ -316,7 +324,7 @@ def info_request_content_analysis(
         )
 
         # ANOVA on request length by persona dimension
-        for dim in ["age", "geographic", "education", "socioeconomic"]:
+        for dim in ESTIMATE_DIMS:
             groups = [
                 g["request_length"].values
                 for _, g in need_info.groupby(dim)

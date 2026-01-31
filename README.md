@@ -137,7 +137,7 @@ The experiment produces:
 
 ## Data Pipeline
 
-The cleaning pipeline processes the raw CFPB data through 9 sequential steps:
+The cleaning pipeline processes the raw CFPB data through 10 sequential steps:
 
 1. Whitespace normalization
 2. Length filter (300-1500 characters)
@@ -145,9 +145,10 @@ The cleaning pipeline processes the raw CFPB data through 9 sequential steps:
 4. ASCII ratio filter (>= 85%)
 5. Null handling (fill missing product/issue with "Unknown")
 6. Deduplication (Blake2b hash)
-7. ID generation (UUID4, year extraction)
-8. Category assignment + exclusion of non-bank category pairs (see [Excluded Category Pairs](#excluded-category-pairs))
-9. Stratified sampling by product/issue category
+7. Repetition filter (unique-word ratio >= 20%)
+8. Redaction filter (X characters < 20% of text)
+9. ID generation (UUID4, year extraction) + category assignment + exclusion of non-bank category pairs (see [Excluded Category Pairs](#excluded-category-pairs))
+10. Stratified sampling by product/issue category
 
 ## Statistical Methods
 

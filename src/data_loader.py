@@ -185,7 +185,7 @@ def _step_0_load(data_path: str) -> pd.DataFrame:
 
 def _step_1_whitespace(df: pd.DataFrame) -> pd.DataFrame:
     """Step 1: Whitespace normalisation."""
-    logger.info("[Data Clean 1/8] Whitespace normalisation (%d rows)...", len(df))
+    logger.info("[Data Clean 1/10] Whitespace normalisation (%d rows)...", len(df))
     df = df.copy()
     df["narrative"] = df["narrative"].apply(lambda t: re.sub(r"\s+", " ", str(t)).strip())
     return df
@@ -193,7 +193,7 @@ def _step_1_whitespace(df: pd.DataFrame) -> pd.DataFrame:
 
 def _step_2_length(df: pd.DataFrame) -> pd.DataFrame:
     """Step 2: Length filter 300-1500 characters."""
-    logger.info("[Data Clean 2/8] Length filter (%d rows)...", len(df))
+    logger.info("[Data Clean 2/10] Length filter (%d rows)...", len(df))
     lengths = df["narrative"].str.len()
     df = df[(lengths >= 300) & (lengths <= 1500)].copy()
     logger.info("  After length filter: %d", len(df))
@@ -203,7 +203,7 @@ def _step_2_length(df: pd.DataFrame) -> pd.DataFrame:
 def _step_3_language(df: pd.DataFrame) -> pd.DataFrame:
     """Step 3: Language detection – keep English only."""
     n = len(df)
-    logger.info("[Data Clean 3/8] Language detection (%d texts)...", n)
+    logger.info("[Data Clean 3/10] Language detection (%d texts)...", n)
     try:
         df = df.copy()
         df["_lang"] = _detect_lang_batch(df["narrative"].tolist())
@@ -218,7 +218,7 @@ def _step_3_language(df: pd.DataFrame) -> pd.DataFrame:
 
 def _step_4_ascii(df: pd.DataFrame) -> pd.DataFrame:
     """Step 4: ASCII ratio filter >= 0.85."""
-    logger.info("[Data Clean 4/8] ASCII ratio filter (%d rows)...", len(df))
+    logger.info("[Data Clean 4/10] ASCII ratio filter (%d rows)...", len(df))
 
     def ascii_ratio(text: str) -> float:
         if not text:
@@ -233,7 +233,7 @@ def _step_4_ascii(df: pd.DataFrame) -> pd.DataFrame:
 
 def _step_5_nulls(df: pd.DataFrame) -> pd.DataFrame:
     """Step 5: Fill missing product / issue with 'Unknown'."""
-    logger.info("[Data Clean 5/8] Null handling (%d rows)...", len(df))
+    logger.info("[Data Clean 5/10] Null handling (%d rows)...", len(df))
     df = df.copy()
     df["product"] = df["product"].fillna("Unknown")
     df["issue"] = df["issue"].fillna("Unknown")
@@ -242,7 +242,7 @@ def _step_5_nulls(df: pd.DataFrame) -> pd.DataFrame:
 
 def _step_6_dedup(df: pd.DataFrame) -> pd.DataFrame:
     """Step 6: Deduplication by Blake2b hash of narrative."""
-    logger.info("[Data Clean 6/8] Deduplication (%d rows)...", len(df))
+    logger.info("[Data Clean 6/10] Deduplication (%d rows)...", len(df))
     hashes = df["narrative"].apply(
         lambda t: hashlib.blake2b(t.encode(), digest_size=16).hexdigest()
     )
@@ -265,10 +265,27 @@ def _step_6b_repetition(df: pd.DataFrame) -> pd.DataFrame:
     Complaints like 'Account Name: XXXX' repeated hundreds of times have
     very low unique-word ratios and cause token-limit failures downstream.
     """
-    logger.info("[Data Clean 6b/8] Repetition filter (%d rows)...", len(df))
+    logger.info("[Data Clean 7/10] Repetition filter (%d rows)...", len(df))
     ratios = df["narrative"].apply(_unique_word_ratio)
     df = df[ratios >= 0.20].copy()
     logger.info("  After repetition filter: %d", len(df))
+    return df
+
+
+def _step_6c_redaction(df: pd.DataFrame) -> pd.DataFrame:
+    """Step 6c: Filter narratives where redaction markers dominate.
+
+    The CFPB replaces personal information with 'XXXX' sequences. Some
+    complaints are mostly redacted text, causing the LLM to reproduce
+    thousands of X characters in its output and hit token limits.
+    """
+    MAX_X_RATIO = 0.20
+    logger.info("[Data Clean 8/10] Redaction ratio filter (%d rows)...", len(df))
+    x_ratios = df["narrative"].apply(
+        lambda t: t.count("X") / len(t) if len(t) > 0 else 0.0
+    )
+    df = df[x_ratios < MAX_X_RATIO].copy()
+    logger.info("  After redaction filter (X < %d%%): %d", int(MAX_X_RATIO * 100), len(df))
     return df
 
 
@@ -276,7 +293,7 @@ def _step_6b_repetition(df: pd.DataFrame) -> pd.DataFrame:
 # Main entry point
 # ---------------------------------------------------------------------------
 
-# Steps 1-6b in order, each taking and returning a DataFrame
+# Steps 1-6c in order, each taking and returning a DataFrame
 _CLEANING_STEPS = [
     (1, _step_1_whitespace),
     (2, _step_2_length),
@@ -285,6 +302,7 @@ _CLEANING_STEPS = [
     (5, _step_5_nulls),
     (6, _step_6_dedup),
     (7, _step_6b_repetition),
+    (8, _step_6c_redaction),
 ]
 
 
@@ -295,12 +313,12 @@ def load_and_clean(
 ) -> List[Complaint]:
     """Load CFPB CSV, clean, and return sampled Complaint list.
 
-    All eight steps are individually cached as parquet files in
+    All cleaning steps are individually cached as parquet files in
     ``data/.pipeline/``.  On re-runs, the pipeline resumes from the
     latest valid checkpoint, skipping expensive steps like language
     detection (Step 3).
 
-    Steps 8-9 (ID generation and stratified sampling) are cached with
+    Steps 9-10 (ID generation and stratified sampling) are cached with
     seed/sample-size suffixes so different configurations get their own
     checkpoints.
     """
@@ -315,7 +333,7 @@ def load_and_clean(
 
     # --- Load starting point ---
     if resume_from > 0:
-        logger.info("Data pipeline: resuming from cached clean step %d/9", resume_from)
+        logger.info("Data pipeline: resuming from cached clean step %d/10", resume_from)
         df = _load_step(data_path, resume_from)
     else:
         df = _step_0_load(data_path)
@@ -327,12 +345,12 @@ def load_and_clean(
         df = step_fn(df)
         _save_step(df, data_path, step_num)
 
-    # --- Step 8: ID generation (seed-dependent, cached with seed suffix) ---
-    s8_suffix = f"_seed{seed}"
-    if _step_is_cached(data_path, 8, s8_suffix):
-        df = _load_step(data_path, 8, s8_suffix)
+    # --- Step 9: ID generation (seed-dependent, cached with seed suffix) ---
+    s9_suffix = f"_seed{seed}"
+    if _step_is_cached(data_path, 9, s9_suffix):
+        df = _load_step(data_path, 9, s9_suffix)
     else:
-        logger.info("[Data Clean 8/9] ID generation & date parsing (%d rows)...", len(df))
+        logger.info("[Data Clean 9/10] ID generation & date parsing (%d rows)...", len(df))
         rng = np.random.RandomState(seed)
         df = df.copy()
         df["case_id"] = [
@@ -359,26 +377,26 @@ def load_and_clean(
                 excluded, sorted(EXCLUDED_CATEGORY_PAIRS),
             )
 
-        _save_step(df, data_path, 8, s8_suffix)
+        _save_step(df, data_path, 9, s9_suffix)
 
-    # --- Step 9: Stratified sampling (seed + sample-size dependent) ---
-    s9_suffix = f"_seed{seed}_n{num_complaints}"
-    if _step_is_cached(data_path, 9, s9_suffix):
-        sampled = _load_step(data_path, 9, s9_suffix)
+    # --- Step 10: Stratified sampling (seed + sample-size dependent) ---
+    s10_suffix = f"_seed{seed}_n{num_complaints}"
+    if _step_is_cached(data_path, 10, s10_suffix):
+        sampled = _load_step(data_path, 10, s10_suffix)
     else:
         df["_bucket"] = df["product_category"] + "|" + df["issue_category"]
         n = min(num_complaints, len(df))
 
         if n < len(df):
-            logger.info("[Data Clean 9/9] Stratified sampling %d from %d complaints", n, len(df))
+            logger.info("[Data Clean 10/10] Stratified sampling %d from %d complaints", n, len(df))
             sampled = _stratified_sample(df, n, seed)
         else:
             sampled = df.copy()
-            logger.info("[Data Clean 9/9] Using all %d complaints (fewer than requested %d)", len(df), num_complaints)
+            logger.info("[Data Clean 10/10] Using all %d complaints (fewer than requested %d)", len(df), num_complaints)
 
         # Drop temp columns
         sampled = sampled.drop(columns=[c for c in sampled.columns if c.startswith("_")], errors="ignore")
-        _save_step(sampled, data_path, 9, s9_suffix)
+        _save_step(sampled, data_path, 10, s10_suffix)
 
     # Convert to Complaint objects
     complaints = [

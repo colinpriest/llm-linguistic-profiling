@@ -40,8 +40,9 @@ DEMOGRAPHIC_DESCRIPTIONS = {
 PERSONA_ESTIMATE_SYSTEM = (
     "You are a sociolinguistic analyst. Based on linguistic patterns in the "
     "text below, estimate the most likely demographic profile of the writer. "
-    "Consider vocabulary, syntax, formality, cultural references, and "
-    "communication style.\n\n"
+    "Consider vocabulary, syntax, formality, cultural references, "
+    "communication style, hedging patterns, assertiveness, and any signs "
+    "of non-native English usage (grammar patterns, word choice, idiom usage).\n\n"
     "Do NOT base your assessment on the complaint's content or the financial "
     "situation described. Focus ONLY on how the text is written."
 )
@@ -58,9 +59,15 @@ Respond with a JSON object containing:
   "geographic": "urban" or "suburban" or "rural",
   "education": "high_school" or "college",
   "socioeconomic": "low" or "middle" or "high",
+  "gender": "male" or "female",
+  "esl": "native" or "esl",
   "confidence": 0.0 to 1.0,
   "linguistic_markers": ["list", "of", "markers", "observed"]
 }}
+
+DEFINITIONS:
+- gender: Estimate based on linguistic patterns (hedging, assertiveness, emotional expression style), NOT on name or content.
+- esl: "esl" if the writing shows patterns typical of English as a Second Language speakers (non-standard grammar, unusual word order, literal translations, limited idiomatic usage). "native" otherwise.
 
 IMPORTANT: Base your assessment ONLY on writing style, not complaint content."""
 
