@@ -44,23 +44,28 @@ class LLMClient:
         self.cache = cache
         self.max_workers = max_workers
 
-        # Raw OpenAI client with explicit httpx transport to avoid
-        # connection-pool exhaustion under high concurrency.
+        # Raw OpenAI client with explicit httpx transport.
+        # IMPORTANT: retries=0 — transport-level retries silently multiply
+        # the timeout (e.g. retries=2 means 3×60s=180s per request) and are
+        # redundant because _call_once already handles retries with backoff.
         transport = httpx.HTTPTransport(
-            retries=2,
+            retries=0,
         )
         http_client = httpx.Client(
             transport=transport,
-            timeout=httpx.Timeout(config.timeout, connect=10),
+            timeout=httpx.Timeout(
+                config.timeout,
+                connect=10,
+                pool=5,  # fail fast if no connection available in pool
+            ),
             limits=httpx.Limits(
                 max_connections=max_workers + 10,
-                max_keepalive_connections=max_workers,
+                max_keepalive_connections=20,  # keep few idle connections to avoid stale sockets
             ),
         )
         raw_client = OpenAI(
             api_key=config.api_key,
             http_client=http_client,
-            timeout=config.timeout,
             max_retries=0,
         )
 
@@ -274,9 +279,10 @@ class LLMClient:
     CIRCUIT_BREAKER_THRESHOLD = 0.5
     CIRCUIT_BREAKER_WINDOW = 10
 
-    # Per-future timeout: generous enough for slow API calls + retries,
-    # short enough to unblock a stalled batch.
-    FUTURE_TIMEOUT = 180  # seconds
+    # Per-future timeout: must exceed worst-case _call_once duration.
+    # With timeout=60s, max_retries=3, backoff 1/2/4s → worst case ~195s.
+    # 300s gives ample headroom.
+    FUTURE_TIMEOUT = 300  # seconds
 
     def execute_batch(
         self,

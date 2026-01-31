@@ -243,11 +243,32 @@ def _step_6_dedup(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _unique_word_ratio(text: str) -> float:
+    """Fraction of unique words in text; degenerate repetitions → low ratio."""
+    words = text.lower().split()
+    if len(words) < 5:
+        return 1.0
+    return len(set(words)) / len(words)
+
+
+def _step_6b_repetition(df: pd.DataFrame) -> pd.DataFrame:
+    """Step 6b: Filter out degenerate repetitive narratives.
+
+    Complaints like 'Account Name: XXXX' repeated hundreds of times have
+    very low unique-word ratios and cause token-limit failures downstream.
+    """
+    logger.info("[Data Clean 6b/8] Repetition filter (%d rows)...", len(df))
+    ratios = df["narrative"].apply(_unique_word_ratio)
+    df = df[ratios >= 0.20].copy()
+    logger.info("  After repetition filter: %d", len(df))
+    return df
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
-# Steps 1-6 in order, each taking and returning a DataFrame
+# Steps 1-6b in order, each taking and returning a DataFrame
 _CLEANING_STEPS = [
     (1, _step_1_whitespace),
     (2, _step_2_length),
@@ -255,6 +276,7 @@ _CLEANING_STEPS = [
     (4, _step_4_ascii),
     (5, _step_5_nulls),
     (6, _step_6_dedup),
+    (7, _step_6b_repetition),
 ]
 
 
@@ -270,7 +292,7 @@ def load_and_clean(
     latest valid checkpoint, skipping expensive steps like language
     detection (Step 3).
 
-    Steps 7-8 (ID generation and stratified sampling) are cached with
+    Steps 8-9 (ID generation and stratified sampling) are cached with
     seed/sample-size suffixes so different configurations get their own
     checkpoints.
     """
@@ -285,7 +307,7 @@ def load_and_clean(
 
     # --- Load starting point ---
     if resume_from > 0:
-        logger.info("Data pipeline: resuming from cached clean step %d/8", resume_from)
+        logger.info("Data pipeline: resuming from cached clean step %d/9", resume_from)
         df = _load_step(data_path, resume_from)
     else:
         df = _step_0_load(data_path)
@@ -297,12 +319,12 @@ def load_and_clean(
         df = step_fn(df)
         _save_step(df, data_path, step_num)
 
-    # --- Step 7: ID generation (seed-dependent, cached with seed suffix) ---
-    s7_suffix = f"_seed{seed}"
-    if _step_is_cached(data_path, 7, s7_suffix):
-        df = _load_step(data_path, 7, s7_suffix)
+    # --- Step 8: ID generation (seed-dependent, cached with seed suffix) ---
+    s8_suffix = f"_seed{seed}"
+    if _step_is_cached(data_path, 8, s8_suffix):
+        df = _load_step(data_path, 8, s8_suffix)
     else:
-        logger.info("[Data Clean 7/8] ID generation & date parsing (%d rows)...", len(df))
+        logger.info("[Data Clean 8/9] ID generation & date parsing (%d rows)...", len(df))
         rng = np.random.RandomState(seed)
         df = df.copy()
         df["case_id"] = [
@@ -316,26 +338,26 @@ def load_and_clean(
         # Category groupings
         df["product_category"] = df["product"].map(PRODUCT_CATEGORIES).fillna("Other")
         df["issue_category"] = df["issue"].map(ISSUE_CATEGORIES).fillna("Other")
-        _save_step(df, data_path, 7, s7_suffix)
+        _save_step(df, data_path, 8, s8_suffix)
 
-    # --- Step 8: Stratified sampling (seed + sample-size dependent) ---
-    s8_suffix = f"_seed{seed}_n{num_complaints}"
-    if _step_is_cached(data_path, 8, s8_suffix):
-        sampled = _load_step(data_path, 8, s8_suffix)
+    # --- Step 9: Stratified sampling (seed + sample-size dependent) ---
+    s9_suffix = f"_seed{seed}_n{num_complaints}"
+    if _step_is_cached(data_path, 9, s9_suffix):
+        sampled = _load_step(data_path, 9, s9_suffix)
     else:
         df["_bucket"] = df["product_category"] + "|" + df["issue_category"]
         n = min(num_complaints, len(df))
 
         if n < len(df):
-            logger.info("[Data Clean 8/8] Stratified sampling %d from %d complaints", n, len(df))
+            logger.info("[Data Clean 9/9] Stratified sampling %d from %d complaints", n, len(df))
             sampled = _stratified_sample(df, n, seed)
         else:
             sampled = df.copy()
-            logger.info("[Data Clean 8/8] Using all %d complaints (fewer than requested %d)", len(df), num_complaints)
+            logger.info("[Data Clean 9/9] Using all %d complaints (fewer than requested %d)", len(df), num_complaints)
 
         # Drop temp columns
         sampled = sampled.drop(columns=[c for c in sampled.columns if c.startswith("_")], errors="ignore")
-        _save_step(sampled, data_path, 8, s8_suffix)
+        _save_step(sampled, data_path, 9, s9_suffix)
 
     # Convert to Complaint objects
     complaints = [

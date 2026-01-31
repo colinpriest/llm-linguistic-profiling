@@ -72,7 +72,7 @@ def process_correlation_analysis(
     decisions_df : DataFrame [case_id, model, tier, confidence, information_needed]
     personas_df  : DataFrame [case_id, model, age, geographic, education, socioeconomic, persona_label]
     """
-    merged = decisions_df.merge(personas_df, on=["case_id", "model"], how="inner")
+    merged = decisions_df.merge(personas_df, on=["case_id", "model"], how="inner", suffixes=("", "_persona"))
     merged["need_info"] = (merged["confidence"] == "need_more_info").astype(int)
     results: Dict[str, Any] = {}
 
@@ -244,8 +244,8 @@ def process_mitigation_analysis(
         logger.warning("Process McNemar pre/post failed: %s", e)
 
     # 2. Variance reduction by persona
-    orig_m = original_decisions.merge(personas_df, on=["case_id", "model"])
-    neut_m = neutralized_decisions.merge(personas_df, on=["case_id", "model"])
+    orig_m = original_decisions.merge(personas_df, on=["case_id", "model"], suffixes=("", "_persona"))
+    neut_m = neutralized_decisions.merge(personas_df, on=["case_id", "model"], suffixes=("", "_persona"))
     orig_m["need_info"] = (orig_m["confidence"] == "need_more_info").astype(int)
     neut_m["need_info"] = (neut_m["confidence"] == "need_more_info").astype(int)
 
@@ -292,7 +292,7 @@ def info_request_content_analysis(
     personas_df: pd.DataFrame,
 ) -> Dict[str, Any]:
     """Analyze the content of information requests by persona."""
-    merged = decisions_df.merge(personas_df, on=["case_id", "model"], how="inner")
+    merged = decisions_df.merge(personas_df, on=["case_id", "model"], how="inner", suffixes=("", "_persona"))
     need_info = merged[merged["confidence"] == "need_more_info"].copy()
 
     if len(need_info) == 0:

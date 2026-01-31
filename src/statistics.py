@@ -119,19 +119,61 @@ def logistic_regression_analysis(
     from statsmodels.tools import add_constant
 
     y = df[target_col].astype(int)
+
+    # Pre-check: target must have both 0 and 1
+    if y.nunique() < 2:
+        logger.info(
+            "Logistic regression skipped: target '%s' has only value(s) %s",
+            target_col, sorted(y.unique()),
+        )
+        return {"skipped": True, "reason": f"target has no variation (all {y.iloc[0]})"}
+
     X = pd.get_dummies(df[predictor_cols], drop_first=True, dtype=float)
     X = add_constant(X)
 
+    # Pre-check: detect quasi-complete separation
+    # If any predictor level perfectly predicts the outcome, flag it
+    separation_cols = []
+    for col in X.columns:
+        if col == "const":
+            continue
+        for level in X[col].unique():
+            subset_y = y[X[col] == level]
+            if len(subset_y) > 0 and subset_y.nunique() < 2:
+                separation_cols.append(col)
+                break
+    if separation_cols:
+        logger.info(
+            "Logistic regression: quasi-complete separation detected in %d predictor(s): %s. "
+            "Fitting with increased regularisation.",
+            len(separation_cols), separation_cols[:5],
+        )
+
     try:
-        model = sm.Logit(y, X).fit(disp=0, maxiter=100)
-        return {
-            "coefficients": model.params.to_dict(),
-            "p_values": model.pvalues.to_dict(),
-            "odds_ratios": np.exp(model.params).to_dict(),
-            "pseudo_r2": model.prsquared,
-            "aic": model.aic,
-            "converged": model.mle_retvals["converged"],
-        }
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*Perfect separation.*")
+            warnings.filterwarnings("ignore", message=".*complete separation.*")
+            if separation_cols:
+                # Use regularised (penalised) fit to handle separation
+                model = sm.Logit(y, X).fit_regularized(
+                    method="l1", alpha=0.1, disp=0, maxiter=100,
+                )
+                return {
+                    "coefficients": model.params.to_dict(),
+                    "odds_ratios": np.exp(model.params).to_dict(),
+                    "regularized": True,
+                    "separation_columns": separation_cols[:10],
+                }
+            else:
+                model = sm.Logit(y, X).fit(disp=0, maxiter=100)
+                return {
+                    "coefficients": model.params.to_dict(),
+                    "p_values": model.pvalues.to_dict(),
+                    "odds_ratios": np.exp(model.params).to_dict(),
+                    "pseudo_r2": model.prsquared,
+                    "aic": model.aic,
+                    "converged": model.mle_retvals["converged"],
+                }
     except Exception as e:
         logger.warning("Logistic regression failed: %s", e)
         return {"error": str(e)}
@@ -152,7 +194,7 @@ def correlation_analysis(
     decisions_df : DataFrame with columns [case_id, model, tier, confidence]
     personas_df  : DataFrame with columns [case_id, model, age, geographic, education, socioeconomic, persona_label]
     """
-    merged = decisions_df.merge(personas_df, on=["case_id", "model"], how="inner")
+    merged = decisions_df.merge(personas_df, on=["case_id", "model"], how="inner", suffixes=("", "_persona"))
     results: Dict[str, Any] = {}
 
     # 1. Overall association: persona_label × tier
@@ -351,8 +393,8 @@ def mitigation_analysis(
         logger.warning("McNemar pre/post failed: %s", e)
 
     # 2. Discrimination reduction – compare variance by persona
-    orig_merged = original_decisions.merge(personas_df, on=["case_id", "model"])
-    neut_merged = neutralized_decisions.merge(personas_df, on=["case_id", "model"])
+    orig_merged = original_decisions.merge(personas_df, on=["case_id", "model"], suffixes=("", "_persona"))
+    neut_merged = neutralized_decisions.merge(personas_df, on=["case_id", "model"], suffixes=("", "_persona"))
 
     orig_merged["favorable"] = (orig_merged["tier"] >= 1).astype(int)
     neut_merged["favorable"] = (neut_merged["tier"] >= 1).astype(int)
