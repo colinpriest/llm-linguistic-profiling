@@ -282,6 +282,15 @@ class LLMClient:
         desc: str = "LLM calls",
     ) -> List[LLMResponse]:
         """Execute a batch of requests concurrently using a thread pool."""
+        if len(requests) != len(narratives):
+            raise ValueError(
+                "execute_batch requires matching requests/narratives lengths: "
+                f"{len(requests)} requests vs {len(narratives)} narratives."
+            )
+        if not requests:
+            logger.info("No requests submitted for %s; skipping batch.", desc)
+            return []
+
         responses: List[Optional[LLMResponse]] = [None] * len(requests)
         completed = 0
         failed = 0
