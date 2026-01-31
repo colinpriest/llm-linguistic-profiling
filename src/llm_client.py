@@ -14,6 +14,7 @@ from datetime import datetime
 from threading import Lock
 from typing import Any, Callable, Dict, List, Optional, Type
 
+import httpx
 import instructor
 from openai import BadRequestError, OpenAI
 from pydantic import BaseModel
@@ -37,8 +38,23 @@ class LLMClient:
         self.cache = cache
         self.max_workers = max_workers
 
-        # Raw OpenAI client (used for instructor patching)
-        raw_client = OpenAI(api_key=config.api_key, timeout=config.timeout)
+        # Raw OpenAI client with explicit httpx transport to avoid
+        # connection-pool exhaustion under high concurrency.
+        transport = httpx.HTTPTransport(
+            retries=2,
+        )
+        http_client = httpx.Client(
+            transport=transport,
+            timeout=httpx.Timeout(config.timeout, connect=10),
+            limits=httpx.Limits(
+                max_connections=max_workers + 10,
+                max_keepalive_connections=max_workers,
+            ),
+        )
+        raw_client = OpenAI(
+            api_key=config.api_key,
+            http_client=http_client,
+        )
 
         # Instructor-patched client — handles JSON extraction, repair,
         # and Pydantic validation automatically.
@@ -249,6 +265,10 @@ class LLMClient:
     CIRCUIT_BREAKER_THRESHOLD = 0.5
     CIRCUIT_BREAKER_WINDOW = 10
 
+    # Per-future timeout: generous enough for slow API calls + retries,
+    # short enough to unblock a stalled batch.
+    FUTURE_TIMEOUT = 180  # seconds
+
     def execute_batch(
         self,
         requests: List[LLMRequest],
@@ -260,6 +280,9 @@ class LLMClient:
         completed = 0
         failed = 0
 
+        logger.info("Submitting %d requests (%s) with %d workers",
+                     len(requests), desc, self.max_workers)
+
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
             future_to_idx = {
                 pool.submit(self.call_with_cache, req, narr): i
@@ -269,11 +292,29 @@ class LLMClient:
                 for future in as_completed(future_to_idx):
                     idx = future_to_idx[future]
                     try:
-                        resp = future.result()
+                        resp = future.result(timeout=self.FUTURE_TIMEOUT)
                         responses[idx] = resp
                         completed += 1
                         if resp is not None and not resp.success:
                             failed += 1
+                    except TimeoutError:
+                        logger.error(
+                            "Future timed out after %ds for %s (%s)",
+                            self.FUTURE_TIMEOUT,
+                            requests[idx].case_id,
+                            requests[idx].task,
+                        )
+                        responses[idx] = LLMResponse(
+                            request_id=requests[idx].request_id,
+                            case_id=requests[idx].case_id,
+                            model=requests[idx].model,
+                            task=requests[idx].task,
+                            success=False,
+                            error_message=f"Timed out after {self.FUTURE_TIMEOUT}s",
+                            timestamp=datetime.now(),
+                        )
+                        completed += 1
+                        failed += 1
                     except RuntimeError:
                         # Fatal errors (e.g. bad model params) — cancel
                         # remaining work and propagate immediately.
