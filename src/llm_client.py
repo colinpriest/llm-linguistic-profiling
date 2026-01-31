@@ -60,6 +60,8 @@ class LLMClient:
         raw_client = OpenAI(
             api_key=config.api_key,
             http_client=http_client,
+            timeout=config.timeout,
+            max_retries=0,
         )
 
         # Instructor-patched client — handles JSON extraction, repair,
@@ -102,6 +104,7 @@ class LLMClient:
                     model=request.model,
                     response_model=request.expected_schema,
                     max_retries=0,  # we handle retries ourselves
+                    timeout=self.config.timeout,
                     messages=[
                         {"role": "system", "content": request.prompt_system},
                         {"role": "user", "content": request.prompt_user},
@@ -336,7 +339,9 @@ class LLMClient:
                         completed += cancelled
                         failed += cancelled
                         pbar.update(cancelled)
-                        break
+                        raise RuntimeError(
+                            f"Batch stalled: no futures completed within {self.FUTURE_TIMEOUT}s for '{desc}'."
+                        )
 
                     for future in done:
                         idx = future_to_idx[future]
