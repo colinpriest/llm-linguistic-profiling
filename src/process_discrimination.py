@@ -143,9 +143,17 @@ def process_causal_analysis(
             index="case_id", columns="variant", values="need_info", aggfunc="first"
         ).dropna()
         if pivot.shape[1] >= 3 and pivot.shape[0] >= 5:
-            from statsmodels.stats.contingency_tables import cochrans_q
-            result = cochrans_q(pivot.values)
-            results["cochrans_q"] = {"statistic": result.statistic, "p_value": result.pvalue}
+            # Skip if no variation (all same value) — Cochran's Q divides by zero
+            col_sums = pivot.sum(axis=0)
+            if col_sums.nunique() > 1:
+                import warnings as _w
+                from statsmodels.stats.contingency_tables import cochrans_q
+                with _w.catch_warnings():
+                    _w.filterwarnings("ignore", category=RuntimeWarning)
+                    result = cochrans_q(pivot.values)
+                    results["cochrans_q"] = {"statistic": result.statistic, "p_value": result.pvalue}
+            else:
+                logger.info("Cochran's Q skipped: no variation in need_info across persona variants")
     except Exception as e:
         logger.warning("Cochran's Q test failed: %s", e)
 

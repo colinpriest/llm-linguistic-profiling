@@ -103,7 +103,9 @@ class ResponseCache:
         return hashlib.blake2b(content.encode(), digest_size=16).hexdigest()
 
     def _path(self, task: str, key: str) -> Path:
-        return self.cache_dir / task / f"{key}.json"
+        task_dir = self.cache_dir / task
+        task_dir.mkdir(parents=True, exist_ok=True)
+        return task_dir / f"{key}.json"
 
     def _ensure_dirs(self) -> None:
         for task_dir in self.TASK_DIRS:

@@ -35,6 +35,7 @@ from src.prompts import (
 )
 from src.schemas import (
     Complaint,
+    CommentaryResponse,
     LLMConfig,
     LLMRequest,
     LLMResponse,
@@ -215,6 +216,41 @@ class Experiment:
         return self.analysis_results
 
     # ------------------------------------------------------------------
+    # Batch result validation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _check_batch_results(
+        responses: List[Any],
+        requests: List[Any],
+        step_desc: str,
+    ) -> None:
+        """Raise RuntimeError if any batch requests failed."""
+        failures = [
+            (req, resp)
+            for req, resp in zip(requests, responses)
+            if not resp.success
+        ]
+        if not failures:
+            return
+
+        # Group failures by case_id for a concise summary
+        by_case: Dict[str, List[str]] = {}
+        for req, resp in failures:
+            error = resp.error_message or "unknown error"
+            by_case.setdefault(req.case_id, []).append(error)
+
+        summary_lines = [f"{step_desc}: {len(failures)} / {len(requests)} requests failed"]
+        for case_id, errors in sorted(by_case.items()):
+            unique_errors = sorted(set(errors))
+            summary_lines.append(
+                f"  case_id={case_id}: {len(errors)} failure(s) — {'; '.join(unique_errors)}"
+            )
+        summary = "\n".join(summary_lines)
+        logger.error(summary)
+        raise RuntimeError(summary)
+
+    # ------------------------------------------------------------------
     # Step 1: Persona Estimation
     # ------------------------------------------------------------------
 
@@ -236,9 +272,9 @@ class Experiment:
                 requests.append(req)
                 narratives.append(c.narrative)
 
-            responses = self.llm.execute_batch(
-                requests, narratives, desc=f"Step 1 [{model}] Persona estimation"
-            )
+            desc = f"Step 1 [{model}] Persona estimation"
+            responses = self.llm.execute_batch(requests, narratives, desc=desc)
+            self._check_batch_results(responses, requests, desc)
 
             for resp in responses:
                 if resp.success and resp.response_parsed:
@@ -264,7 +300,8 @@ class Experiment:
             return
         df = pd.DataFrame([
             {"age": pe.age, "geographic": pe.geographic, "education": pe.education,
-             "socioeconomic": pe.socioeconomic, "confidence": pe.confidence, "model": pe.model}
+             "socioeconomic": pe.socioeconomic, "confidence": pe.confidence,
+             "model": pe.model, "persona_label": pe.persona_label}
             for pe in self.persona_estimates
         ])
         logger.info("── Step 1 Summary ──")
@@ -273,6 +310,13 @@ class Experiment:
             logger.info("  Model: %s (%d estimates)", model, len(m))
             for dim in ["age", "geographic", "education", "socioeconomic"]:
                 _log_value_counts(f"{dim} distribution", m[dim])
+            # Full persona label counts (include zeros for missing personas)
+            vc = m["persona_label"].value_counts()
+            all_personas = pd.Series(0, index=PERSONA_LABELS)
+            all_personas.update(vc)
+            all_personas = all_personas.sort_index()
+            rows = [(str(k), str(int(v))) for k, v in all_personas.items()]
+            _log_table("Full persona type counts (%d/%d present)" % (int((all_personas > 0).sum()), len(PERSONA_LABELS)), rows)
             # Confidence histogram
             bins = [0, 0.2, 0.4, 0.6, 0.8, 1.01]
             labels = ["0.0-0.2", "0.2-0.4", "0.4-0.6", "0.6-0.8", "0.8-1.0"]
@@ -302,9 +346,9 @@ class Experiment:
                 requests.append(req)
                 narratives.append(c.narrative)
 
-            responses = self.llm.execute_batch(
-                requests, narratives, desc=f"Step 2 [{model}] Baseline remedy"
-            )
+            desc = f"Step 2 [{model}] Baseline remedy"
+            responses = self.llm.execute_batch(requests, narratives, desc=desc)
+            self._check_batch_results(responses, requests, desc)
 
             for resp in responses:
                 if resp.success and resp.response_parsed:
@@ -415,11 +459,11 @@ class Experiment:
                         variant=plabel,
                     )
                     requests.append(req)
-                    narratives.append(c.narrative)
+                    narratives.append(user_prompt)
 
-            responses = self.llm.execute_batch(
-                requests, narratives, desc=f"Step 4 [{model}] Persona rewriting"
-            )
+            desc = f"Step 4 [{model}] Persona rewriting"
+            responses = self.llm.execute_batch(requests, narratives, desc=desc)
+            self._check_batch_results(responses, requests, desc)
 
             for resp, req in zip(responses, requests):
                 if resp.success and resp.response_parsed:
@@ -465,9 +509,9 @@ class Experiment:
                 requests.append(req)
                 narratives.append(rw.rewritten_narrative)
 
-            responses = self.llm.execute_batch(
-                requests, narratives, desc=f"Step 4 [{model}] Re-estimate persona on rewrites"
-            )
+            desc = f"Step 4 [{model}] Re-estimate persona on rewrites"
+            responses = self.llm.execute_batch(requests, narratives, desc=desc)
+            self._check_batch_results(responses, requests, desc)
 
             for resp, rw in zip(responses, model_rewrites):
                 if resp.success and resp.response_parsed:
@@ -524,9 +568,9 @@ class Experiment:
                 requests.append(req)
                 narratives.append(rw.rewritten_narrative)
 
-            responses = self.llm.execute_batch(
-                requests, narratives, desc=f"Step 5 [{model}] Persona remedy"
-            )
+            desc = f"Step 5 [{model}] Persona remedy"
+            responses = self.llm.execute_batch(requests, narratives, desc=desc)
+            self._check_batch_results(responses, requests, desc)
 
             for resp, req in zip(responses, requests):
                 if resp.success and resp.response_parsed:
@@ -622,18 +666,9 @@ class Experiment:
                 requests.append(req)
                 narratives.append(c.narrative)
 
-            responses = self.llm.execute_batch(
-                requests, narratives, desc=f"Step 6 [{model}] Neutralization"
-            )
-
-            failed = [r for r in responses if not r.success]
-            if failed:
-                sample = failed[0]
-                raise RuntimeError(
-                    f"Step 6 fatal: {len(failed)}/{len(requests)} neutralizations "
-                    f"failed for {model}. First failure ({sample.case_id}): "
-                    f"{sample.error_message}"
-                )
+            desc = f"Step 6 [{model}] Neutralization"
+            responses = self.llm.execute_batch(requests, narratives, desc=desc)
+            self._check_batch_results(responses, requests, desc)
 
             for resp in responses:
                 if resp.response_parsed:
@@ -677,9 +712,9 @@ class Experiment:
                 requests.append(req)
                 narratives.append(nc.neutralized_narrative)
 
-            responses = self.llm.execute_batch(
-                requests, narratives, desc=f"Step 6 [{model}] Re-estimate persona on neutralized"
-            )
+            desc = f"Step 6 [{model}] Re-estimate persona on neutralized"
+            responses = self.llm.execute_batch(requests, narratives, desc=desc)
+            self._check_batch_results(responses, requests, desc)
 
             estimates_this_model = []
             for resp in responses:
@@ -747,9 +782,9 @@ class Experiment:
                 requests.append(req)
                 narratives.append(nc.neutralized_narrative)
 
-            responses = self.llm.execute_batch(
-                requests, narratives, desc=f"Step 7 [{model}] Neutralized remedy"
-            )
+            desc = f"Step 7 [{model}] Neutralized remedy"
+            responses = self.llm.execute_batch(requests, narratives, desc=desc)
+            self._check_batch_results(responses, requests, desc)
 
             for resp in responses:
                 if resp.success and resp.response_parsed:
@@ -974,6 +1009,350 @@ class Experiment:
             results[model] = model_results
 
         self.analysis_results = results
+        self._display_analysis_results()
+
+    # ------------------------------------------------------------------
+    # Display analysis results
+    # ------------------------------------------------------------------
+
+    def _display_analysis_results(self) -> None:
+        """Print key analysis results to console."""
+        logger.info("=" * 60)
+        logger.info("ANALYSIS RESULTS")
+        logger.info("=" * 60)
+
+        for model in self.models:
+            mr = self.analysis_results.get(model, {})
+            if not mr:
+                continue
+            logger.info("━" * 50)
+            logger.info("Model: %s", model)
+            logger.info("━" * 50)
+
+            # --- Correlation (Step 3) ---
+            corr = mr.get("correlation", {})
+            if corr:
+                logger.info("── Correlation Analysis (Outcome) ──")
+                chi2 = corr.get("overall_chi2")
+                if chi2:
+                    logger.info("  Overall persona×tier: chi2=%.2f, p=%.4f, Cramer's V=%.3f",
+                                chi2["chi2"], chi2["p_value"], chi2["cramers_v"])
+                for dim in ["age", "geographic", "education", "socioeconomic"]:
+                    d_chi2 = corr.get(f"{dim}_chi2")
+                    if d_chi2:
+                        logger.info("  %s×tier: chi2=%.2f, p=%.4f, V=%.3f",
+                                    dim, d_chi2["chi2"], d_chi2["p_value"], d_chi2["cramers_v"])
+
+                # Logistic regression
+                logit = corr.get("logistic_favorable", {})
+                if logit.get("skipped"):
+                    logger.info("  Logistic regression: SKIPPED (%s)", logit.get("reason", ""))
+                elif logit.get("regularized"):
+                    logger.info("  Logistic regression: regularised (separation in %s)",
+                                logit.get("separation_columns", []))
+                    odds = logit.get("odds_ratios", {})
+                    for k, v in sorted(odds.items()):
+                        if k != "const":
+                            logger.info("    %s: OR=%.3f", k, v)
+                elif logit.get("error"):
+                    logger.info("  Logistic regression: FAILED (%s)", logit["error"])
+                elif logit.get("coefficients"):
+                    logger.info("  Logistic regression: pseudo_R2=%.4f, AIC=%.1f, converged=%s",
+                                logit.get("pseudo_r2", 0), logit.get("aic", 0), logit.get("converged"))
+                    odds = logit.get("odds_ratios", {})
+                    pvals = logit.get("p_values", {})
+                    for k in sorted(odds.keys()):
+                        if k != "const":
+                            sig = "*" if pvals.get(k, 1) < 0.05 else ""
+                            logger.info("    %s: OR=%.3f, p=%.4f %s", k, odds[k], pvals.get(k, 1), sig)
+
+                # Rates by dimension
+                rates = corr.get("rates_by_dimension", {})
+                if rates:
+                    logger.info("  Favorable outcome rates by dimension:")
+                    for dim, dim_rates in sorted(rates.items()):
+                        parts = [f"{k}={v:.3f}" for k, v in sorted(dim_rates.items())]
+                        logger.info("    %s: %s", dim, ", ".join(parts))
+
+            # --- Process Correlation ---
+            pcorr = mr.get("process_correlation", {})
+            if pcorr:
+                logger.info("── Correlation Analysis (Process) ──")
+                chi2 = pcorr.get("overall_chi2")
+                if chi2:
+                    logger.info("  Overall persona×need_info: chi2=%.2f, p=%.4f, V=%.3f",
+                                chi2["chi2"], chi2["p_value"], chi2["cramers_v"])
+                info_rates = pcorr.get("info_rates_by_dimension", {})
+                if info_rates:
+                    logger.info("  Info request rates by dimension:")
+                    for dim, dim_rates in sorted(info_rates.items()):
+                        parts = [f"{k}={v:.3f}" for k, v in sorted(dim_rates.items())]
+                        logger.info("    %s: %s", dim, ", ".join(parts))
+
+            # --- Causal (Step 5) ---
+            causal = mr.get("causal", {})
+            if causal:
+                logger.info("── Causal Analysis (Outcome) ──")
+                rates = causal.get("rates_by_persona", {})
+                if rates:
+                    sorted_rates = sorted(rates.items(), key=lambda x: x[1])
+                    logger.info("  Favorable rates: lowest=%s (%.3f), highest=%s (%.3f)",
+                                sorted_rates[0][0], sorted_rates[0][1],
+                                sorted_rates[-1][0], sorted_rates[-1][1])
+                    logger.info("  Spread: %.3f", sorted_rates[-1][1] - sorted_rates[0][1])
+                friedman = causal.get("friedman")
+                if friedman:
+                    logger.info("  Friedman test: stat=%.2f, p=%.4f", friedman["statistic"], friedman["p_value"])
+                # Significant pairwise McNemar
+                mcnemar_pairs = causal.get("pairwise_mcnemar", [])
+                sig_pairs = [p for p in mcnemar_pairs if p.get("significant")]
+                logger.info("  Pairwise McNemar: %d/%d significant (FDR-adjusted p<0.05)",
+                            len(sig_pairs), len(mcnemar_pairs))
+
+            # --- Process Causal ---
+            pcausal = mr.get("process_causal", {})
+            if pcausal:
+                logger.info("── Causal Analysis (Process) ──")
+                info_rates = pcausal.get("info_rates_by_persona", {})
+                if info_rates:
+                    sorted_rates = sorted(info_rates.items(), key=lambda x: x[1])
+                    logger.info("  Need-info rates: lowest=%s (%.3f), highest=%s (%.3f)",
+                                sorted_rates[0][0], sorted_rates[0][1],
+                                sorted_rates[-1][0], sorted_rates[-1][1])
+                cochran = pcausal.get("cochrans_q")
+                if cochran:
+                    logger.info("  Cochran's Q: stat=%.2f, p=%.4f", cochran["statistic"], cochran["p_value"])
+
+            # --- Mitigation (Step 7) ---
+            mitigation = mr.get("mitigation", {})
+            if mitigation:
+                logger.info("── Mitigation Analysis (Outcome) ──")
+                mcnemar_pp = mitigation.get("mcnemar_pre_post")
+                if mcnemar_pp:
+                    logger.info("  McNemar pre/post: stat=%.2f, p=%.4f",
+                                mcnemar_pp["statistic"], mcnemar_pp["p_value"])
+                var_orig = mitigation.get("variance_orig")
+                var_neut = mitigation.get("variance_neut")
+                var_red = mitigation.get("variance_reduction")
+                if var_orig is not None:
+                    logger.info("  Variance: original=%.6f, neutralized=%.6f, reduction=%.1f%%",
+                                var_orig, var_neut, (var_red or 0) * 100)
+                tier_changes = mitigation.get("tier_changes", {})
+                if tier_changes:
+                    logger.info("  Tier changes (orig->neut): %s", tier_changes)
+
+            # --- Process Mitigation ---
+            pmit = mr.get("process_mitigation", {})
+            if pmit:
+                logger.info("── Mitigation Analysis (Process) ──")
+                mcnemar_pp = pmit.get("mcnemar_pre_post")
+                if mcnemar_pp:
+                    logger.info("  McNemar pre/post: stat=%.2f, p=%.4f",
+                                mcnemar_pp["statistic"], mcnemar_pp["p_value"])
+                var_red = pmit.get("variance_reduction")
+                if var_red is not None:
+                    logger.info("  Variance reduction: %.1f%%", var_red * 100)
+
+            # --- Info Content ---
+            info = mr.get("info_content", {})
+            if info and info.get("n_requests", 0) > 0:
+                logger.info("── Information Request Content ──")
+                logger.info("  Total info requests: %d", info["n_requests"])
+                mean_len = info.get("mean_length_by_persona", {})
+                if mean_len:
+                    sorted_len = sorted(mean_len.items(), key=lambda x: x[1], reverse=True)
+                    for persona, length in sorted_len[:5]:
+                        logger.info("    %s: mean length=%.0f chars", persona, length)
+
+            # --- LLM Commentary ---
+            logger.info("── GPT-5.2 Commentary ──")
+            results_text = self._format_results_for_commentary(model, mr)
+            commentary = self._get_llm_commentary(model, results_text)
+            if commentary:
+                logger.info("  %s", commentary)
+            else:
+                logger.info("  (commentary unavailable)")
+
+        logger.info("=" * 60)
+
+    # ------------------------------------------------------------------
+    # LLM commentary on analysis results
+    # ------------------------------------------------------------------
+
+    def _format_results_for_commentary(self, model: str, mr: Dict[str, Any]) -> str:
+        """Format a model's analysis results into a text summary for LLM commentary."""
+        lines = [f"Analysis results for model: {model}\n"]
+
+        # Correlation (Outcome)
+        corr = mr.get("correlation", {})
+        if corr:
+            lines.append("CORRELATION ANALYSIS (Outcome Discrimination):")
+            chi2 = corr.get("overall_chi2")
+            if chi2:
+                lines.append(f"  Overall persona x tier: chi2={chi2['chi2']:.2f}, p={chi2['p_value']:.4f}, Cramer's V={chi2['cramers_v']:.3f}")
+            for dim in ["age", "geographic", "education", "socioeconomic"]:
+                d_chi2 = corr.get(f"{dim}_chi2")
+                if d_chi2:
+                    lines.append(f"  {dim} x tier: chi2={d_chi2['chi2']:.2f}, p={d_chi2['p_value']:.4f}, V={d_chi2['cramers_v']:.3f}")
+            logit = corr.get("logistic_favorable", {})
+            if logit.get("skipped"):
+                lines.append(f"  Logistic regression: SKIPPED ({logit.get('reason', '')})")
+            elif logit.get("regularized"):
+                lines.append(f"  Logistic regression: regularised (separation in {logit.get('separation_columns', [])})")
+                for k, v in sorted(logit.get("odds_ratios", {}).items()):
+                    if k != "const":
+                        lines.append(f"    {k}: OR={v:.3f}")
+            elif logit.get("coefficients"):
+                lines.append(f"  Logistic regression: pseudo_R2={logit.get('pseudo_r2', 0):.4f}, AIC={logit.get('aic', 0):.1f}, converged={logit.get('converged')}")
+                odds = logit.get("odds_ratios", {})
+                pvals = logit.get("p_values", {})
+                for k in sorted(odds.keys()):
+                    if k != "const":
+                        sig = " *" if pvals.get(k, 1) < 0.05 else ""
+                        lines.append(f"    {k}: OR={odds[k]:.3f}, p={pvals.get(k, 1):.4f}{sig}")
+            rates = corr.get("rates_by_dimension", {})
+            if rates:
+                lines.append("  Favorable outcome rates by dimension:")
+                for dim, dim_rates in sorted(rates.items()):
+                    parts = [f"{k}={v:.3f}" for k, v in sorted(dim_rates.items())]
+                    lines.append(f"    {dim}: {', '.join(parts)}")
+            # AIR by persona
+            air = corr.get("air_by_persona", {})
+            if air:
+                lines.append("  Adverse Impact Ratios by persona (rate, AIR, material<0.80):")
+                for persona, vals in sorted(air.items(), key=lambda x: x[1].get("air", 1)):
+                    flag = " MATERIAL" if vals.get("material") else ""
+                    lines.append(f"    {persona}: rate={vals['rate']:.3f}, AIR={vals['air']:.3f}{flag}")
+
+        # Correlation (Process)
+        pcorr = mr.get("process_correlation", {})
+        if pcorr:
+            lines.append("\nCORRELATION ANALYSIS (Process Discrimination - info request burden):")
+            chi2 = pcorr.get("overall_chi2")
+            if chi2:
+                lines.append(f"  Overall persona x need_info: chi2={chi2['chi2']:.2f}, p={chi2['p_value']:.4f}, V={chi2['cramers_v']:.3f}")
+            info_rates = pcorr.get("info_rates_by_dimension", {})
+            if info_rates:
+                lines.append("  Info request rates by dimension:")
+                for dim, dim_rates in sorted(info_rates.items()):
+                    parts = [f"{k}={v:.3f}" for k, v in sorted(dim_rates.items())]
+                    lines.append(f"    {dim}: {', '.join(parts)}")
+
+        # Causal (Outcome)
+        causal = mr.get("causal", {})
+        if causal:
+            lines.append("\nCAUSAL ANALYSIS (Outcome - matched-guise experiment):")
+            rates = causal.get("rates_by_persona", {})
+            if rates:
+                sorted_rates = sorted(rates.items(), key=lambda x: x[1])
+                lines.append(f"  Favorable rates: lowest={sorted_rates[0][0]} ({sorted_rates[0][1]:.3f}), highest={sorted_rates[-1][0]} ({sorted_rates[-1][1]:.3f})")
+                lines.append(f"  Spread: {sorted_rates[-1][1] - sorted_rates[0][1]:.3f}")
+            friedman = causal.get("friedman")
+            if friedman:
+                lines.append(f"  Friedman test: stat={friedman['statistic']:.2f}, p={friedman['p_value']:.4f}")
+            mcnemar_pairs = causal.get("pairwise_mcnemar", [])
+            sig_pairs = [p for p in mcnemar_pairs if p.get("significant")]
+            lines.append(f"  Pairwise McNemar: {len(sig_pairs)}/{len(mcnemar_pairs)} significant (FDR-adjusted p<0.05)")
+            if sig_pairs:
+                for sp in sig_pairs[:10]:
+                    lines.append(f"    {sp['persona_1']} vs {sp['persona_2']}: rate1={sp['rate_1']:.3f}, rate2={sp['rate_2']:.3f}, p_adj={sp['p_adjusted']:.4f}")
+
+        # Causal (Process)
+        pcausal = mr.get("process_causal", {})
+        if pcausal:
+            lines.append("\nCAUSAL ANALYSIS (Process):")
+            info_rates = pcausal.get("info_rates_by_persona", {})
+            if info_rates:
+                sorted_rates = sorted(info_rates.items(), key=lambda x: x[1])
+                lines.append(f"  Need-info rates: lowest={sorted_rates[0][0]} ({sorted_rates[0][1]:.3f}), highest={sorted_rates[-1][0]} ({sorted_rates[-1][1]:.3f})")
+            cochran = pcausal.get("cochrans_q")
+            if cochran:
+                lines.append(f"  Cochran's Q: stat={cochran['statistic']:.2f}, p={cochran['p_value']:.4f}")
+
+        # Mitigation (Outcome)
+        mitigation = mr.get("mitigation", {})
+        if mitigation:
+            lines.append("\nMITIGATION ANALYSIS (Outcome - neutralization effectiveness):")
+            mcnemar_pp = mitigation.get("mcnemar_pre_post")
+            if mcnemar_pp:
+                lines.append(f"  McNemar pre/post: stat={mcnemar_pp['statistic']:.2f}, p={mcnemar_pp['p_value']:.4f}")
+            var_orig = mitigation.get("variance_orig")
+            var_neut = mitigation.get("variance_neut")
+            var_red = mitigation.get("variance_reduction")
+            if var_orig is not None:
+                lines.append(f"  Variance across personas: original={var_orig:.6f}, neutralized={var_neut:.6f}, reduction={((var_red or 0) * 100):.1f}%")
+            tier_changes = mitigation.get("tier_changes", {})
+            if tier_changes:
+                lines.append(f"  Tier changes (orig->neut): {tier_changes}")
+            mit_persona = mitigation.get("mitigation_by_persona", {})
+            if mit_persona:
+                lines.append("  Bias reduction by persona:")
+                for persona, vals in sorted(mit_persona.items()):
+                    lines.append(f"    {persona}: orig_AIR={vals['orig_air']:.3f}, neut_AIR={vals['neut_air']:.3f}, reduction={vals['bias_reduction_pct']:.1%}")
+
+        # Mitigation (Process)
+        pmit = mr.get("process_mitigation", {})
+        if pmit:
+            lines.append("\nMITIGATION ANALYSIS (Process):")
+            mcnemar_pp = pmit.get("mcnemar_pre_post")
+            if mcnemar_pp:
+                lines.append(f"  McNemar pre/post: stat={mcnemar_pp['statistic']:.2f}, p={mcnemar_pp['p_value']:.4f}")
+            var_red = pmit.get("variance_reduction")
+            if var_red is not None:
+                lines.append(f"  Variance reduction: {var_red * 100:.1f}%")
+
+        # Info Content
+        info = mr.get("info_content", {})
+        if info and info.get("n_requests", 0) > 0:
+            lines.append(f"\nINFORMATION REQUEST CONTENT: {info['n_requests']} total requests")
+            mean_len = info.get("mean_length_by_persona", {})
+            if mean_len:
+                sorted_len = sorted(mean_len.items(), key=lambda x: x[1], reverse=True)
+                for persona, length in sorted_len[:10]:
+                    lines.append(f"    {persona}: mean length={length:.0f} chars")
+
+        return "\n".join(lines)
+
+    def _get_llm_commentary(self, model: str, results_text: str) -> Optional[str]:
+        """Send analysis results to GPT-5.2 and get a one-paragraph commentary."""
+        system_prompt = (
+            "You are a statistician and AI fairness researcher. You are given the "
+            "results of a discrimination analysis that tested whether an LLM gives "
+            "different consumer complaint remediation recommendations based on the "
+            "linguistic style of the complaint (which correlates with demographic "
+            "persona types). The experiment uses a matched-guise design: the same "
+            "complaints were rewritten in 36 different persona styles (varying age, "
+            "geographic setting, education level, and socioeconomic status) and "
+            "submitted to the LLM for remedy decisions. Neutralized versions were "
+            "also tested to see if removing persona signals reduces disparities.\n\n"
+            "Write exactly one paragraph (4-8 sentences) of commentary on what these "
+            "results imply about whether the LLM is giving different remediation "
+            "recommendations according to persona language styles, and if so, which "
+            "persona types and persona dimensions are being discriminated against. "
+            "Be specific about statistical significance, effect sizes, and practical "
+            "materiality. Note any limitations of the analysis."
+        )
+        user_prompt = f"Here are the analysis results for model {model}:\n\n{results_text}"
+
+        req = LLMRequest(
+            request_id=LLMRequest.new_id(),
+            case_id="commentary",
+            model="gpt-5.2",
+            task="commentary",
+            prompt_system=system_prompt,
+            prompt_user=user_prompt,
+            expected_schema=CommentaryResponse,
+            variant="commentary",
+        )
+
+        try:
+            resp = self.llm.call_with_cache(req, results_text)
+            if resp.success and resp.response_parsed:
+                return resp.response_parsed.commentary
+            logger.warning("Commentary request failed for %s: %s", model, resp.error_message)
+        except Exception as e:
+            logger.warning("Commentary request failed for %s: %s", model, e)
+        return None
 
     # ------------------------------------------------------------------
     # Save artifacts

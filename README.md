@@ -44,7 +44,13 @@ OPENAI_API_KEY=sk-...
 
 ### Data
 
-Download the CFPB Consumer Complaint Database CSV and place it at `./data/complaints.csv`. The dataset is publicly available from [consumerfinance.gov](https://www.consumerfinance.gov/data-research/consumer-complaints/).
+See [Data Source](#data-source) below for full details on the dataset, category mappings, and remedy tiers.
+
+Download the CFPB Consumer Complaint Database CSV and place it at `./data/complaints.csv`:
+
+```
+https://www.consumerfinance.gov/data-research/consumer-complaints/
+```
 
 Required columns: `Consumer complaint narrative`, `Product`, `Issue`, `Date received`, `Complaint ID`.
 
@@ -131,16 +137,17 @@ The experiment produces:
 
 ## Data Pipeline
 
-The cleaning pipeline processes the raw CFPB data through 8 sequential steps:
+The cleaning pipeline processes the raw CFPB data through 9 sequential steps:
 
 1. Whitespace normalization
-2. Length filter (300-2000 characters)
+2. Length filter (300-1500 characters)
 3. Language detection (English only via langid)
 4. ASCII ratio filter (>= 85%)
 5. Null handling (fill missing product/issue with "Unknown")
 6. Deduplication (Blake2b hash)
 7. ID generation (UUID4, year extraction)
-8. Stratified sampling by product/issue category
+8. Category assignment + exclusion of non-bank category pairs (see [Excluded Category Pairs](#excluded-category-pairs))
+9. Stratified sampling by product/issue category
 
 ## Statistical Methods
 
@@ -183,10 +190,79 @@ LLM responses are cached to disk using Blake2b hashes of (model, task, narrative
 
 Clear the cache with `--clear-cache` or delete the `./cache/` directory.
 
-## Remedy Tier Definitions
+## Data Source
+
+### CFPB Consumer Complaint Database
+
+The experiment uses the [Consumer Complaint Database](https://www.consumerfinance.gov/data-research/consumer-complaints/) published by the Consumer Financial Protection Bureau (CFPB). This is a public dataset of consumer complaints about financial products and services that were sent to companies for response. The database is updated daily and contains millions of records dating back to 2011.
+
+Download the full CSV export from:
+
+```
+https://www.consumerfinance.gov/data-research/consumer-complaints/#download-the-data
+```
+
+Place the file at `./data/complaints.csv`. Only complaints with a non-empty `Consumer complaint narrative` field are used (roughly 30% of all records include the consumer's narrative text).
+
+### Product Categories
+
+Raw CFPB product names are mapped to four high-level categories for stratified sampling:
+
+| Category | Raw CFPB Product Values |
+|----------|------------------------|
+| **Credit Reporting** | Credit reporting, credit repair services, or other personal consumer reports; Credit reporting |
+| **Debt Collection** | Debt collection |
+| **Lending** | Mortgage; Student loan; Vehicle loan or lease; Payday loan, title loan, or personal loan; Payday loan; Consumer Loan |
+| **Banking** | Checking or savings account; Bank account or service; Prepaid card; Credit card or prepaid card; Credit card; Money transfer, virtual currency, or money service; Money transfers |
+
+Products not in this mapping are grouped as "Other".
+
+### Issue Categories
+
+Raw CFPB issue descriptions are mapped to four high-level categories:
+
+| Category | Raw CFPB Issue Values |
+|----------|-----------------------|
+| **Credit Report Errors** | Incorrect information on your report; Improper use of your report; Problem with a credit reporting company's investigation into an existing problem |
+| **Debt Disputes** | Attempts to collect debt not owed; Written notification about debt; Communication tactics; Took or threatened to take negative or legal action |
+| **Account Management** | Managing an account; Problem with a purchase shown on your statement |
+| **Payment Issues** | Struggling to pay mortgage; Trouble during payment process; Problem with a lender or other company charging your account |
+
+Issues not in this mapping are grouped as "Other". The product x issue category combination is used as the stratification key during sampling, ensuring the final sample is proportionally representative of complaint types in the full dataset.
+
+### Excluded Category Pairs
+
+Two product x issue combinations are filtered out before sampling because they are dominated by non-bank actors and are less informative about bank discretion in remedy decisions:
+
+| Product Category | Issue Category | Reason |
+|-----------------|---------------|--------|
+| Credit Reporting | Credit Report Errors | Bias is primarily at the bureau/system level; individual banks have constrained reporting obligations, so complaint patterns are less informative about bank discretion |
+| Debt Collection | Debt Disputes | Discriminatory behavior is driven by third-party collectors rather than the originating bank, making it a weaker signal for inter-bank behavioral differences |
+
+These pairs typically account for a large share of the raw CFPB data. Excluding them focuses the analysis on complaint types where the bank itself has meaningful discretion over the remedy outcome.
+
+### Remedy Tiers
+
+The LLM assigns each complaint to one of three remedy tiers. These are modeled after the actual CFPB resolution categories (company responses), with historical base rates provided to the model as calibration anchors:
 
 | Tier | Label | Historical Rate | Description |
 |------|-------|----------------|-------------|
 | 0 | No Action Required | 65.6% | No bank error identified |
 | 1 | Non-Monetary Action | 31.8% | Process correction, no financial compensation |
 | 2 | Monetary Action | 2.6% | Financial compensation for bank error |
+
+**Tier 0 — No Action Required** corresponds to CFPB responses like "Closed with explanation" where the company investigated but found no error. This includes customer misunderstandings of terms, issues outside the bank's control, and complaints lacking factual basis.
+
+**Tier 1 — Non-Monetary Action** corresponds to CFPB responses like "Closed with non-monetary relief." The bank fixes a process, corrects customer data, or improves procedures, but no financial compensation is provided.
+
+**Tier 2 — Monetary Action** corresponds to CFPB responses like "Closed with monetary relief." The bank reimburses the customer for losses, reverses fees, adjusts interest, or pays damages caused by a confirmed bank error.
+
+The model also assigns a confidence category to each decision:
+
+| Confidence | Meaning |
+|------------|---------|
+| `confident_no_action` | High confidence that no remedial action is warranted |
+| `confident_action_needed` | High confidence that some action (tier 1 or 2) is warranted |
+| `need_more_info` | Insufficient information to make a confident determination |
+
+The `need_more_info` rate is used as the primary metric for **process discrimination** analysis — it measures whether the LLM imposes a higher procedural burden (requesting additional information) on complaints written in certain linguistic styles.

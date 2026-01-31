@@ -276,8 +276,13 @@ def causal_analysis(
             index="case_id", columns="variant", values="tier", aggfunc="first"
         ).dropna()
         if pivot.shape[1] >= 3 and pivot.shape[0] >= 5:
-            groups = [pivot[col].values for col in pivot.columns]
-            results["friedman"] = friedman_test(*groups)
+            # Skip if no variation across variants (Friedman divides by zero)
+            col_means = pivot.mean(axis=0)
+            if col_means.nunique() > 1:
+                groups = [pivot[col].values for col in pivot.columns]
+                results["friedman"] = friedman_test(*groups)
+            else:
+                logger.info("Friedman test skipped: no variation in tier across persona variants")
     except Exception as e:
         logger.warning("Friedman test failed: %s", e)
 

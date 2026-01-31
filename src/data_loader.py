@@ -111,6 +111,14 @@ ISSUE_CATEGORIES = {
     "Problem with a lender or other company charging your account": "Payment Issues",
 }
 
+# Product×issue combinations to exclude from analysis.
+# These are dominated by non-bank actors (bureaus, third-party collectors)
+# and are less informative about bank discretion in remedy decisions.
+EXCLUDED_CATEGORY_PAIRS = {
+    ("Credit Reporting", "Credit Report Errors"),
+    ("Debt Collection", "Debt Disputes"),
+}
+
 
 # ---------------------------------------------------------------------------
 # Pipeline cache helpers
@@ -184,10 +192,10 @@ def _step_1_whitespace(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _step_2_length(df: pd.DataFrame) -> pd.DataFrame:
-    """Step 2: Length filter 300-2000 characters."""
+    """Step 2: Length filter 300-1500 characters."""
     logger.info("[Data Clean 2/8] Length filter (%d rows)...", len(df))
     lengths = df["narrative"].str.len()
-    df = df[(lengths >= 300) & (lengths <= 2000)].copy()
+    df = df[(lengths >= 300) & (lengths <= 1500)].copy()
     logger.info("  After length filter: %d", len(df))
     return df
 
@@ -338,6 +346,19 @@ def load_and_clean(
         # Category groupings
         df["product_category"] = df["product"].map(PRODUCT_CATEGORIES).fillna("Other")
         df["issue_category"] = df["issue"].map(ISSUE_CATEGORIES).fillna("Other")
+
+        # Exclude product×issue pairs dominated by non-bank actors
+        before = len(df)
+        pair_key = df["product_category"] + "|" + df["issue_category"]
+        excluded_keys = {f"{p}|{i}" for p, i in EXCLUDED_CATEGORY_PAIRS}
+        df = df[~pair_key.isin(excluded_keys)].copy()
+        excluded = before - len(df)
+        if excluded > 0:
+            logger.info(
+                "  Excluded %d complaints from non-bank category pairs: %s",
+                excluded, sorted(EXCLUDED_CATEGORY_PAIRS),
+            )
+
         _save_step(df, data_path, 8, s8_suffix)
 
     # --- Step 9: Stratified sampling (seed + sample-size dependent) ---

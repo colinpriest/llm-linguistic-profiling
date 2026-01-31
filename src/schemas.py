@@ -189,6 +189,10 @@ class NeutralizeResponse(BaseModel):
     markers_removed: List[str] = Field(default_factory=list)
 
 
+class CommentaryResponse(BaseModel):
+    commentary: str
+
+
 # ---------------------------------------------------------------------------
 # Result dataclasses
 # ---------------------------------------------------------------------------
