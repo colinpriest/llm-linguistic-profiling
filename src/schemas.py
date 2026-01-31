@@ -223,7 +223,14 @@ class NeutralizeResponse(BaseModel):
 
 
 class CommentaryResponse(BaseModel):
-    commentary: str
+    commentary: str = Field(
+        description=(
+            "The complete written analysis paragraph(s) with specific findings, "
+            "statistics, and conclusions. Must contain actual analytical claims "
+            "about the data (e.g. 'The chi-squared test was significant at p=0.03'), "
+            "NOT a description of what analysis to perform."
+        )
+    )
 
 
 # ---------------------------------------------------------------------------

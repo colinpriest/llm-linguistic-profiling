@@ -621,32 +621,30 @@ class Experiment:
         results_text = "\n".join(lines)
 
         user_prompt = (
-            "Analyze the following numerical results and state your findings. "
-            "Reference specific numbers.\n\n" + results_text
+            "Here are the numerical results. Write your analysis paragraph now.\n\n"
+            + results_text
+            + "\n\nNow write exactly one paragraph (4-8 sentences) stating your "
+            "findings from the numbers above. Every sentence must contain at least "
+            "one specific number from the data. For example: 'The overall persona×tier "
+            "association was significant for ModelX (chi2=42.3, p=0.001, V=0.15) "
+            "but not for ModelY (p=0.32).' Do NOT write a plan or outline."
         )
 
         system_prompt = (
-            "You are a statistician and AI fairness researcher. You have been given "
-            "numerical results from a Step 3 correlation analysis of an LLM fairness "
-            "experiment. The experiment tests whether LLMs give different consumer "
-            "complaint remediation recommendations based on the estimated linguistic "
-            "persona (age, geographic setting, education, socioeconomic status, gender, "
-            "and ESL status) of the complaint writer.\n\n"
-            "The data below contains chi-squared statistics, p-values, Cramer's V "
-            "effect sizes, mean tier values, unique persona counts, and persona entropy "
-            "for each model. Analyze these SPECIFIC NUMBERS and write exactly one "
-            "paragraph (4-8 sentences) covering:\n"
-            "1. Whether the overall persona×tier association is statistically significant "
-            "for each model (cite the chi2 and p-values).\n"
-            "2. Which individual dimensions (age, geography, education, socioeconomic, "
-            "gender, ESL) show the strongest associations (cite their Cramer's V values "
-            "and note which are significant at p<0.05).\n"
-            "3. Which model distinguishes more personas vs anchors to the mean (compare "
-            "the unique persona counts and entropy values).\n"
-            "4. Which model has stronger associations between persona and tier (compare "
-            "Cramer's V values across models).\n\n"
-            "You MUST reference specific numbers from the data. Do NOT describe what "
-            "you would analyze — state your actual findings from the numbers provided."
+            "You are a statistician writing a findings paragraph for a research report. "
+            "You will receive chi-squared statistics, Cramer's V effect sizes, p-values, "
+            "mean tier values, and persona diversity metrics from an LLM fairness experiment "
+            "that tests whether LLMs give different complaint remediation recommendations "
+            "based on estimated linguistic persona (age, geographic, education, socioeconomic, "
+            "gender, ESL). Your commentary field must contain a single completed paragraph "
+            "of 4-8 sentences reporting:\n"
+            "(1) Whether the overall persona×tier chi2 is significant for each model (state the p-values).\n"
+            "(2) Which dimensions have the largest Cramer's V and whether they reach p<0.05.\n"
+            "(3) Which model has more unique personas / higher entropy (less anchoring).\n"
+            "(4) Which model shows stronger persona-tier associations (compare V values).\n\n"
+            "CRITICAL: Your output must read like a finished paragraph from a statistics "
+            "report, e.g. 'The analysis revealed that...' NOT like a to-do list or plan "
+            "such as 'Compute per-model significance...' or 'Will summarize...'"
         )
 
         req = LLMRequest(
@@ -1610,30 +1608,28 @@ class Experiment:
     def _get_llm_commentary(self, model: str, results_text: str) -> Optional[str]:
         """Send analysis results to GPT-5.2 and get commentary on tier bias and process bias."""
         system_prompt = (
-            "You are a statistician and AI fairness researcher. You are given the "
-            "results of a discrimination analysis that tested whether an LLM gives "
-            "different consumer complaint remediation recommendations based on the "
-            "linguistic style of the complaint (which correlates with demographic "
-            "persona types). The experiment uses a matched-guise design: the same "
-            "complaints were rewritten in 36 different persona styles (varying age, "
-            "geographic setting, education level, and socioeconomic status) and "
-            "submitted to the LLM for remedy decisions. Persona estimation also "
-            "includes gender and ESL (English as a Second Language) status. "
-            "Neutralized versions were also tested to see if removing persona "
-            "signals reduces disparities.\n\n"
-            "Write exactly TWO paragraphs:\n"
-            "Paragraph 1 - TIER BIAS: Commentary on whether the LLM is giving "
-            "different remedy tier recommendations according to persona language "
-            "styles, and if so, which persona types and dimensions (including "
-            "gender and ESL) are being discriminated against. Be specific about "
-            "statistical significance, effect sizes, and practical materiality.\n\n"
-            "Paragraph 2 - PROCESS BIAS: Commentary on whether the LLM imposes "
-            "different procedural burdens (information request rates) on different "
-            "personas. Which personas are asked for more information? Is this "
-            "statistically significant? How does process discrimination compare "
-            "to outcome discrimination? Note any limitations of the analysis."
+            "You are a statistician writing findings paragraphs for a research report "
+            "on LLM fairness. The experiment uses a matched-guise design: the same "
+            "complaints were rewritten in 36 persona styles (varying age, geographic "
+            "setting, education, socioeconomic status) and submitted to the LLM. "
+            "Persona estimation also includes gender and ESL status. Neutralized "
+            "versions were tested to see if removing persona signals reduces disparities.\n\n"
+            "Your commentary field must contain exactly TWO completed paragraphs:\n"
+            "Paragraph 1 - TIER BIAS: State whether the LLM gives different remedy "
+            "tiers by persona. Cite specific chi2/p/V values, odds ratios, and AIR "
+            "values from the data. Name which dimensions and personas are affected.\n"
+            "Paragraph 2 - PROCESS BIAS: State whether different personas face "
+            "different information request rates. Cite specific rates and test results.\n\n"
+            "CRITICAL: Your output must read like finished prose from a statistics "
+            "report, e.g. 'The analysis revealed significant tier disparities...' "
+            "NOT like a plan, e.g. 'Will analyze tier bias...' or 'Compute the...'"
         )
-        user_prompt = f"Here are the analysis results for model {model}:\n\n{results_text}"
+        user_prompt = (
+            f"Here are the analysis results for model {model}. Write your two "
+            f"findings paragraphs now, citing specific numbers.\n\n{results_text}"
+            f"\n\nWrite the two paragraphs now. Every sentence must cite at least "
+            f"one number from the data above."
+        )
 
         req = LLMRequest(
             request_id=LLMRequest.new_id(),
