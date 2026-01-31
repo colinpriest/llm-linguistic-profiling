@@ -8,7 +8,13 @@ from __future__ import annotations
 
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    as_completed,
+    wait,
+    FIRST_COMPLETED,
+    CancelledError,
+)
 from dataclasses import dataclass, field
 from datetime import datetime
 from threading import Lock
@@ -297,49 +303,42 @@ class LLMClient:
                 pool.submit(self.call_with_cache, req, narr): i
                 for i, (req, narr) in enumerate(zip(requests, narratives))
             }
-            future_started = {future: time.monotonic() for future in future_to_idx}
+            pending = set(future_to_idx.keys())
             with tqdm(total=len(requests), desc=desc, unit="req") as pbar:
-                pending = set(future_to_idx)
                 while pending:
-                    done = set()
-                    try:
-                        for future in as_completed(pending, timeout=1):
-                            done.add(future)
-                    except TimeoutError:
-                        pass
+                    done, pending = wait(
+                        pending,
+                        timeout=self.FUTURE_TIMEOUT,
+                        return_when=FIRST_COMPLETED,
+                    )
 
-                    now = time.monotonic()
-                    timed_out = {
-                        future
-                        for future in pending
-                        if now - future_started[future] > self.FUTURE_TIMEOUT
-                    }
-
-                    for future in timed_out:
-                        idx = future_to_idx[future]
+                    # If nothing finished within the timeout window, cancel the batch
+                    if not done:
                         logger.error(
-                            "Future timed out after %ds for %s (%s)",
+                            "No futures completed within %ds for %s. Cancelling %d pending requests",
                             self.FUTURE_TIMEOUT,
-                            requests[idx].case_id,
-                            requests[idx].task,
+                            desc,
+                            len(pending),
                         )
-                        future.cancel()
-                        responses[idx] = LLMResponse(
-                            request_id=requests[idx].request_id,
-                            case_id=requests[idx].case_id,
-                            model=requests[idx].model,
-                            task=requests[idx].task,
-                            success=False,
-                            error_message=f"Timed out after {self.FUTURE_TIMEOUT}s",
-                            timestamp=datetime.now(),
-                        )
-                        completed += 1
-                        failed += 1
-                        pbar.update(1)
+                        for fut in list(pending):
+                            idx = future_to_idx[fut]
+                            fut.cancel()
+                            responses[idx] = LLMResponse(
+                                request_id=requests[idx].request_id,
+                                case_id=requests[idx].case_id,
+                                model=requests[idx].model,
+                                task=requests[idx].task,
+                                success=False,
+                                error_message=f"Timed out after {self.FUTURE_TIMEOUT}s (batch wait)",
+                                timestamp=datetime.now(),
+                            )
+                        cancelled = len(pending)
+                        completed += cancelled
+                        failed += cancelled
+                        pbar.update(cancelled)
+                        break
 
                     for future in done:
-                        if future in timed_out:
-                            continue
                         idx = future_to_idx[future]
                         try:
                             resp = future.result()
@@ -347,9 +346,20 @@ class LLMClient:
                             completed += 1
                             if resp is not None and not resp.success:
                                 failed += 1
+                        except CancelledError:
+                            responses[idx] = LLMResponse(
+                                request_id=requests[idx].request_id,
+                                case_id=requests[idx].case_id,
+                                model=requests[idx].model,
+                                task=requests[idx].task,
+                                success=False,
+                                error_message="Cancelled due to batch timeout",
+                                timestamp=datetime.now(),
+                            )
+                            completed += 1
+                            failed += 1
                         except RuntimeError:
-                            # Fatal errors (e.g. bad model params) — cancel
-                            # remaining work and propagate immediately.
+                            # Fatal errors (e.g. bad model params) — cancel remaining work and propagate immediately.
                             for f in pending:
                                 f.cancel()
                             raise
@@ -368,17 +378,15 @@ class LLMClient:
                             failed += 1
                         pbar.update(1)
 
-                    pending -= (done | timed_out)
-
-                    # Circuit breaker: abort if early results are mostly failures
-                    window = min(self.CIRCUIT_BREAKER_WINDOW, len(requests))
-                    if completed >= window and failed > window * self.CIRCUIT_BREAKER_THRESHOLD:
-                        for f in pending:
-                            f.cancel()
-                        raise RuntimeError(
-                            f"Circuit breaker tripped: {failed}/{window} "
-                            f"early requests failed for '{desc}'. Aborting batch."
-                        )
+                        # Circuit breaker: abort if early results are mostly failures
+                        window = min(self.CIRCUIT_BREAKER_WINDOW, len(requests))
+                        if completed == window and failed > window * self.CIRCUIT_BREAKER_THRESHOLD:
+                            for f in pending:
+                                f.cancel()
+                            raise RuntimeError(
+                                f"Circuit breaker tripped: {failed}/{window} "
+                                f"early requests failed for '{desc}'. Aborting batch."
+                            )
 
         return [r for r in responses if r is not None]
 
