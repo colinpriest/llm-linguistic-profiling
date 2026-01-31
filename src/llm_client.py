@@ -276,6 +276,15 @@ class LLMClient:
         desc: str = "LLM calls",
     ) -> List[LLMResponse]:
         """Execute a batch of requests concurrently using a thread pool."""
+        if len(requests) != len(narratives):
+            raise ValueError(
+                "execute_batch requires matching requests/narratives lengths: "
+                f"{len(requests)} requests vs {len(narratives)} narratives."
+            )
+        if not requests:
+            logger.info("No requests submitted for %s; skipping batch.", desc)
+            return []
+
         responses: List[Optional[LLMResponse]] = [None] * len(requests)
         completed = 0
         failed = 0
@@ -288,22 +297,33 @@ class LLMClient:
                 pool.submit(self.call_with_cache, req, narr): i
                 for i, (req, narr) in enumerate(zip(requests, narratives))
             }
+            future_started = {future: time.monotonic() for future in future_to_idx}
             with tqdm(total=len(requests), desc=desc, unit="req") as pbar:
-                for future in as_completed(future_to_idx):
-                    idx = future_to_idx[future]
+                pending = set(future_to_idx)
+                while pending:
+                    done = set()
                     try:
-                        resp = future.result(timeout=self.FUTURE_TIMEOUT)
-                        responses[idx] = resp
-                        completed += 1
-                        if resp is not None and not resp.success:
-                            failed += 1
+                        for future in as_completed(pending, timeout=1):
+                            done.add(future)
                     except TimeoutError:
+                        pass
+
+                    now = time.monotonic()
+                    timed_out = {
+                        future
+                        for future in pending
+                        if now - future_started[future] > self.FUTURE_TIMEOUT
+                    }
+
+                    for future in timed_out:
+                        idx = future_to_idx[future]
                         logger.error(
                             "Future timed out after %ds for %s (%s)",
                             self.FUTURE_TIMEOUT,
                             requests[idx].case_id,
                             requests[idx].task,
                         )
+                        future.cancel()
                         responses[idx] = LLMResponse(
                             request_id=requests[idx].request_id,
                             case_id=requests[idx].case_id,
@@ -315,31 +335,45 @@ class LLMClient:
                         )
                         completed += 1
                         failed += 1
-                    except RuntimeError:
-                        # Fatal errors (e.g. bad model params) — cancel
-                        # remaining work and propagate immediately.
-                        for f in future_to_idx:
-                            f.cancel()
-                        raise
-                    except Exception as e:
-                        logger.error("Unexpected worker error: %s", e)
-                        responses[idx] = LLMResponse(
-                            request_id=requests[idx].request_id,
-                            case_id=requests[idx].case_id,
-                            model=requests[idx].model,
-                            task=requests[idx].task,
-                            success=False,
-                            error_message=f"Worker error: {e}",
-                            timestamp=datetime.now(),
-                        )
-                        completed += 1
-                        failed += 1
-                    pbar.update(1)
+                        pbar.update(1)
+
+                    for future in done:
+                        if future in timed_out:
+                            continue
+                        idx = future_to_idx[future]
+                        try:
+                            resp = future.result()
+                            responses[idx] = resp
+                            completed += 1
+                            if resp is not None and not resp.success:
+                                failed += 1
+                        except RuntimeError:
+                            # Fatal errors (e.g. bad model params) — cancel
+                            # remaining work and propagate immediately.
+                            for f in pending:
+                                f.cancel()
+                            raise
+                        except Exception as e:
+                            logger.error("Unexpected worker error: %s", e)
+                            responses[idx] = LLMResponse(
+                                request_id=requests[idx].request_id,
+                                case_id=requests[idx].case_id,
+                                model=requests[idx].model,
+                                task=requests[idx].task,
+                                success=False,
+                                error_message=f"Worker error: {e}",
+                                timestamp=datetime.now(),
+                            )
+                            completed += 1
+                            failed += 1
+                        pbar.update(1)
+
+                    pending -= (done | timed_out)
 
                     # Circuit breaker: abort if early results are mostly failures
                     window = min(self.CIRCUIT_BREAKER_WINDOW, len(requests))
-                    if completed == window and failed > window * self.CIRCUIT_BREAKER_THRESHOLD:
-                        for f in future_to_idx:
+                    if completed >= window and failed > window * self.CIRCUIT_BREAKER_THRESHOLD:
+                        for f in pending:
                             f.cancel()
                         raise RuntimeError(
                             f"Circuit breaker tripped: {failed}/{window} "
