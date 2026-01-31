@@ -875,6 +875,59 @@ document.querySelectorAll('table.sortable').forEach(function(table) {{
 # Tab content builders
 # ---------------------------------------------------------------------------
 
+def _build_tab_business_executive_summary(
+    analysis_results: Dict[str, Any],
+) -> str:
+    """Build the Business Executive Summary tab from GPT-generated plain-language summary."""
+    parts: List[str] = []
+
+    biz_summary = analysis_results.get("business_executive_summary")
+    if biz_summary:
+        parts.append("<h2>Executive Summary</h2>")
+        # Convert the plain-text summary into styled HTML
+        for block in biz_summary.split("\n\n"):
+            block = block.strip()
+            if not block:
+                continue
+            # Detect heading-like lines (short, no period at end, not starting with -)
+            lines = block.split("\n")
+            first = lines[0].strip()
+            # Top-level title line (contains "Executive Summary" or "Bias Testing")
+            if len(lines) == 1 and len(first) < 80 and not first.endswith(".") and ":" in first:
+                parts.append(f"<h3>{html.escape(first)}</h3>")
+                continue
+            # Section headings: short single line without trailing period
+            if len(lines) == 1 and len(first) < 80 and not first.endswith(".") and not first.startswith("-"):
+                parts.append(f"<h3>{html.escape(first)}</h3>")
+                continue
+            # Bullet list block
+            if all(l.strip().startswith("-") or l.strip().startswith("•") for l in lines if l.strip()):
+                parts.append("<ul>")
+                for l in lines:
+                    l = l.strip().lstrip("-•").strip()
+                    if l:
+                        parts.append(f"<li>{html.escape(l)}</li>")
+                parts.append("</ul>")
+                continue
+            # Mixed paragraph with some bullets
+            if any(l.strip().startswith("-") or l.strip().startswith("•") for l in lines):
+                for l in lines:
+                    l_stripped = l.strip()
+                    if l_stripped.startswith("-") or l_stripped.startswith("•"):
+                        parts.append(f"<p style=\"margin-left:1.5em;\">&#8226; {html.escape(l_stripped.lstrip('-•').strip())}</p>")
+                    elif l_stripped:
+                        parts.append(f"<p>{html.escape(l_stripped)}</p>")
+                continue
+            # Regular paragraph
+            parts.append(f"<p>{html.escape(block)}</p>")
+    else:
+        parts.append("<h2>Executive Summary</h2>")
+        parts.append('<p class="muted">Business executive summary not available. '
+                     "Run the experiment with GPT-5.2 commentary enabled to generate this section.</p>")
+
+    return "\n".join(parts)
+
+
 def _build_tab_executive_summary(
     analysis_results: Dict[str, Any],
     complaints: List[Complaint],
@@ -884,10 +937,10 @@ def _build_tab_executive_summary(
     materiality_threshold: float,
     timestamp: str,
 ) -> str:
-    """Build the Executive Summary tab HTML."""
+    """Build the Technical Summary tab HTML."""
     parts: List[str] = []
 
-    parts.append("<h2>Executive Summary</h2>")
+    parts.append("<h2>Technical Summary</h2>")
 
     # Experiment overview metrics
     parts.append('<div class="metrics-grid">')
@@ -1788,7 +1841,8 @@ def generate_report(
     body_parts.append('<div class="tab-group">')
     body_parts.append('<div class="tab-nav">')
     tabs = [
-        ("tab-exec", "Executive Summary"),
+        ("tab-biz-exec", "Executive Summary"),
+        ("tab-exec", "Technical Summary"),
         ("tab-disparate", "Disparate Impact"),
         ("tab-process", "Process Discrimination"),
         ("tab-text", "Text Features"),
@@ -1800,7 +1854,9 @@ def generate_report(
         body_parts.append(f'<button class="tab-btn{active}" data-tab="{tid}">{label}</button>')
     body_parts.append("</div>")
 
+    tab_biz_exec = _build_tab_business_executive_summary(analysis_results)
     tab_contents = [
+        ("tab-biz-exec", tab_biz_exec),
         ("tab-exec", tab_exec),
         ("tab-disparate", tab_disparate),
         ("tab-process", tab_process),
