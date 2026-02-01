@@ -5,6 +5,7 @@ PROMPT_VERSIONS = {
     "remedy_decision": "1.0",
     "persona_rewrite": "1.0",
     "neutralize": "1.0",
+    "dollar_extract": "1.1",
 }
 
 # ---------------------------------------------------------------------------
@@ -198,6 +199,25 @@ Respond with a JSON object:
 }}
 
 CRITICAL: Preserve ALL facts, allegations, amounts, and dates exactly. Change ONLY the linguistic style to be neutral and professional."""
+
+
+# ---------------------------------------------------------------------------
+# Dollar Amount Extraction
+# ---------------------------------------------------------------------------
+
+DOLLAR_EXTRACT_SYSTEM = """\
+You are a financial information extraction assistant. Extract dollar amounts from consumer complaints accurately."""
+
+DOLLAR_EXTRACT_USER = """\
+Extract any dollar amounts mentioned in this complaint. Return JSON with:
+- amounts_mentioned: list of dollar values found
+- primary_amount: the main disputed/affected amount (or null if unclear)
+- amount_type: one of ["fee", "balance", "payment", "damage", "other"]
+- confidence: high/medium/low
+
+If no dollar amount is mentioned, return null for all fields.
+
+Complaint: {narrative}"""
 
 
 def format_persona_rewrite_user(

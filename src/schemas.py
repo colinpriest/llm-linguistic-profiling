@@ -62,6 +62,8 @@ class Complaint:
     year: str
     product_category: str
     issue_category: str
+    monetary_severity: str = "unknown"   # low / medium / high / unknown
+    issue_severity: str = "medium"       # low / medium / high
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +222,100 @@ class PersonaRewriteResponse(BaseModel):
 class NeutralizeResponse(BaseModel):
     neutralized_complaint: str
     markers_removed: List[str] = Field(default_factory=list)
+
+
+class DollarAmountResponse(BaseModel):
+    amounts_mentioned: Optional[List[float]] = Field(
+        default=None,
+        description="List of dollar values found in the complaint",
+    )
+    primary_amount: Optional[float] = Field(
+        default=None,
+        description="The main disputed/affected amount (or null if unclear)",
+    )
+    amount_type: Optional[str] = Field(
+        default=None,
+        description="Category of the primary amount",
+    )
+    confidence: Optional[str] = Field(
+        default=None,
+        description="Confidence in the extraction",
+    )
+
+    @field_validator("amount_type", mode="before")
+    @classmethod
+    def coerce_amount_type(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        v = str(v).strip().lower()
+        allowed = {"fee", "balance", "payment", "damage", "other"}
+        if v in allowed:
+            return v
+        mapping = {
+            "refund": "payment",
+            "reimbursement": "payment",
+            "charge": "fee",
+            "interest": "fee",
+            "penalty": "fee",
+            "overdraft": "fee",
+            "debt": "balance",
+            "loan": "balance",
+            "credit": "balance",
+            "mortgage": "balance",
+            "transfer": "payment",
+            "deposit": "payment",
+            "withdrawal": "payment",
+            "transaction": "payment",
+            "loss": "damage",
+            "fraud": "damage",
+            "theft": "damage",
+            "overcharge": "fee",
+        }
+        return mapping.get(v, "other")
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def coerce_confidence(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        v = str(v).strip().lower()
+        if v in ("high", "medium", "low"):
+            return v
+        return "medium"
+
+    @field_validator("primary_amount", mode="before")
+    @classmethod
+    def coerce_primary_amount(cls, v: Any) -> Optional[float]:
+        if v is None:
+            return None
+        try:
+            return abs(float(v))
+        except (TypeError, ValueError):
+            return None
+
+    @field_validator("amounts_mentioned", mode="before")
+    @classmethod
+    def coerce_amounts_mentioned(cls, v: Any) -> Optional[List[float]]:
+        if v is None:
+            return None
+        if not isinstance(v, list):
+            return None
+        result = []
+        for item in v:
+            try:
+                result.append(abs(float(item)))
+            except (TypeError, ValueError):
+                continue
+        return result if result else None
+
+
+@dataclass
+class DollarAmount:
+    case_id: str
+    amounts_mentioned: Optional[List[float]]
+    primary_amount: Optional[float]
+    amount_type: Optional[str]
+    confidence: Optional[str]
 
 
 class CommentaryResponse(BaseModel):

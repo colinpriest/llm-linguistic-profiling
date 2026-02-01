@@ -17,6 +17,7 @@ from tqdm import tqdm
 from src.cache import ResponseCache
 from src.data_loader import load_and_clean
 from src.llm_client import LLMClient
+from src.severity_analysis import run_severity_analysis
 from src.process_discrimination import (
     info_request_content_analysis,
     process_causal_analysis,
@@ -24,6 +25,8 @@ from src.process_discrimination import (
     process_mitigation_analysis,
 )
 from src.prompts import (
+    DOLLAR_EXTRACT_SYSTEM,
+    DOLLAR_EXTRACT_USER,
     NEUTRALIZE_SYSTEM,
     NEUTRALIZE_USER,
     PERSONA_ESTIMATE_SYSTEM,
@@ -37,6 +40,8 @@ from src.schemas import (
     CAUSAL_DIMS,
     Complaint,
     CommentaryResponse,
+    DollarAmount,
+    DollarAmountResponse,
     ESTIMATE_DIMS,
     LLMConfig,
     LLMRequest,
@@ -157,6 +162,7 @@ class Experiment:
 
         # Results storage
         self.complaints: List[Complaint] = []
+        self.dollar_amounts: List[DollarAmount] = []
         self.persona_estimates: List[PersonaEstimate] = []
         self.baseline_decisions: List[RemedyDecision] = []
         self.persona_rewrites: List[PersonaRewrite] = []
@@ -196,6 +202,12 @@ class Experiment:
         # Fit topic model on original narratives
         logger.info("Fitting topic model on original narratives...")
         fit_topic_model([c.narrative for c in self.complaints], n_topics=10, seed=self.seed)
+
+        # Extract dollar amounts (cached, runs once)
+        logger.info("-" * 40)
+        logger.info("Dollar amount extraction starting")
+        self._extract_dollar_amounts()
+        logger.info("Dollar amount extraction complete")
 
         # Run steps
         for step in range(1, 8):
@@ -358,6 +370,209 @@ class Experiment:
             resp = self.llm.call_with_cache(req, narr, timeout_override=timeout, max_attempts=1)
             responses.append(resp)
         return responses
+
+    # ------------------------------------------------------------------
+    # Dollar Amount Extraction (pre-step, cached independently)
+    # ------------------------------------------------------------------
+
+    def _extract_dollar_amounts(self) -> None:
+        """Extract dollar amounts from complaint narratives using gpt-4o-mini.
+
+        Results are cached under the 'dollar_extract' task so they persist
+        across experimental conditions and reruns.  Only ``--clear-cache``
+        will invalidate them.
+        """
+        model = "gpt-4o-mini"
+        requests: List[LLMRequest] = []
+        narratives: List[str] = []
+
+        for c in self.complaints:
+            req = LLMRequest(
+                request_id=LLMRequest.new_id(),
+                case_id=c.case_id,
+                model=model,
+                task="dollar_extract",
+                prompt_system=DOLLAR_EXTRACT_SYSTEM,
+                prompt_user=DOLLAR_EXTRACT_USER.format(narrative=c.narrative),
+                expected_schema=DollarAmountResponse,
+            )
+            requests.append(req)
+            narratives.append(c.narrative)
+
+        desc = "Dollar amount extraction [gpt-4o-mini]"
+        responses = self.llm.execute_batch(requests, narratives, desc=desc)
+        responses = self._check_batch_results(responses, requests, narratives, desc)
+
+        for resp in responses:
+            if resp.success and resp.response_parsed:
+                p = resp.response_parsed
+                self.dollar_amounts.append(DollarAmount(
+                    case_id=resp.case_id,
+                    amounts_mentioned=p.amounts_mentioned,
+                    primary_amount=p.primary_amount,
+                    amount_type=p.amount_type,
+                    confidence=p.confidence,
+                ))
+            else:
+                self.dollar_amounts.append(DollarAmount(
+                    case_id=resp.case_id,
+                    amounts_mentioned=None,
+                    primary_amount=None,
+                    amount_type=None,
+                    confidence=None,
+                ))
+
+        logger.info("Dollar extraction: %d complaints processed", len(self.dollar_amounts))
+
+        # Assign monetary_severity to each complaint
+        amount_by_case = {da.case_id: da.primary_amount for da in self.dollar_amounts}
+        for c in self.complaints:
+            amt = amount_by_case.get(c.case_id)
+            if amt is None:
+                c.monetary_severity = "unknown"
+            elif amt <= 100:
+                c.monetary_severity = "low"
+            elif amt <= 1000:
+                c.monetary_severity = "medium"
+            else:
+                c.monetary_severity = "high"
+
+        self._summarize_dollar_amounts()
+
+    def _summarize_dollar_amounts(self) -> None:
+        """Console + dashboard summary of extracted dollar amounts."""
+        if not self.dollar_amounts:
+            return
+
+        df = pd.DataFrame([
+            {
+                "case_id": da.case_id,
+                "primary_amount": da.primary_amount,
+                "amount_type": da.amount_type,
+                "confidence": da.confidence,
+                "n_amounts": len(da.amounts_mentioned) if da.amounts_mentioned else 0,
+            }
+            for da in self.dollar_amounts
+        ])
+
+        total = len(df)
+        has_amount = df["primary_amount"].notna()
+        n_with = int(has_amount.sum())
+        n_without = total - n_with
+
+        logger.info("── Dollar Amount Extraction Summary ──")
+        _log_table("Coverage", [
+            ("Total rows", str(total)),
+            ("With amount", f"{n_with} ({n_with / total:.1%})"),
+            ("Without amount", f"{n_without} ({n_without / total:.1%})"),
+        ])
+
+        # Store summary in analysis_results for dashboard
+        summary: Dict[str, Any] = {
+            "total": total,
+            "with_amount": n_with,
+            "without_amount": n_without,
+            "pct_with_amount": round(n_with / total * 100, 1) if total else 0,
+        }
+
+        amounts = df.loc[has_amount, "primary_amount"]
+        if len(amounts) > 0:
+            stats_rows = [
+                ("Count", str(len(amounts))),
+                ("Min", f"${amounts.min():,.2f}"),
+                ("Max", f"${amounts.max():,.2f}"),
+                ("Mean", f"${amounts.mean():,.2f}"),
+                ("Median", f"${amounts.median():,.2f}"),
+                ("Std", f"${amounts.std():,.2f}"),
+                ("10th pctl", f"${amounts.quantile(0.10):,.2f}"),
+                ("25th pctl", f"${amounts.quantile(0.25):,.2f}"),
+                ("75th pctl", f"${amounts.quantile(0.75):,.2f}"),
+                ("90th pctl", f"${amounts.quantile(0.90):,.2f}"),
+                ("<= $50", f"{(amounts <= 50).mean():.1%}"),
+                ("<= $100", f"{(amounts <= 100).mean():.1%}"),
+                ("<= $250", f"{(amounts <= 250).mean():.1%}"),
+                ("<= $500", f"{(amounts <= 500).mean():.1%}"),
+            ]
+            _log_table("Primary Amount Statistics", stats_rows)
+
+            summary["stats"] = {
+                "min": round(float(amounts.min()), 2),
+                "max": round(float(amounts.max()), 2),
+                "mean": round(float(amounts.mean()), 2),
+                "median": round(float(amounts.median()), 2),
+                "std": round(float(amounts.std()), 2),
+                "p10": round(float(amounts.quantile(0.10)), 2),
+                "p25": round(float(amounts.quantile(0.25)), 2),
+                "p75": round(float(amounts.quantile(0.75)), 2),
+                "p90": round(float(amounts.quantile(0.90)), 2),
+                "pct_le_50": round(float((amounts <= 50).mean()) * 100, 1),
+                "pct_le_100": round(float((amounts <= 100).mean()) * 100, 1),
+                "pct_le_250": round(float((amounts <= 250).mean()) * 100, 1),
+                "pct_le_500": round(float((amounts <= 500).mean()) * 100, 1),
+            }
+
+            # Amount histogram (log-scaled bins)
+            bin_edges = [0, 25, 50, 100, 250, 500, 1000, 5000, 10000, float("inf")]
+            bin_labels = [
+                "$0-25", "$25-50", "$50-100", "$100-250", "$250-500",
+                "$500-1K", "$1K-5K", "$5K-10K", "$10K+",
+            ]
+            hist = pd.cut(amounts, bins=bin_edges, labels=bin_labels, right=False)
+            hist_counts = hist.value_counts().sort_index()
+            rows = [(str(k), str(v)) for k, v in hist_counts.items()]
+            _log_table("Amount Histogram", rows)
+            summary["amount_histogram"] = {str(k): int(v) for k, v in hist_counts.items()}
+
+            # Confidence histogram
+            conf_series = df.loc[has_amount, "confidence"]
+            if conf_series.notna().any():
+                conf_counts = conf_series.value_counts().sort_index()
+                rows = [(str(k), str(v)) for k, v in conf_counts.items()]
+                _log_table("Confidence Distribution", rows)
+                summary["confidence_histogram"] = {str(k): int(v) for k, v in conf_counts.items()}
+
+            # Amount type distribution
+            type_series = df.loc[has_amount, "amount_type"]
+            if type_series.notna().any():
+                type_counts = type_series.value_counts().sort_index()
+                rows = [(str(k), str(v)) for k, v in type_counts.items()]
+                _log_table("Amount Type Distribution", rows)
+                summary["amount_type_histogram"] = {str(k): int(v) for k, v in type_counts.items()}
+
+        self.analysis_results["dollar_amounts"] = summary
+
+        # --- Severity distribution summaries ---
+        sev_df = pd.DataFrame([
+            {
+                "case_id": c.case_id,
+                "monetary_severity": c.monetary_severity,
+                "issue_severity": c.issue_severity,
+            }
+            for c in self.complaints
+        ])
+
+        logger.info("── Severity Distributions ──")
+        for col in ("monetary_severity", "issue_severity"):
+            vc = sev_df[col].value_counts()
+            order = ["low", "medium", "high", "unknown"]
+            vc = vc.reindex([o for o in order if o in vc.index])
+            rows = [(str(k), f"{v} ({v / len(sev_df):.1%})") for k, v in vc.items()]
+            _log_table(col, rows)
+
+            # ASCII bar histogram
+            max_bar = 40
+            max_count = vc.max() if len(vc) > 0 else 1
+            for label, count in vc.items():
+                bar_len = int(count / max_count * max_bar) if max_count > 0 else 0
+                bar = "\u2588" * bar_len
+                logger.info("    %-8s %s %d", label, bar, count)
+
+        self.analysis_results["monetary_severity"] = (
+            sev_df["monetary_severity"].value_counts().to_dict()
+        )
+        self.analysis_results["issue_severity"] = (
+            sev_df["issue_severity"].value_counts().to_dict()
+        )
 
     # ------------------------------------------------------------------
     # Step 1: Persona Estimation
@@ -1299,7 +1514,73 @@ class Experiment:
             results[model] = model_results
 
         self.analysis_results = results
+        self._run_severity_analysis()
         self._display_analysis_results()
+
+    # ------------------------------------------------------------------
+    # Severity amplification analysis
+    # ------------------------------------------------------------------
+
+    def _run_severity_analysis(self) -> None:
+        """Run severity amplification analysis (spec sections 1-6)."""
+        if self.baseline_df is None or self.personas_df is None:
+            logger.info("Skipping severity analysis (no baseline decisions or personas)")
+            return
+
+        # Build severity DataFrame from complaints
+        severity_df = pd.DataFrame([
+            {
+                "case_id": c.case_id,
+                "monetary_severity": c.monetary_severity,
+                "issue_severity": c.issue_severity,
+                "product_category": c.product_category,
+                "issue_category": c.issue_category,
+            }
+            for c in self.complaints
+        ])
+        sev_cols = severity_df[["case_id", "monetary_severity", "issue_severity"]]
+
+        # Merge severity + persona labels onto baseline decisions
+        baseline_sev = self.baseline_df.merge(sev_cols, on="case_id", how="left")
+        baseline_sev = baseline_sev.merge(
+            self.personas_df[["case_id", "model", "persona_label"]],
+            on=["case_id", "model"],
+            how="left",
+        )
+
+        # Merge severity onto persona decisions (if available)
+        persona_dec_sev = None
+        if self.persona_decisions_df is not None and len(self.persona_decisions_df) > 0:
+            persona_dec_sev = self.persona_decisions_df.merge(sev_cols, on="case_id", how="left")
+
+        result = run_severity_analysis(
+            baseline_df=baseline_sev,
+            persona_decisions_df=persona_dec_sev,
+            personas_df=self.personas_df,
+            complaints_df=severity_df,
+            models=self.models,
+            n_boot=1000,
+            seed=self.seed,
+        )
+        self.analysis_results["severity"] = result
+
+        # Console summary of key findings
+        logger.info("── Severity Amplification Summary ──")
+        for metric in ["monetary_severity", "issue_severity"]:
+            interactions = result.get("interactions", {}).get(metric, {})
+            for model in self.models:
+                model_int = interactions.get(model, {})
+                amp = model_int.get("amplification", {})
+                tw = model_int.get("two_way", {})
+                interaction = tw.get("interaction", {})
+                ratio = amp.get("point", float("nan"))
+                ci_lo = amp.get("ci_lower", float("nan"))
+                ci_hi = amp.get("ci_upper", float("nan"))
+                int_p = interaction.get("p_value", float("nan"))
+                logger.info(
+                    "  %s [%s]: amplification=%.2f [%.2f, %.2f], interaction p=%.4f",
+                    metric, model, ratio, ci_lo, ci_hi, int_p,
+                )
 
     # ------------------------------------------------------------------
     # Display analysis results
@@ -1475,15 +1756,16 @@ class Experiment:
 
             # Print all sections concatenated
             logger.info("=" * 60)
-            logger.info("BUSINESS EXECUTIVE SUMMARY (6 SECTIONS)")
+            logger.info("BUSINESS EXECUTIVE SUMMARY (7 SECTIONS)")
             logger.info("=" * 60)
             section_titles = {
                 "linguistic_differences": "SECTION 1: LINGUISTIC DIFFERENCES",
                 "ai_decision_making": "SECTION 2: AI DECISION-MAKING",
                 "correlation_vs_cause": "SECTION 3: CORRELATION VS. CAUSE",
-                "language_neutralisation": "SECTION 4: LANGUAGE NEUTRALISATION",
-                "bias_mitigation": "SECTION 5: BIAS MITIGATION",
-                "conclusion": "SECTION 6: CONCLUSION",
+                "severity_stakes": "SECTION 4: SEVERITY STAKES",
+                "language_neutralisation": "SECTION 5: LANGUAGE NEUTRALISATION",
+                "bias_mitigation": "SECTION 6: BIAS MITIGATION",
+                "conclusion": "SECTION 7: CONCLUSION",
             }
             for key, title in section_titles.items():
                 text = exec_sections.get(key)
@@ -1849,6 +2131,129 @@ class Experiment:
             lines.append("")
         return "\n".join(lines)
 
+    def _capture_severity_data(self) -> str:
+        """Capture severity analysis results as text for the executive summary section."""
+        sev = self.analysis_results.get("severity")
+        if not sev:
+            return ""
+        lines: List[str] = ["── Severity Analysis Summary ──"]
+
+        # --- Descriptives ---
+        desc = sev.get("descriptives", {})
+        lines.append("Severity Metrics Overview:")
+        for metric in ["monetary_severity", "issue_severity"]:
+            md = desc.get(metric, {})
+            dist = md.get("distribution", {})
+            cov = md.get("coverage")
+            if dist:
+                dist_str = ", ".join(f"{k}={v}" for k, v in dist.items())
+                lines.append(f"  {metric} distribution: {dist_str}")
+            if cov is not None:
+                lines.append(f"  {metric} coverage: {cov:.1%}")
+
+        agreement = desc.get("agreement", {})
+        if agreement:
+            lines.append("")
+            lines.append("  Agreement between metrics (where both available):")
+            for key in ["kappa", "spearman_r", "agreement_rate"]:
+                val = agreement.get(key)
+                if val is not None:
+                    lines.append(f"    {key}: {val:.3f}" if isinstance(val, float) else f"    {key}: {val}")
+
+        # --- Main effects per model ---
+        main_fx = sev.get("main_effects", {})
+        for model in self.models:
+            lines.append("")
+            lines.append(f"Model: {model}")
+            lines.append("── Main Effects ──")
+            for metric in ["monetary_severity", "issue_severity"]:
+                mfx = main_fx.get(metric, {}).get(model, {})
+                means = mfx.get("means_by_level", {})
+                if means:
+                    means_str = ", ".join(f"{k}={v:.3f}" for k, v in means.items())
+                    lines.append(f"  {metric}: mean tier by level: {means_str}")
+                anova = mfx.get("anova", {})
+                if anova:
+                    lines.append(f"    ANOVA: F={anova.get('F', 0):.2f}, p={anova.get('p_value', 1):.4f}, "
+                                 f"partial eta-sq={anova.get('eta_sq_partial', 0):.3f}")
+                trend = mfx.get("trend", {})
+                if trend:
+                    lines.append(f"    Trend: Spearman r={trend.get('spearman_r', 0):.3f}, "
+                                 f"p={trend.get('p_value', 1):.4f}")
+
+            # --- Amplification ---
+            interactions = sev.get("interactions", {})
+            lines.append("")
+            lines.append("── Amplification Analysis ──")
+            for metric in ["monetary_severity", "issue_severity"]:
+                mi = interactions.get(metric, {}).get(model, {})
+                lines.append(f"  {metric}:")
+
+                bias = mi.get("bias", {})
+                for level in ["low", "medium", "high"]:
+                    bl = bias.get(level, {})
+                    sd = bl.get("sd_across_personas", 0)
+                    lines.append(f"    Bias at {level} severity (SD across personas): {sd:.3f}")
+
+                amp = mi.get("amplification", {})
+                ratio = amp.get("point", float("nan"))
+                ci_lo = amp.get("ci_lower", float("nan"))
+                ci_hi = amp.get("ci_upper", float("nan"))
+                lines.append(f"    Amplification ratio: {ratio:.2f}x (CI: {ci_lo:.2f}, {ci_hi:.2f})")
+
+                tw = mi.get("two_way", {})
+                inter = tw.get("interaction", {})
+                if inter:
+                    lines.append(f"    Two-way interaction (persona x severity): "
+                                 f"F={inter.get('F', 0):.2f}, p={inter.get('p_value', 1):.4f}, "
+                                 f"eta-sq={inter.get('eta_sq_partial', 0):.3f}")
+
+        # --- Worst case ---
+        wc = sev.get("three_way", {}).get("worst_case", {})
+        if wc and wc.get("model"):
+            lines.append("")
+            lines.append("── Worst Case ──")
+            lines.append(f"  Model: {wc.get('model')}, Metric: {wc.get('severity_metric')}, "
+                         f"Level: {wc.get('severity_level')}")
+            lines.append(f"  Most advantaged persona: {wc.get('most_advantaged')}")
+            lines.append(f"  Most disadvantaged persona: {wc.get('most_disadvantaged')}")
+            lines.append(f"  Effect size (Cohen's d): {wc.get('effect_size_d', 0):.2f}")
+
+        # --- Process ---
+        proc = sev.get("process", {})
+        if proc:
+            lines.append("")
+            lines.append("── Process Fairness ──")
+            for model in self.models:
+                parts = []
+                for metric in ["monetary_severity", "issue_severity"]:
+                    pm = proc.get(metric, {}).get(model, {})
+                    disp = pm.get("disparity_by_severity", {})
+                    if disp:
+                        disp_str = ", ".join(f"{k}={v:.3f}" for k, v in disp.items())
+                        parts.append(f"{metric}: {disp_str}")
+                if parts:
+                    lines.append(f"  {model}: {'; '.join(parts)}")
+
+        # --- Consistency ---
+        consist = sev.get("consistency", {})
+        findings = consist.get("findings", [])
+        if findings:
+            lines.append("")
+            lines.append("── Consistency ──")
+            for f in findings:
+                p_m = f.get("monetary_p", f.get("monetary_value", "N/A"))
+                p_i = f.get("issue_p", f.get("issue_value", "N/A"))
+                rob = f.get("robustness", "")
+                finding = f.get("finding", "")
+                if isinstance(p_m, float):
+                    p_m = f"{p_m:.4f}"
+                if isinstance(p_i, float):
+                    p_i = f"{p_i:.4f}"
+                lines.append(f"  {finding}: monetary={p_m}, issue={p_i} — {rob}")
+
+        return "\n".join(lines)
+
     # ------------------------------------------------------------------
     # Executive Summary section generator
     # ------------------------------------------------------------------
@@ -1989,8 +2394,29 @@ class Experiment:
             else:
                 logger.warning("  Section 3 generation failed")
 
-        # Section 4: Language Neutralisation (Step 6 data)
-        logger.info("── Generating Exec Section 4: Language Neutralisation ──")
+        # Section 4: Severity Stakes (severity analysis)
+        logger.info("── Generating Exec Section 4: Severity Stakes ──")
+        data = self._capture_severity_data()
+        if data:
+            text = self._generate_exec_section(
+                "severity_stakes",
+                "one-shot-example-severity-stakes.md",
+                data,
+                "We analysed whether AI bias in complaint resolution varies by the "
+                "stakes involved — both the dollar amount at issue and the severity "
+                "of the product/issue category. The question is whether unfair "
+                "treatment worsens when the stakes are higher. The generated text "
+                "should explain the analysis, present findings for each model, and "
+                "conclude whether severity amplifies bias.",
+            )
+            if text:
+                sections["severity_stakes"] = text
+                logger.info("  Section 4 generated (%d chars)", len(text))
+            else:
+                logger.warning("  Section 4 generation failed")
+
+        # Section 5: Language Neutralisation (Step 6 data)
+        logger.info("── Generating Exec Section 5: Language Neutralisation ──")
         data = self._capture_step6_data()
         if data:
             text = self._generate_exec_section(
@@ -2006,12 +2432,12 @@ class Experiment:
             )
             if text:
                 sections["language_neutralisation"] = text
-                logger.info("  Section 4 generated (%d chars)", len(text))
+                logger.info("  Section 5 generated (%d chars)", len(text))
             else:
-                logger.warning("  Section 4 generation failed")
+                logger.warning("  Section 5 generation failed")
 
-        # Section 5: Bias Mitigation (Step 7 analysis + commentary)
-        logger.info("── Generating Exec Section 5: Bias Mitigation ──")
+        # Section 6: Bias Mitigation (Step 7 analysis + commentary)
+        logger.info("── Generating Exec Section 6: Bias Mitigation ──")
         data = self._capture_step7_data()
         if data:
             text = self._generate_exec_section(
@@ -2026,12 +2452,12 @@ class Experiment:
             )
             if text:
                 sections["bias_mitigation"] = text
-                logger.info("  Section 5 generated (%d chars)", len(text))
+                logger.info("  Section 6 generated (%d chars)", len(text))
             else:
-                logger.warning("  Section 5 generation failed")
+                logger.warning("  Section 6 generation failed")
 
-        # Section 6: Conclusion (uses all 5 prior sections)
-        logger.info("── Generating Exec Section 6: Conclusion ──")
+        # Section 7: Conclusion (uses all 6 prior sections)
+        logger.info("── Generating Exec Section 7: Conclusion ──")
         if sections:
             combined_sections = "\n\n".join(sections.values())
             text = self._generate_exec_section(
@@ -2040,14 +2466,14 @@ class Experiment:
                 combined_sections,
                 "Write a half-page Plain English executive summary, suitable for a "
                 "non-technical business executive audience, with 3-5 key findings "
-                "and recommendations. You are synthesising the findings from 5 "
+                "and recommendations. You are synthesising the findings from 6 "
                 "preceding executive summary sections into an overall conclusion.",
             )
             if text:
                 sections["conclusion"] = text
-                logger.info("  Section 6 generated (%d chars)", len(text))
+                logger.info("  Section 7 generated (%d chars)", len(text))
             else:
-                logger.warning("  Section 6 generation failed")
+                logger.warning("  Section 7 generation failed")
 
         return sections
 
@@ -2071,6 +2497,20 @@ class Experiment:
         if self.neutralized_df is not None:
             self.neutralized_df.to_csv(self.output_dir / f"results_neutralized_{ts}.csv", index=False)
 
+        # Dollar amounts CSV
+        if self.dollar_amounts:
+            da_df = pd.DataFrame([
+                {
+                    "case_id": da.case_id,
+                    "primary_amount": da.primary_amount,
+                    "amount_type": da.amount_type,
+                    "confidence": da.confidence,
+                    "amounts_mentioned": json.dumps(da.amounts_mentioned) if da.amounts_mentioned else None,
+                }
+                for da in self.dollar_amounts
+            ])
+            da_df.to_csv(self.output_dir / f"dollar_amounts_{ts}.csv", index=False)
+
         # Personas CSV
         if self.personas_df is not None:
             self.personas_df.to_csv(self.output_dir / f"results_personas_{ts}.csv", index=False)
@@ -2084,6 +2524,46 @@ class Experiment:
         (self.output_dir / f"repair_stats_{ts}.json").write_text(
             json.dumps(repair_stats, indent=2), encoding="utf-8"
         )
+
+        # Severity analysis JSON files
+        sev = self.analysis_results.get("severity", {})
+        if sev:
+            for key in ("descriptives", "main_effects", "interactions", "model_comparison"):
+                data = sev.get(key, {})
+                if data:
+                    (self.output_dir / f"severity_{key}_{ts}.json").write_text(
+                        json.dumps(data, indent=2, default=str), encoding="utf-8"
+                    )
+
+        # Executive summary text file
+        exec_sections = self.analysis_results.get("exec_sections", {})
+        if exec_sections:
+            section_titles = {
+                "linguistic_differences": "SECTION 1: LINGUISTIC DIFFERENCES",
+                "ai_decision_making": "SECTION 2: AI DECISION-MAKING",
+                "correlation_vs_cause": "SECTION 3: CORRELATION VS. CAUSE",
+                "severity_stakes": "SECTION 4: SEVERITY STAKES",
+                "language_neutralisation": "SECTION 5: LANGUAGE NEUTRALISATION",
+                "bias_mitigation": "SECTION 6: BIAS MITIGATION",
+                "conclusion": "SECTION 7: CONCLUSION",
+            }
+            lines: List[str] = []
+            lines.append("=" * 60)
+            lines.append("BUSINESS EXECUTIVE SUMMARY (7 SECTIONS)")
+            lines.append("=" * 60)
+            for key, title in section_titles.items():
+                text = exec_sections.get(key)
+                if text:
+                    lines.append("")
+                    lines.append("\u2500" * 50)
+                    lines.append(title)
+                    lines.append("\u2500" * 50)
+                    lines.append(text)
+            lines.append("")
+            lines.append("=" * 60)
+            summary_path = self.output_dir / "executive_summary.txt"
+            summary_path.write_text("\n".join(lines), encoding="utf-8")
+            logger.info("Executive summary written to %s", summary_path)
 
         # Failed requests
         # (collected from LLM responses with success=False — tracked internally)

@@ -1767,6 +1767,475 @@ def _build_tab_detailed_results(
 
 
 # ---------------------------------------------------------------------------
+# Severity Analysis tab
+# ---------------------------------------------------------------------------
+
+def _chart_severity_dist(sev: Dict[str, Any]) -> Optional[str]:
+    """Side-by-side bar charts for severity distributions."""
+    m_dist = _safe_get(sev, "descriptives", "monetary_severity", "distribution", default={})
+    i_dist = _safe_get(sev, "descriptives", "issue_severity", "distribution", default={})
+    if not m_dist and not i_dist:
+        return None
+
+    levels = ["low", "medium", "high", "unknown"]
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+
+    # Monetary
+    vals = [m_dist.get(l, 0) for l in levels]
+    colors = ["#2ecc71", "#f39c12", "#e74c3c", "#95a5a6"]
+    ax1.bar(levels, vals, color=colors)
+    ax1.set_title("Monetary Severity", fontweight="bold")
+    ax1.set_ylabel("Count")
+    for i, v in enumerate(vals):
+        if v > 0:
+            ax1.text(i, v + max(vals) * 0.02, str(v), ha="center", fontsize=9)
+
+    # Issue
+    i_levels = ["low", "medium", "high"]
+    i_vals = [i_dist.get(l, 0) for l in i_levels]
+    ax2.bar(i_levels, i_vals, color=colors[:3])
+    ax2.set_title("Issue Severity", fontweight="bold")
+    ax2.set_ylabel("Count")
+    for i, v in enumerate(i_vals):
+        if v > 0:
+            ax2.text(i, v + max(i_vals) * 0.02, str(v), ha="center", fontsize=9)
+
+    fig.tight_layout()
+    return _fig_to_base64(fig)
+
+
+def _chart_severity_crosstab(sev: Dict[str, Any]) -> Optional[str]:
+    """Heatmap of monetary × issue severity cross-tabulation."""
+    ct_data = _safe_get(sev, "descriptives", "agreement", "cross_tab", default={})
+    if not ct_data:
+        return None
+    try:
+        ct = pd.DataFrame(ct_data).reindex(index=["low", "medium", "high"], columns=["low", "medium", "high"]).fillna(0)
+    except Exception:
+        return None
+
+    fig, ax = plt.subplots(figsize=(5, 4))
+    sns.heatmap(ct, annot=True, fmt=".0f", cmap="YlOrRd", ax=ax, linewidths=0.5,
+                cbar_kws={"label": "Count"})
+    ax.set_xlabel("Issue Severity")
+    ax.set_ylabel("Monetary Severity")
+    ax.set_title("Severity Cross-Tabulation", fontweight="bold")
+    fig.tight_layout()
+    return _fig_to_base64(fig)
+
+
+def _chart_severity_main_effects(sev: Dict[str, Any], models: List[str]) -> Optional[str]:
+    """Line chart: mean tier by severity per model with CI bands."""
+    me = _safe_get(sev, "main_effects", default={})
+    if not me:
+        return None
+
+    levels = ["low", "medium", "high"]
+    x = np.arange(len(levels))
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    for idx, metric in enumerate(["monetary_severity", "issue_severity"]):
+        ax = axes[idx]
+        metric_data = me.get(metric, {})
+        for mi, model in enumerate(models):
+            model_data = metric_data.get(model, {})
+            ci_data = model_data.get("ci_by_level", {})
+            means = [ci_data.get(l, {}).get("mean", float("nan")) for l in levels]
+            ci_lo = [ci_data.get(l, {}).get("ci_lower", float("nan")) for l in levels]
+            ci_hi = [ci_data.get(l, {}).get("ci_upper", float("nan")) for l in levels]
+
+            valid = [i for i, m in enumerate(means) if np.isfinite(m)]
+            if not valid:
+                continue
+            vx = [x[i] for i in valid]
+            vm = [means[i] for i in valid]
+            vlo = [ci_lo[i] for i in valid]
+            vhi = [ci_hi[i] for i in valid]
+
+            ax.plot(vx, vm, marker="o", label=model)
+            ax.fill_between(vx, vlo, vhi, alpha=0.15)
+
+        ax.set_xticks(x)
+        ax.set_xticklabels([l.title() for l in levels])
+        ax.set_ylabel("Mean Remedy Tier")
+        ax.set_title(metric.replace("_", " ").title(), fontweight="bold")
+        ax.legend(fontsize=8)
+        ax.grid(axis="y", alpha=0.3)
+
+    fig.suptitle("Severity Main Effects on Outcomes", fontsize=13, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    return _fig_to_base64(fig)
+
+
+def _chart_amplification_bars(sev: Dict[str, Any], models: List[str]) -> Optional[str]:
+    """Bar chart: bias at each severity level with CI error bars."""
+    interactions = _safe_get(sev, "interactions", default={})
+    if not interactions:
+        return None
+
+    levels = ["low", "medium", "high"]
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    for idx, metric in enumerate(["monetary_severity", "issue_severity"]):
+        ax = axes[idx]
+        metric_int = interactions.get(metric, {})
+        bar_width = 0.35
+        for mi, model in enumerate(models):
+            bias_data = metric_int.get(model, {}).get("bias", {})
+            sds = [bias_data.get(l, {}).get("sd_across_personas", 0) for l in levels]
+            positions = np.arange(len(levels)) + mi * bar_width
+            ax.bar(positions, sds, bar_width, label=model, alpha=0.8)
+
+        ax.set_xticks(np.arange(len(levels)) + bar_width * (len(models) - 1) / 2)
+        ax.set_xticklabels([l.title() for l in levels])
+        ax.set_ylabel("Bias (SD of persona means)")
+        ax.set_title(metric.replace("_", " ").title(), fontweight="bold")
+        ax.legend(fontsize=8)
+        ax.grid(axis="y", alpha=0.3)
+
+    fig.suptitle("Bias Magnitude by Severity Level", fontsize=13, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    return _fig_to_base64(fig)
+
+
+def _chart_model_amplification(sev: Dict[str, Any], models: List[str]) -> Optional[str]:
+    """Grouped bar chart: amplification ratio by model."""
+    mc = _safe_get(sev, "model_comparison", default={})
+    if not mc:
+        return None
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    x = np.arange(len(models))
+    width = 0.35
+
+    m_ratios = [
+        _safe_get(mc, m, "monetary_severity_amplification", "point", default=float("nan"))
+        for m in models
+    ]
+    i_ratios = [
+        _safe_get(mc, m, "issue_severity_amplification", "point", default=float("nan"))
+        for m in models
+    ]
+
+    ax.bar(x - width / 2, m_ratios, width, label="Monetary", color="#3498db", alpha=0.8)
+    ax.bar(x + width / 2, i_ratios, width, label="Issue", color="#e74c3c", alpha=0.8)
+    ax.axhline(y=1.0, color="gray", linestyle="--", alpha=0.5, label="No amplification")
+    ax.axhline(y=1.5, color="#f39c12", linestyle=":", alpha=0.5)
+    ax.axhline(y=2.5, color="#e74c3c", linestyle=":", alpha=0.5)
+    ax.set_xticks(x)
+    ax.set_xticklabels(models, fontsize=9)
+    ax.set_ylabel("Amplification Ratio")
+    ax.set_title("Amplification Ratio by Model", fontweight="bold")
+    ax.legend(fontsize=8)
+    ax.grid(axis="y", alpha=0.3)
+
+    fig.tight_layout()
+    return _fig_to_base64(fig)
+
+
+def _chart_process_severity(sev: Dict[str, Any], models: List[str]) -> Optional[str]:
+    """Info request disparity by severity level."""
+    proc = _safe_get(sev, "process", default={})
+    if not proc:
+        return None
+
+    levels = ["low", "medium", "high"]
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    for idx, metric in enumerate(["monetary_severity", "issue_severity"]):
+        ax = axes[idx]
+        metric_proc = proc.get(metric, {})
+        for model in models:
+            model_data = metric_proc.get(model, {})
+            rates = model_data.get("rates_by_severity", {})
+            disparities = [rates.get(l, {}).get("disparity", 0) for l in levels]
+            valid = [(i, d) for i, d in enumerate(disparities) if d > 0 or True]
+            if valid:
+                ax.plot([levels[i].title() for i, _ in valid],
+                        [d for _, d in valid], marker="o", label=model)
+
+        ax.set_ylabel("Info Request Disparity")
+        ax.set_title(metric.replace("_", " ").title(), fontweight="bold")
+        ax.legend(fontsize=8)
+        ax.grid(axis="y", alpha=0.3)
+
+    fig.suptitle("Process Discrimination by Severity", fontsize=13, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    return _fig_to_base64(fig)
+
+
+def _traffic_light(ratio: float) -> Tuple[str, str, str]:
+    """Return (color_hex, bg_hex, label) for amplification ratio."""
+    if not np.isfinite(ratio):
+        return "#95a5a6", "#f0f0f0", "N/A"
+    if ratio < 1.5:
+        return "#2ecc71", "#eafaf1", "Minimal"
+    if ratio <= 2.5:
+        return "#f39c12", "#fef9e7", "Moderate"
+    return "#e74c3c", "#fdecea", "Severe"
+
+
+def _build_tab_severity(
+    analysis_results: Dict[str, Any],
+    complaints: list,
+    models: List[str],
+) -> str:
+    """Build the Severity Analysis tab HTML (6 panels)."""
+    parts: List[str] = []
+    sev = analysis_results.get("severity", {})
+
+    if not sev:
+        parts.append("<h2>Severity Analysis</h2>")
+        parts.append("<p>Severity analysis was not run. Ensure baseline decisions and persona estimates are available.</p>")
+        return "\n".join(parts)
+
+    parts.append("<h2>Severity Amplification Analysis</h2>")
+    parts.append("<p>Tests whether LLM bias in complaint resolution is amplified in high-severity cases.</p>")
+
+    # ── Panel 1: Overview ──
+    parts.append('<div class="collapsible">')
+    parts.append('<div class="collapsible-header">Panel 1: Severity Overview</div>')
+    parts.append('<div class="collapsible-body">')
+
+    chart = _chart_severity_dist(sev)
+    if chart:
+        parts.append(f'<div class="chart-container"><img src="data:image/png;base64,{chart}" alt="Severity Distribution"></div>')
+
+    # Coverage stats
+    desc = sev.get("descriptives", {})
+    m_cov = _safe_get(desc, "monetary_severity", "coverage", default=0)
+    i_cov = _safe_get(desc, "issue_severity", "coverage", default=0)
+    parts.append('<table><thead><tr><th>Metric</th><th>Coverage</th></tr></thead><tbody>')
+    parts.append(f'<tr><td>Monetary Severity</td><td>{_pct(m_cov)}</td></tr>')
+    parts.append(f'<tr><td>Issue Severity</td><td>{_pct(i_cov)}</td></tr>')
+    parts.append('</tbody></table>')
+
+    # Cross-tabulation heatmap
+    chart = _chart_severity_crosstab(sev)
+    if chart:
+        parts.append(f'<div class="chart-container"><img src="data:image/png;base64,{chart}" alt="Cross-Tabulation"></div>')
+
+    # Agreement stats
+    agreement = _safe_get(desc, "agreement", default={})
+    if agreement:
+        kappa = agreement.get("kappa", float("nan"))
+        interp = "High" if kappa > 0.6 else ("Moderate" if kappa > 0.4 else "Low")
+        parts.append('<table><thead><tr><th>Agreement Metric</th><th>Value</th><th>Interpretation</th></tr></thead><tbody>')
+        parts.append(f'<tr><td>Cohen\'s Kappa</td><td>{_fmt(kappa)}</td><td>{interp} agreement</td></tr>')
+        parts.append(f'<tr><td>Spearman r</td><td>{_fmt(agreement.get("spearman_r"))}</td><td>p = {_fmt(agreement.get("spearman_p"))}</td></tr>')
+        parts.append(f'<tr><td>Agreement Rate</td><td>{_pct(agreement.get("agreement_rate"))}</td><td></td></tr>')
+        parts.append('</tbody></table>')
+
+    # Coverage: small cells warning
+    cov = _safe_get(desc, "coverage", default={})
+    for metric in ["monetary_severity", "issue_severity"]:
+        small = _safe_get(cov, metric, "small_cells", default=[])
+        if small:
+            parts.append(f'<p style="color:#e67e22;"><strong>{metric}:</strong> {len(small)} persona×severity cells have &lt; 30 observations</p>')
+
+    parts.append('</div></div>')
+
+    # ── Panel 2: Main Effects ──
+    parts.append('<div class="collapsible">')
+    parts.append('<div class="collapsible-header">Panel 2: Severity Main Effects</div>')
+    parts.append('<div class="collapsible-body">')
+
+    chart = _chart_severity_main_effects(sev, models)
+    if chart:
+        parts.append(f'<div class="chart-container"><img src="data:image/png;base64,{chart}" alt="Main Effects"></div>')
+
+    # ANOVA / chi-square results table
+    me = sev.get("main_effects", {})
+    parts.append('<table class="sortable"><thead><tr>')
+    parts.append('<th>Metric</th><th>Model</th><th>ANOVA F</th><th>ANOVA p</th>')
+    parts.append('<th>Partial &eta;&sup2;</th><th>Chi&sup2; p</th><th>Trend r</th><th>Trend p</th>')
+    parts.append('</tr></thead><tbody>')
+    for metric in ["monetary_severity", "issue_severity"]:
+        for model in models:
+            md = _safe_get(me, metric, model, default={})
+            anova = md.get("anova", {})
+            chi2 = md.get("chi2_favorable", {})
+            trend = md.get("trend", {})
+            parts.append(f'<tr><td>{metric.replace("_"," ").title()}</td><td>{html.escape(model)}</td>')
+            parts.append(f'<td>{_fmt(anova.get("F"))}</td><td>{_fmt(anova.get("p_value"))}</td>')
+            parts.append(f'<td>{_fmt(anova.get("eta_sq_partial"))}</td>')
+            parts.append(f'<td>{_fmt(chi2.get("p_value"))}</td>')
+            parts.append(f'<td>{_fmt(trend.get("spearman_r"))}</td><td>{_fmt(trend.get("p_value"))}</td></tr>')
+    parts.append('</tbody></table>')
+
+    parts.append('</div></div>')
+
+    # ── Panel 3: Amplification ──
+    parts.append('<div class="collapsible">')
+    parts.append('<div class="collapsible-header">Panel 3: Severity Amplification (Core Finding)</div>')
+    parts.append('<div class="collapsible-body">')
+
+    # Key metric cards with traffic lights
+    interactions = sev.get("interactions", {})
+    parts.append('<div class="metrics-grid">')
+    for metric in ["monetary_severity", "issue_severity"]:
+        for model in models:
+            amp = _safe_get(interactions, metric, model, "amplification", default={})
+            ratio = amp.get("point", float("nan"))
+            ci_lo = amp.get("ci_lower", float("nan"))
+            ci_hi = amp.get("ci_upper", float("nan"))
+            color, bg, label = _traffic_light(ratio)
+            parts.append(f'<div class="metric-card" style="border-left: 4px solid {color}; background: {bg};">')
+            parts.append(f'<div class="value" style="color: {color};">{_fmt(ratio, 2)}x</div>')
+            parts.append(f'<div class="label">{metric.replace("_"," ").title()} ({model})</div>')
+            parts.append(f'<div style="font-size:0.8rem;">CI: [{_fmt(ci_lo, 2)}, {_fmt(ci_hi, 2)}] — {label}</div>')
+            parts.append('</div>')
+    parts.append('</div>')
+
+    chart = _chart_amplification_bars(sev, models)
+    if chart:
+        parts.append(f'<div class="chart-container"><img src="data:image/png;base64,{chart}" alt="Amplification"></div>')
+
+    # Two-way ANOVA interaction table
+    parts.append('<h3>Persona × Severity Interaction Tests</h3>')
+    parts.append('<table class="sortable"><thead><tr>')
+    parts.append('<th>Metric</th><th>Model</th><th>F</th><th>p-value</th><th>Partial &eta;&sup2;</th><th>Interpretation</th>')
+    parts.append('</tr></thead><tbody>')
+    for metric in ["monetary_severity", "issue_severity"]:
+        for model in models:
+            tw = _safe_get(interactions, metric, model, "two_way", default={})
+            inter = tw.get("interaction", {})
+            p = inter.get("p_value", float("nan"))
+            eta = inter.get("eta_sq_partial", 0)
+            if np.isfinite(p) and p < 0.05:
+                interp = "Significant"
+                row_style = ' style="background:#fdecea;"'
+            else:
+                interp = "Not significant"
+                row_style = ""
+            if eta >= 0.14:
+                interp += " (Large)"
+            elif eta >= 0.06:
+                interp += " (Medium)"
+            elif eta >= 0.01:
+                interp += " (Small)"
+            parts.append(f'<tr{row_style}><td>{metric.replace("_"," ").title()}</td>')
+            parts.append(f'<td>{html.escape(model)}</td>')
+            parts.append(f'<td>{_fmt(inter.get("F"))}</td><td>{_fmt(p)}</td>')
+            parts.append(f'<td>{_fmt(eta)}</td><td>{interp}</td></tr>')
+    parts.append('</tbody></table>')
+
+    # Simple effects summary
+    parts.append('<h3>Simple Effects: Persona Effect at Each Severity Level</h3>')
+    parts.append('<table class="sortable"><thead><tr>')
+    parts.append('<th>Metric</th><th>Model</th><th>Severity</th><th>Partial &eta;&sup2;</th>')
+    parts.append('<th>Largest d</th><th>N significant pairs</th><th>N</th>')
+    parts.append('</tr></thead><tbody>')
+    for metric in ["monetary_severity", "issue_severity"]:
+        for model in models:
+            se = _safe_get(interactions, metric, model, "simple_effects", default={})
+            for level in ["low", "medium", "high"]:
+                ld = se.get(level, {})
+                parts.append(f'<tr><td>{metric.replace("_"," ").title()}</td>')
+                parts.append(f'<td>{html.escape(model)}</td><td>{level.title()}</td>')
+                parts.append(f'<td>{_fmt(ld.get("eta_sq_partial"))}</td>')
+                parts.append(f'<td>{_fmt(ld.get("largest_pairwise_d"))}</td>')
+                parts.append(f'<td>{ld.get("n_significant", 0)}</td>')
+                parts.append(f'<td>{ld.get("n", 0)}</td></tr>')
+    parts.append('</tbody></table>')
+
+    parts.append('</div></div>')
+
+    # ── Panel 4: Model Comparison ──
+    parts.append('<div class="collapsible">')
+    parts.append('<div class="collapsible-header">Panel 4: Model Comparison</div>')
+    parts.append('<div class="collapsible-body">')
+
+    chart = _chart_model_amplification(sev, models)
+    if chart:
+        parts.append(f'<div class="chart-container"><img src="data:image/png;base64,{chart}" alt="Model Comparison"></div>')
+
+    # Three-way ANOVA results
+    tw3 = _safe_get(sev, "three_way", "anova", default={})
+    if tw3:
+        parts.append('<h3>Three-Way ANOVA (Model × Persona × Severity)</h3>')
+        for metric in ["monetary_severity", "issue_severity"]:
+            md = tw3.get(metric, {})
+            if "error" in md:
+                parts.append(f'<p>{metric}: {html.escape(str(md["error"]))}</p>')
+                continue
+            parts.append(f'<h4>{metric.replace("_"," ").title()}</h4>')
+            parts.append('<table><thead><tr><th>Effect</th><th>F</th><th>p-value</th><th>Partial &eta;&sup2;</th></tr></thead><tbody>')
+            for effect in ["model", "persona", "severity", "model_x_persona",
+                           "model_x_severity", "persona_x_severity", "model_x_persona_x_severity"]:
+                ed = md.get(effect, {})
+                label = effect.replace("_x_", " × ").replace("_", " ").title()
+                parts.append(f'<tr><td>{label}</td><td>{_fmt(ed.get("F"))}</td>')
+                parts.append(f'<td>{_fmt(ed.get("p_value"))}</td><td>{_fmt(ed.get("eta_sq_partial"))}</td></tr>')
+            parts.append('</tbody></table>')
+
+    parts.append('</div></div>')
+
+    # ── Panel 5: Worst Cases ──
+    parts.append('<div class="collapsible">')
+    parts.append('<div class="collapsible-header">Panel 5: Worst Cases</div>')
+    parts.append('<div class="collapsible-body">')
+
+    wc = _safe_get(sev, "three_way", "worst_case", default={})
+    if wc and wc.get("model"):
+        parts.append('<h3>Maximum Discrimination Scenario</h3>')
+        parts.append('<table><thead><tr><th>Attribute</th><th>Value</th></tr></thead><tbody>')
+        parts.append(f'<tr><td>Model</td><td>{html.escape(str(wc.get("model")))}</td></tr>')
+        parts.append(f'<tr><td>Severity Metric</td><td>{wc.get("severity_metric", "").replace("_"," ").title()}</td></tr>')
+        parts.append(f'<tr><td>Severity Level</td><td>{wc.get("severity_level", "").title()}</td></tr>')
+        parts.append(f'<tr><td>Bias Magnitude</td><td>{_fmt(wc.get("bias_magnitude"))}</td></tr>')
+        parts.append(f'<tr><td>Most Advantaged Persona</td><td>{html.escape(str(wc.get("most_advantaged")))}</td></tr>')
+        parts.append(f'<tr><td>Most Disadvantaged Persona</td><td>{html.escape(str(wc.get("most_disadvantaged")))}</td></tr>')
+        parts.append(f'<tr><td>Effect Size (Cohen\'s d)</td><td>{_fmt(wc.get("effect_size_d"))}</td></tr>')
+        parts.append('</tbody></table>')
+    else:
+        parts.append('<p>No worst-case data available.</p>')
+
+    parts.append('</div></div>')
+
+    # ── Panel 6: Process Fairness ──
+    parts.append('<div class="collapsible">')
+    parts.append('<div class="collapsible-header">Panel 6: Process Fairness × Severity</div>')
+    parts.append('<div class="collapsible-body">')
+
+    chart = _chart_process_severity(sev, models)
+    if chart:
+        parts.append(f'<div class="chart-container"><img src="data:image/png;base64,{chart}" alt="Process Severity"></div>')
+
+    proc = sev.get("process", {})
+    parts.append('<table><thead><tr><th>Metric</th><th>Model</th><th>Process Amplification</th></tr></thead><tbody>')
+    for metric in ["monetary_severity", "issue_severity"]:
+        for model in models:
+            pa = _safe_get(proc, metric, model, "process_amplification", default={})
+            ratio = pa.get("point", float("nan"))
+            color, _, label = _traffic_light(ratio)
+            parts.append(f'<tr><td>{metric.replace("_"," ").title()}</td>')
+            parts.append(f'<td>{html.escape(model)}</td>')
+            parts.append(f'<td style="color:{color};font-weight:bold;">{_fmt(ratio, 2)}x ({label})</td></tr>')
+    parts.append('</tbody></table>')
+
+    # Consistency check
+    consist = sev.get("consistency", {})
+    findings = consist.get("findings", [])
+    if findings:
+        parts.append('<h3>Robustness: Consistency Across Severity Metrics</h3>')
+        parts.append('<table><thead><tr><th>Finding</th><th>Monetary p/value</th><th>Issue p/value</th><th>Robustness</th></tr></thead><tbody>')
+        for f in findings:
+            rob = f.get("robustness", "")
+            color = "#2ecc71" if rob == "Robust" else ("#e74c3c" if rob == "Metric-specific" else "#95a5a6")
+            p_m = f.get("monetary_p", f.get("monetary_value", ""))
+            p_i = f.get("issue_p", f.get("issue_value", ""))
+            parts.append(f'<tr><td>{html.escape(f.get("finding", ""))}</td>')
+            parts.append(f'<td>{_fmt(p_m)}</td><td>{_fmt(p_i)}</td>')
+            parts.append(f'<td style="color:{color};font-weight:bold;">{rob}</td></tr>')
+        parts.append('</tbody></table>')
+
+    parts.append('</div></div>')
+
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -1826,6 +2295,7 @@ def generate_report(
             analysis_results, complaints, models,
             num_complaints, seed, materiality_threshold, timestamp,
         )
+        tab_severity = _build_tab_severity(analysis_results, complaints, models)
 
     # Assemble the body
     body_parts: List[str] = []
@@ -1847,6 +2317,7 @@ def generate_report(
         ("tab-process", "Process Discrimination"),
         ("tab-text", "Text Features"),
         ("tab-model", "Model Comparison"),
+        ("tab-severity", "Severity Analysis"),
         ("tab-detailed", "Detailed Results"),
     ]
     for i, (tid, label) in enumerate(tabs):
@@ -1862,6 +2333,7 @@ def generate_report(
         ("tab-process", tab_process),
         ("tab-text", tab_text),
         ("tab-model", tab_model),
+        ("tab-severity", tab_severity),
         ("tab-detailed", tab_detailed),
     ]
     for i, (tid, content) in enumerate(tab_contents):

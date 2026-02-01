@@ -89,6 +89,44 @@ def friedman_test(*groups: np.ndarray) -> Dict[str, Any]:
     return {"statistic": stat, "p_value": p}
 
 
+def one_way_anova(
+    groups: List[np.ndarray],
+    group_labels: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """One-way ANOVA with partial eta-squared.
+
+    Parameters
+    ----------
+    groups : list of arrays, one per group
+    group_labels : optional names for each group
+
+    Returns
+    -------
+    dict with F, p_value, eta_sq_partial, group_means, group_ns
+    """
+    groups = [np.asarray(g, dtype=float) for g in groups if len(g) > 0]
+    if len(groups) < 2:
+        return {"F": float("nan"), "p_value": float("nan"), "eta_sq_partial": float("nan"),
+                "group_means": {}, "group_ns": {}}
+    labels = group_labels or [str(i) for i in range(len(groups))]
+
+    f_stat, p_val = sp_stats.f_oneway(*groups)
+
+    # Partial eta-squared: SS_between / (SS_between + SS_within)
+    grand_mean = np.concatenate(groups).mean()
+    ss_between = sum(len(g) * (g.mean() - grand_mean) ** 2 for g in groups)
+    ss_within = sum(np.sum((g - g.mean()) ** 2) for g in groups)
+    eta_sq = ss_between / (ss_between + ss_within) if (ss_between + ss_within) > 0 else 0.0
+
+    return {
+        "F": float(f_stat) if np.isfinite(f_stat) else float("nan"),
+        "p_value": float(p_val) if np.isfinite(p_val) else float("nan"),
+        "eta_sq_partial": float(eta_sq),
+        "group_means": {l: float(g.mean()) for l, g in zip(labels, groups)},
+        "group_ns": {l: len(g) for l, g in zip(labels, groups)},
+    }
+
+
 def bootstrap_ci(
     data: np.ndarray,
     statistic_fn=np.mean,

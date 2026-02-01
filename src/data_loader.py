@@ -13,7 +13,7 @@ import logging
 import re
 import uuid
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -118,6 +118,131 @@ EXCLUDED_CATEGORY_PAIRS = {
     ("Credit Reporting", "Credit Report Errors"),
     ("Debt Collection", "Debt Disputes"),
 }
+
+
+# ---------------------------------------------------------------------------
+# Issue severity scoring  (product base + issue modifier → low/medium/high)
+# ---------------------------------------------------------------------------
+
+# Tier 1: Product-based severity (base score)
+_PRODUCT_SEVERITY: Dict[str, int] = {
+    # High (3) – life-altering consequences
+    "Mortgage": 3,
+    "Student loan": 3,
+    "Debt collection": 3,
+    # Medium (2) – significant but typically recoverable
+    "Credit card or prepaid card": 2,
+    "Credit card": 2,
+    "Vehicle loan or lease": 2,
+    "Payday loan, title loan, or personal loan": 2,
+    "Payday loan": 2,
+    "Consumer Loan": 2,
+    # Low (1) – usually smaller amounts, procedural
+    "Checking or savings account": 1,
+    "Bank account or service": 1,
+    "Prepaid card": 1,
+    "Money transfer, virtual currency, or money service": 1,
+    "Money transfers": 1,
+    "Credit reporting, credit repair services, or other personal consumer reports": 1,
+    "Credit reporting": 1,
+}
+
+# Tier 2: Issue-based severity modifier
+# +2 (Critical): threatened/actual loss of asset or service
+# +1 (Elevated): active collection or credit damage
+#  0 (Standard): billing/service disputes
+# -1 (Lower):   informational/procedural
+_ISSUE_MODIFIER: Dict[str, int] = {
+    # +2  Critical – asset/service loss
+    "Struggling to pay mortgage": 2,
+    "Loan is not being serviced by the servicer you expected": 2,
+    "Took or threatened to take negative or legal action": 2,
+    "Problem when making payments": 2,
+    "Dealing with your lender or servicer": 2,
+    "Threatened with jail or sued": 2,
+    "Closing your account": 2,
+
+    # +1  Elevated – collection or credit damage
+    "Attempts to collect debt not owed": 1,
+    "Communication tactics": 1,
+    "Incorrect information on your report": 1,
+    "Problem with a credit reporting company's investigation into an existing problem": 1,
+    "False statements or representation": 1,
+    "Written notification about debt": 1,
+    "Problem with a purchase shown on your statement": 1,
+    "Problem with fraud alerts or security freezes": 1,
+    "Getting a credit card": 1,
+
+    # 0  Standard – billing / service disputes
+    "Managing an account": 0,
+    "Trouble during payment process": 0,
+    "Problem with a lender or other company charging your account": 0,
+    "Deposits and withdrawals": 0,
+    "Problem caused by your funds being low": 0,
+    "Opening an account": 0,
+    "Closing an account": 0,
+    "Problem with a company's investigation into an existing complaint": 0,
+    "Fees or interest": 0,
+
+    # -1  Lower – informational / procedural
+    "Getting information about your loan": -1,
+    "Improper use of your report": -1,
+    "Problem with customer service": -1,
+    "Other features, terms, or problems": -1,
+    "Advertising and marketing, including promotional offers": -1,
+    "Privacy and online account management": -1,
+    "Confusing or missing disclosures": -1,
+}
+
+# Top ~50 product×issue overrides for combinations where the default
+# composite score would be misleading.
+_PRODUCT_ISSUE_OVERRIDE: Dict[Tuple[str, str], int] = {
+    # Mortgage foreclosure situations → always high
+    ("Mortgage", "Struggling to pay mortgage"): 5,
+    ("Mortgage", "Trouble during payment process"): 4,
+    ("Mortgage", "Closing on a mortgage"): 4,
+    # Student loan wage garnishment
+    ("Student loan", "Dealing with your lender or servicer"): 5,
+    ("Student loan", "Struggling to repay your loan"): 4,
+    # Vehicle repossession
+    ("Vehicle loan or lease", "Managing the loan or lease"): 3,
+    ("Vehicle loan or lease", "Struggling to pay your loan"): 4,
+    # Debt collection threats → critical regardless of product
+    ("Debt collection", "Took or threatened to take negative or legal action"): 5,
+    ("Debt collection", "Attempts to collect debt not owed"): 4,
+    ("Debt collection", "Threatened with jail or sued"): 5,
+    # Credit card fraud
+    ("Credit card or prepaid card", "Problem with a purchase shown on your statement"): 3,
+    ("Credit card", "Problem with a purchase shown on your statement"): 3,
+    # Low-stakes procedural
+    ("Checking or savings account", "Managing an account"): 1,
+    ("Checking or savings account", "Opening an account"): 1,
+    ("Prepaid card", "Problem with a purchase shown on your statement"): 1,
+}
+
+
+def compute_issue_severity(product: str, issue: str) -> str:
+    """Compute composite issue severity from raw product and issue fields.
+
+    Returns ``"low"``, ``"medium"``, or ``"high"``.
+    """
+    # Check product×issue override first
+    override = _PRODUCT_ISSUE_OVERRIDE.get((product, issue))
+    if override is not None:
+        score = override
+    else:
+        base = _PRODUCT_SEVERITY.get(product, 2)          # default medium
+        modifier = _ISSUE_MODIFIER.get(issue, 0)           # default standard
+        score = base + modifier
+
+    # Clamp to [1, 5] then bucket
+    score = max(1, min(5, score))
+    if score <= 2:
+        return "low"
+    elif score <= 3:
+        return "medium"
+    else:
+        return "high"
 
 
 # ---------------------------------------------------------------------------
@@ -410,6 +535,7 @@ def load_and_clean(
             year=str(row["year"]),
             product_category=row["product_category"],
             issue_category=row["issue_category"],
+            issue_severity=compute_issue_severity(row["product"], row["issue"]),
         )
         for _, row in sampled.iterrows()
     ]
