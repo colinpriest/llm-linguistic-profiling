@@ -1553,6 +1553,16 @@ class Experiment:
         if self.persona_decisions_df is not None and len(self.persona_decisions_df) > 0:
             persona_dec_sev = self.persona_decisions_df.merge(sev_cols, on="case_id", how="left")
 
+        # Build neutralized severity DataFrame (if neutralized decisions available)
+        neutralized_sev = None
+        if self.neutralized_df is not None and len(self.neutralized_df) > 0:
+            neutralized_sev = self.neutralized_df.merge(sev_cols, on="case_id", how="left")
+            neutralized_sev = neutralized_sev.merge(
+                self.personas_df[["case_id", "model", "persona_label"]],
+                on=["case_id", "model"],
+                how="left",
+            )
+
         result = run_severity_analysis(
             baseline_df=baseline_sev,
             persona_decisions_df=persona_dec_sev,
@@ -1561,6 +1571,7 @@ class Experiment:
             models=self.models,
             n_boot=1000,
             seed=self.seed,
+            neutralized_df=neutralized_sev,
         )
         self.analysis_results["severity"] = result
 
@@ -1568,6 +1579,7 @@ class Experiment:
         logger.info("── Severity Amplification Summary ──")
         for metric in ["monetary_severity", "issue_severity"]:
             interactions = result.get("interactions", {}).get(metric, {})
+            main_effects = result.get("main_effects", {}).get(metric, {})
             for model in self.models:
                 model_int = interactions.get(model, {})
                 amp = model_int.get("amplification", {})
@@ -1578,9 +1590,76 @@ class Experiment:
                 ci_hi = amp.get("ci_upper", float("nan"))
                 int_p = interaction.get("p_value", float("nan"))
                 logger.info(
-                    "  %s [%s]: amplification=%.2f [%.2f, %.2f], interaction p=%.4f",
+                    "  %s [%s]: amplification=%.2fx [%.2f, %.2f], interaction p=%.4f",
                     metric, model, ratio, ci_lo, ci_hi, int_p,
                 )
+
+                # Show bias at each severity level
+                bias = model_int.get("bias", {})
+                se = model_int.get("simple_effects", {})
+                mfx = main_effects.get(model, {})
+                means = mfx.get("means_by_level", {})
+                for level in ["low", "medium", "high"]:
+                    bl = bias.get(level, {})
+                    sl = se.get(level, {})
+                    n = bl.get("n", 0)
+                    sd = bl.get("sd_across_personas", float("nan"))
+                    rng = bl.get("range", float("nan"))
+                    mean_tier = means.get(level, float("nan"))
+                    eta = sl.get("eta_sq_partial", float("nan"))
+                    n_sig = sl.get("n_significant", 0)
+                    largest_d = sl.get("largest_pairwise_d", float("nan"))
+                    logger.info(
+                        "    %s: n=%d, mean_tier=%.3f, bias_sd=%.4f, bias_range=%.4f, "
+                        "eta²=%.4f, largest_d=%.3f, n_sig_pairs=%d",
+                        level, n, mean_tier, sd, rng, eta, largest_d, n_sig,
+                    )
+
+                # Show most/least advantaged personas at high severity
+                high_bias = bias.get("high", {})
+                persona_means = high_bias.get("persona_means", {})
+                if persona_means:
+                    sorted_pm = sorted(persona_means.items(), key=lambda x: x[1])
+                    worst = sorted_pm[0]
+                    best = sorted_pm[-1]
+                    logger.info(
+                        "    high-severity: most disadvantaged=%s (%.3f), "
+                        "most advantaged=%s (%.3f), gap=%.3f",
+                        worst[0], worst[1], best[0], best[1], best[1] - worst[1],
+                    )
+
+        # Console summary: mitigation × severity
+        mit_sev = result.get("mitigation_severity", {})
+        if mit_sev:
+            logger.info("── Severity Amplification: Before vs After Mitigation ──")
+            for metric in ["monetary_severity", "issue_severity"]:
+                for model in self.models:
+                    ms = mit_sev.get(metric, {}).get(model, {})
+                    comp = ms.get("comparison", {})
+                    verdict = comp.get("verdict", "N/A")
+                    base_amp = ms.get("baseline", {}).get("amplification", {})
+                    neut_amp = ms.get("neutralized", {}).get("amplification", {})
+                    base_ratio = base_amp.get("point", float("nan"))
+                    neut_ratio = neut_amp.get("point", float("nan"))
+                    delta = comp.get("amplification_change", float("nan"))
+                    pct = comp.get("amplification_pct_change", float("nan"))
+                    logger.info(
+                        "  %s [%s]: verdict=%s, baseline=%.2fx, neutralized=%.2fx, "
+                        "delta=%.2f (%.1f%%)",
+                        metric, model, verdict, base_ratio, neut_ratio, delta, pct,
+                    )
+                    # Per-level bias SD changes
+                    sd_changes = comp.get("bias_sd_change_by_level", {})
+                    base_bias = ms.get("baseline", {}).get("bias", {})
+                    neut_bias = ms.get("neutralized", {}).get("bias", {})
+                    for level in ["low", "medium", "high"]:
+                        b_sd = base_bias.get(level, {}).get("sd_across_personas", float("nan"))
+                        n_sd = neut_bias.get(level, {}).get("sd_across_personas", float("nan"))
+                        d_sd = sd_changes.get(level, float("nan"))
+                        logger.info(
+                            "    %s: bias SD %.4f → %.4f (%+.4f)",
+                            level, b_sd, n_sd, d_sd,
+                        )
 
     # ------------------------------------------------------------------
     # Display analysis results
@@ -2251,6 +2330,45 @@ class Experiment:
                 if isinstance(p_i, float):
                     p_i = f"{p_i:.4f}"
                 lines.append(f"  {finding}: monetary={p_m}, issue={p_i} — {rob}")
+
+        # --- Mitigation × severity ---
+        mit_sev = sev.get("mitigation_severity", {})
+        if mit_sev:
+            lines.append("")
+            lines.append("── Mitigation × Severity ──")
+            for metric in ["monetary_severity", "issue_severity"]:
+                for model in self.models:
+                    ms = mit_sev.get(metric, {}).get(model, {})
+                    comp = ms.get("comparison", {})
+                    verdict = comp.get("verdict", "N/A")
+                    base_amp = ms.get("baseline", {}).get("amplification", {})
+                    neut_amp = ms.get("neutralized", {}).get("amplification", {})
+                    base_ratio = base_amp.get("point", float("nan"))
+                    neut_ratio = neut_amp.get("point", float("nan"))
+                    delta = comp.get("amplification_change", float("nan"))
+                    pct = comp.get("amplification_pct_change", float("nan"))
+                    lines.append(
+                        f"  {metric} [{model}]: verdict={verdict}, "
+                        f"baseline={base_ratio:.2f}x, neutralized={neut_ratio:.2f}x, "
+                        f"delta={delta:+.2f} ({pct:+.1f}%)"
+                    )
+                    base_bias = ms.get("baseline", {}).get("bias", {})
+                    neut_bias = ms.get("neutralized", {}).get("bias", {})
+                    sd_changes = comp.get("bias_sd_change_by_level", {})
+                    for level in ["low", "medium", "high"]:
+                        b_sd = base_bias.get(level, {}).get("sd_across_personas", 0)
+                        n_sd = neut_bias.get(level, {}).get("sd_across_personas", 0)
+                        d_sd = sd_changes.get(level, 0)
+                        lines.append(
+                            f"    {level}: bias SD {b_sd:.4f} → {n_sd:.4f} ({d_sd:+.4f})"
+                        )
+                    int_p_base = comp.get("interaction_p_baseline", float("nan"))
+                    int_p_neut = comp.get("interaction_p_neutralized", float("nan"))
+                    weakened = comp.get("interaction_weakened", False)
+                    lines.append(
+                        f"    Interaction p: baseline={int_p_base:.4f}, "
+                        f"neutralized={int_p_neut:.4f}, weakened={weakened}"
+                    )
 
         return "\n".join(lines)
 

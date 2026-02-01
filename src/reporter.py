@@ -2091,6 +2091,75 @@ def _build_tab_severity(
     if chart:
         parts.append(f'<div class="chart-container"><img src="data:image/png;base64,{chart}" alt="Amplification"></div>')
 
+    # Bias detail by severity level
+    main_effects = sev.get("main_effects", {})
+    parts.append('<h3>Bias by Severity Level</h3>')
+    parts.append('<p>Shows how bias (persona-based variation in outcomes) changes across severity levels. '
+                 'Higher bias SD and range at high severity indicates amplification.</p>')
+    parts.append('<table class="sortable"><thead><tr>')
+    parts.append('<th>Metric</th><th>Model</th><th>Severity</th><th>N</th>'
+                 '<th>Mean Tier</th><th>Bias SD</th><th>Bias Range</th>'
+                 '<th>Persona &eta;&sup2;</th><th>Largest d</th><th>Sig. Pairs</th>')
+    parts.append('</tr></thead><tbody>')
+    for metric in ["monetary_severity", "issue_severity"]:
+        for model in models:
+            mi = _safe_get(interactions, metric, model, default={})
+            bias_data = mi.get("bias", {})
+            se_data = mi.get("simple_effects", {})
+            mfx = _safe_get(main_effects, metric, model, default={})
+            means = mfx.get("means_by_level", {})
+            # Collect SDs for highlighting the max
+            sds = {lvl: bias_data.get(lvl, {}).get("sd_across_personas", 0) for lvl in ["low", "medium", "high"]}
+            max_sd_level = max(sds, key=lambda k: sds[k]) if any(sds.values()) else None
+            for level in ["low", "medium", "high"]:
+                bl = bias_data.get(level, {})
+                sl = se_data.get(level, {})
+                n = bl.get("n", 0)
+                sd = bl.get("sd_across_personas", float("nan"))
+                rng = bl.get("range", float("nan"))
+                mean_tier = means.get(level, float("nan"))
+                eta = sl.get("eta_sq_partial", float("nan"))
+                largest_d = sl.get("largest_pairwise_d", float("nan"))
+                n_sig = sl.get("n_significant", 0)
+                # Highlight the row with the highest bias
+                style = ' style="background:#fdecea;font-weight:bold;"' if level == max_sd_level else ""
+                parts.append(f'<tr{style}>')
+                parts.append(f'<td>{metric.replace("_"," ").title()}</td>')
+                parts.append(f'<td>{html.escape(model)}</td><td>{level.title()}</td>')
+                parts.append(f'<td>{n}</td><td>{_fmt(mean_tier, 3)}</td>')
+                parts.append(f'<td>{_fmt(sd, 4)}</td><td>{_fmt(rng, 4)}</td>')
+                parts.append(f'<td>{_fmt(eta, 4)}</td><td>{_fmt(largest_d, 3)}</td>')
+                parts.append(f'<td>{n_sig}</td></tr>')
+    parts.append('</tbody></table>')
+
+    # Most/least advantaged personas at each severity level
+    parts.append('<h3>Most &amp; Least Advantaged Personas by Severity</h3>')
+    parts.append('<table class="sortable"><thead><tr>')
+    parts.append('<th>Metric</th><th>Model</th><th>Severity</th>'
+                 '<th>Most Advantaged</th><th>Mean Tier</th>'
+                 '<th>Most Disadvantaged</th><th>Mean Tier</th><th>Gap</th>')
+    parts.append('</tr></thead><tbody>')
+    for metric in ["monetary_severity", "issue_severity"]:
+        for model in models:
+            mi = _safe_get(interactions, metric, model, default={})
+            bias_data = mi.get("bias", {})
+            for level in ["low", "medium", "high"]:
+                pm = bias_data.get(level, {}).get("persona_means", {})
+                if len(pm) < 2:
+                    continue
+                sorted_pm = sorted(pm.items(), key=lambda x: x[1])
+                worst_name, worst_val = sorted_pm[0]
+                best_name, best_val = sorted_pm[-1]
+                gap = best_val - worst_val
+                style = ' style="background:#fdecea;"' if level == "high" and gap > 0.05 else ""
+                parts.append(f'<tr{style}>')
+                parts.append(f'<td>{metric.replace("_"," ").title()}</td>')
+                parts.append(f'<td>{html.escape(model)}</td><td>{level.title()}</td>')
+                parts.append(f'<td>{html.escape(str(best_name))}</td><td>{_fmt(best_val, 3)}</td>')
+                parts.append(f'<td>{html.escape(str(worst_name))}</td><td>{_fmt(worst_val, 3)}</td>')
+                parts.append(f'<td>{_fmt(gap, 3)}</td></tr>')
+    parts.append('</tbody></table>')
+
     # Two-way ANOVA interaction table
     parts.append('<h3>Persona × Severity Interaction Tests</h3>')
     parts.append('<table class="sortable"><thead><tr>')
@@ -2231,6 +2300,103 @@ def _build_tab_severity(
         parts.append('</tbody></table>')
 
     parts.append('</div></div>')
+
+    # ── Panel 7: Mitigation × Severity ──
+    mit_sev = sev.get("mitigation_severity", {})
+    if mit_sev:
+        parts.append('<div class="collapsible">')
+        parts.append('<div class="collapsible-header">Panel 7: Severity Amplification After Mitigation</div>')
+        parts.append('<div class="collapsible-body">')
+        parts.append('<p>Compares severity amplification before and after text neutralization (bias mitigation). '
+                     'Verdicts: <strong>eliminated</strong> = neutralized CI includes 1.0 (baseline didn\'t), '
+                     '<strong>reduced</strong> = amplification decreased, '
+                     '<strong>increased</strong> = amplification worsened, '
+                     '<strong>unchanged</strong> = no meaningful change.</p>')
+
+        # Verdict cards
+        parts.append('<div class="metrics-grid">')
+        for metric in ["monetary_severity", "issue_severity"]:
+            for model in models:
+                ms = _safe_get(mit_sev, metric, model, default={})
+                comp = ms.get("comparison", {})
+                verdict = comp.get("verdict", "N/A")
+                base_amp = ms.get("baseline", {}).get("amplification", {})
+                neut_amp = ms.get("neutralized", {}).get("amplification", {})
+                base_ratio = base_amp.get("point", float("nan"))
+                neut_ratio = neut_amp.get("point", float("nan"))
+                delta = comp.get("amplification_change", float("nan"))
+                pct = comp.get("amplification_pct_change", float("nan"))
+                # Color by verdict
+                v_colors = {
+                    "eliminated": ("#2ecc71", "#eafaf1"),
+                    "reduced": ("#27ae60", "#eafaf1"),
+                    "unchanged": ("#f39c12", "#fef9e7"),
+                    "increased": ("#e74c3c", "#fdedec"),
+                    "insufficient_data": ("#95a5a6", "#f2f3f4"),
+                }
+                color, bg = v_colors.get(verdict, ("#95a5a6", "#f2f3f4"))
+                parts.append(f'<div class="metric-card" style="border-left: 4px solid {color}; background: {bg};">')
+                parts.append(f'<div class="value" style="color: {color};">{verdict.upper()}</div>')
+                parts.append(f'<div class="label">{metric.replace("_"," ").title()} ({model})</div>')
+                parts.append(f'<div style="font-size:0.8rem;">Baseline: {_fmt(base_ratio, 2)}x → '
+                             f'Neutralized: {_fmt(neut_ratio, 2)}x</div>')
+                if np.isfinite(delta) and np.isfinite(pct):
+                    parts.append(f'<div style="font-size:0.8rem;">Delta: {delta:+.2f} ({pct:+.1f}%)</div>')
+                parts.append('</div>')
+        parts.append('</div>')
+
+        # Before/after bias table
+        parts.append('<h3>Bias by Severity Level: Before vs After Mitigation</h3>')
+        parts.append('<table class="sortable"><thead><tr>')
+        parts.append('<th>Metric</th><th>Model</th><th>Severity</th>'
+                     '<th>Baseline Bias SD</th><th>Neutralized Bias SD</th>'
+                     '<th>Change</th><th>% Change</th>')
+        parts.append('</tr></thead><tbody>')
+        for metric in ["monetary_severity", "issue_severity"]:
+            for model in models:
+                ms = _safe_get(mit_sev, metric, model, default={})
+                base_bias = ms.get("baseline", {}).get("bias", {})
+                neut_bias = ms.get("neutralized", {}).get("bias", {})
+                sd_changes = ms.get("comparison", {}).get("bias_sd_change_by_level", {})
+                for level in ["low", "medium", "high"]:
+                    b_sd = base_bias.get(level, {}).get("sd_across_personas", float("nan"))
+                    n_sd = neut_bias.get(level, {}).get("sd_across_personas", float("nan"))
+                    d_sd = sd_changes.get(level, float("nan"))
+                    pct_chg = (d_sd / b_sd * 100) if np.isfinite(b_sd) and b_sd > 0 and np.isfinite(d_sd) else float("nan")
+                    # Highlight rows where bias increased
+                    style = ' style="background:#fdedec;"' if np.isfinite(d_sd) and d_sd > 0.001 else ""
+                    parts.append(f'<tr{style}>')
+                    parts.append(f'<td>{metric.replace("_"," ").title()}</td>')
+                    parts.append(f'<td>{html.escape(model)}</td><td>{level.title()}</td>')
+                    parts.append(f'<td>{_fmt(b_sd, 4)}</td><td>{_fmt(n_sd, 4)}</td>')
+                    parts.append(f'<td>{_fmt(d_sd, 4)}</td>')
+                    parts.append(f'<td>{_fmt(pct_chg, 1)}%</td></tr>')
+        parts.append('</tbody></table>')
+
+        # Interaction test comparison
+        parts.append('<h3>Interaction Test: Before vs After Mitigation</h3>')
+        parts.append('<table class="sortable"><thead><tr>')
+        parts.append('<th>Metric</th><th>Model</th>'
+                     '<th>Baseline F</th><th>Baseline p</th>'
+                     '<th>Neutralized F</th><th>Neutralized p</th><th>Weakened?</th>')
+        parts.append('</tr></thead><tbody>')
+        for metric in ["monetary_severity", "issue_severity"]:
+            for model in models:
+                ms = _safe_get(mit_sev, metric, model, default={})
+                comp = ms.get("comparison", {})
+                base_int = ms.get("baseline", {}).get("interaction", {})
+                neut_int = ms.get("neutralized", {}).get("interaction", {})
+                weakened = comp.get("interaction_weakened", False)
+                w_label = "Yes" if weakened else "No"
+                w_color = "#2ecc71" if weakened else "#e74c3c"
+                parts.append(f'<tr><td>{metric.replace("_"," ").title()}</td>')
+                parts.append(f'<td>{html.escape(model)}</td>')
+                parts.append(f'<td>{_fmt(base_int.get("F"))}</td><td>{_fmt(base_int.get("p_value"))}</td>')
+                parts.append(f'<td>{_fmt(neut_int.get("F"))}</td><td>{_fmt(neut_int.get("p_value"))}</td>')
+                parts.append(f'<td style="color:{w_color};font-weight:bold;">{w_label}</td></tr>')
+        parts.append('</tbody></table>')
+
+        parts.append('</div></div>')
 
     return "\n".join(parts)
 

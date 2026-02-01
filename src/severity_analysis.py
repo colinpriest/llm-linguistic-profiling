@@ -480,7 +480,23 @@ def simple_effects_by_severity(
                     max_d = max(max_d, d)
                     # T-test for significance counting
                     if len(groups[i]) >= 2 and len(groups[j]) >= 2:
-                        _, p = sp_stats.ttest_ind(groups[i], groups[j])
+                        # Skip pairs where both groups have zero variance —
+                        # ttest_ind returns NaN (0/0) when std=0 in both groups
+                        if np.std(groups[i]) == 0 and np.std(groups[j]) == 0:
+                            continue
+                        # ttest_ind emits "Precision loss … catastrophic cancellation"
+                        # on low-variance ordinal data.  Results remain valid.
+                        with warnings.catch_warnings():
+                            warnings.filterwarnings(
+                                "ignore", category=RuntimeWarning,
+                                message=".*Precision loss.*catastrophic cancellation.*",
+                            )
+                            _, p = sp_stats.ttest_ind(groups[i], groups[j])
+                        if not np.isfinite(p) or not (0 <= p <= 1):
+                            raise ValueError(
+                                f"ttest_ind returned invalid p-value {p!r} for "
+                                f"severity={level}, pair ({labels[i]}, {labels[j]})"
+                            )
                         p_values.append(p)
 
             # FDR correction
@@ -840,6 +856,118 @@ def consistency_check(
 
 
 # ---------------------------------------------------------------------------
+# Section 7: Mitigation × Severity Comparison
+# ---------------------------------------------------------------------------
+
+def mitigation_severity_comparison(
+    baseline_df: pd.DataFrame,
+    neutralized_df: pd.DataFrame,
+    severity_metric: str,
+    model: str,
+    persona_col: str = "persona_label",
+    n_boot: int = 1000,
+    seed: int = 42,
+) -> Dict[str, Any]:
+    """Compare severity amplification before and after bias mitigation.
+
+    Reuses existing analysis functions on both baseline and neutralized
+    DataFrames to compute deltas and a summary verdict.
+
+    Returns
+    -------
+    Dict with keys: baseline, neutralized, comparison.
+    """
+    # --- Baseline metrics (recompute locally for self-contained comparison) ---
+    bias_base = bias_by_severity(baseline_df, severity_metric, model, persona_col)
+    amp_base = amplification_ratio(
+        baseline_df, severity_metric, model, persona_col, n_boot, seed,
+    )
+    tw_base = two_way_anova_persona_severity(baseline_df, severity_metric, model, persona_col)
+
+    # --- Neutralized metrics ---
+    bias_neut = bias_by_severity(neutralized_df, severity_metric, model, persona_col)
+    amp_neut = amplification_ratio(
+        neutralized_df, severity_metric, model, persona_col, n_boot, seed,
+    )
+    tw_neut = two_way_anova_persona_severity(neutralized_df, severity_metric, model, persona_col)
+    se_neut = simple_effects_by_severity(neutralized_df, severity_metric, model, persona_col)
+
+    # --- Compute deltas ---
+    base_ratio = amp_base.get("point", float("nan"))
+    neut_ratio = amp_neut.get("point", float("nan"))
+
+    if np.isfinite(base_ratio) and np.isfinite(neut_ratio) and base_ratio > 0:
+        amp_change = neut_ratio - base_ratio
+        amp_pct = amp_change / base_ratio * 100
+    else:
+        amp_change = float("nan")
+        amp_pct = float("nan")
+
+    # Per-level bias SD changes
+    bias_sd_change: Dict[str, float] = {}
+    for level in SEVERITY_LEVELS:
+        b_sd = bias_base.get(level, {}).get("sd_across_personas", float("nan"))
+        n_sd = bias_neut.get(level, {}).get("sd_across_personas", float("nan"))
+        if np.isfinite(b_sd) and np.isfinite(n_sd):
+            bias_sd_change[level] = n_sd - b_sd
+        else:
+            bias_sd_change[level] = float("nan")
+
+    # Interaction p-values
+    base_int_p = tw_base.get("interaction", {}).get("p_value", float("nan"))
+    neut_int_p = tw_neut.get("interaction", {}).get("p_value", float("nan"))
+    interaction_weakened = (
+        np.isfinite(base_int_p) and np.isfinite(neut_int_p)
+        and neut_int_p > base_int_p
+    )
+
+    # Verdict
+    if not np.isfinite(base_ratio) or not np.isfinite(neut_ratio):
+        verdict = "insufficient_data"
+    else:
+        base_ci_lo = amp_base.get("ci_lower", float("nan"))
+        base_ci_hi = amp_base.get("ci_upper", float("nan"))
+        neut_ci_lo = amp_neut.get("ci_lower", float("nan"))
+        neut_ci_hi = amp_neut.get("ci_upper", float("nan"))
+        # "eliminated" if neutralized CI includes 1.0 but baseline CI didn't
+        base_includes_1 = (np.isfinite(base_ci_lo) and np.isfinite(base_ci_hi)
+                           and base_ci_lo <= 1.0 <= base_ci_hi)
+        neut_includes_1 = (np.isfinite(neut_ci_lo) and np.isfinite(neut_ci_hi)
+                           and neut_ci_lo <= 1.0 <= neut_ci_hi)
+        if neut_includes_1 and not base_includes_1:
+            verdict = "eliminated"
+        elif neut_ratio < base_ratio - 0.01:
+            verdict = "reduced"
+        elif neut_ratio > base_ratio + 0.01:
+            verdict = "increased"
+        else:
+            verdict = "unchanged"
+
+    return {
+        "baseline": {
+            "amplification": amp_base,
+            "bias": bias_base,
+            "interaction": tw_base.get("interaction", {}),
+        },
+        "neutralized": {
+            "amplification": amp_neut,
+            "bias": bias_neut,
+            "interaction": tw_neut.get("interaction", {}),
+            "simple_effects": se_neut,
+        },
+        "comparison": {
+            "amplification_change": amp_change,
+            "amplification_pct_change": amp_pct,
+            "bias_sd_change_by_level": bias_sd_change,
+            "interaction_p_baseline": base_int_p,
+            "interaction_p_neutralized": neut_int_p,
+            "interaction_weakened": interaction_weakened,
+            "verdict": verdict,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -851,6 +979,7 @@ def run_severity_analysis(
     models: List[str],
     n_boot: int = 1000,
     seed: int = 42,
+    neutralized_df: Optional[pd.DataFrame] = None,
 ) -> Dict[str, Any]:
     """Run the full severity amplification analysis.
 
@@ -868,11 +997,14 @@ def run_severity_analysis(
     models : List of model identifiers.
     n_boot : Number of bootstrap iterations.
     seed : Random seed.
+    neutralized_df : Neutralized remedy decisions with severity columns merged.
+        Columns: [case_id, model, tier, confidence, monetary_severity, issue_severity, persona_label]
+        If provided, a mitigation × severity comparison is computed.
 
     Returns
     -------
     Dict with keys: descriptives, coverage, main_effects, interactions,
-    three_way, model_comparison, process, consistency.
+    three_way, model_comparison, process, consistency, mitigation_severity.
     """
     logger.info("Running severity amplification analysis...")
 
@@ -940,6 +1072,22 @@ def run_severity_analysis(
     logger.info("  Section 6: Consistency check")
     consist = consistency_check(main_effects, interactions)
 
+    # 7. Mitigation × severity (optional)
+    mitigation_severity: Dict[str, Any] = {}
+    if neutralized_df is not None and len(neutralized_df) > 0:
+        logger.info("  Section 7: Mitigation × severity comparison")
+        for metric in SEVERITY_METRICS:
+            mitigation_severity[metric] = {}
+            for model in models:
+                try:
+                    mitigation_severity[metric][model] = mitigation_severity_comparison(
+                        baseline_df, neutralized_df, metric, model,
+                        persona_col="persona_label", n_boot=n_boot, seed=seed,
+                    )
+                except Exception as exc:
+                    logger.warning("  Mitigation severity failed for %s/%s: %s", metric, model, exc)
+                    mitigation_severity[metric][model] = {"comparison": {"verdict": "insufficient_data"}}
+
     logger.info("Severity amplification analysis complete.")
 
     return {
@@ -954,4 +1102,5 @@ def run_severity_analysis(
         "model_comparison": model_amp,
         "process": process,
         "consistency": consist,
+        "mitigation_severity": mitigation_severity,
     }

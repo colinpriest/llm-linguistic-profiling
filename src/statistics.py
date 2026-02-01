@@ -110,17 +110,34 @@ def one_way_anova(
                 "group_means": {}, "group_ns": {}}
     labels = group_labels or [str(i) for i in range(len(groups))]
 
-    f_stat, p_val = sp_stats.f_oneway(*groups)
+    # If all groups have zero within-group variance, F-test is undefined (0/0).
+    # Return NaN explicitly rather than letting f_oneway produce a RuntimeWarning.
+    ss_within = sum(float(np.sum((g - g.mean()) ** 2)) for g in groups)
+    if ss_within == 0:
+        grand_mean = np.concatenate(groups).mean()
+        ss_between = sum(len(g) * (g.mean() - grand_mean) ** 2 for g in groups)
+        return {
+            "F": float("nan"), "p_value": float("nan"),
+            "eta_sq_partial": float(ss_between / (ss_between + ss_within)) if ss_between > 0 else 0.0,
+            "group_means": {l: float(g.mean()) for l, g in zip(labels, groups)},
+            "group_ns": {l: len(g) for l, g in zip(labels, groups)},
+        }
+
+    # f_oneway can emit "Precision loss … catastrophic cancellation" RuntimeWarning
+    # on low-variance ordinal data (e.g. tier ∈ {0, 1, 2}).  Results remain valid.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=RuntimeWarning,
+                                message=".*Precision loss.*catastrophic cancellation.*")
+        f_stat, p_val = sp_stats.f_oneway(*groups)
 
     # Partial eta-squared: SS_between / (SS_between + SS_within)
     grand_mean = np.concatenate(groups).mean()
     ss_between = sum(len(g) * (g.mean() - grand_mean) ** 2 for g in groups)
-    ss_within = sum(np.sum((g - g.mean()) ** 2) for g in groups)
-    eta_sq = ss_between / (ss_between + ss_within) if (ss_between + ss_within) > 0 else 0.0
+    eta_sq = ss_between / (ss_between + ss_within)
 
     return {
-        "F": float(f_stat) if np.isfinite(f_stat) else float("nan"),
-        "p_value": float(p_val) if np.isfinite(p_val) else float("nan"),
+        "F": float(f_stat),
+        "p_value": float(p_val),
         "eta_sq_partial": float(eta_sq),
         "group_means": {l: float(g.mean()) for l, g in zip(labels, groups)},
         "group_ns": {l: len(g) for l, g in zip(labels, groups)},
@@ -164,7 +181,7 @@ def logistic_regression_analysis(
     if y.nunique() < 2:
         logger.info(
             "Logistic regression skipped: target '%s' has only value(s) %s",
-            target_col, sorted(y.unique()),
+            target_col, [int(v) for v in sorted(y.unique())],
         )
         return {"skipped": True, "reason": f"target has no variation (all {y.iloc[0]})"}
 
@@ -193,6 +210,7 @@ def logistic_regression_analysis(
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message=".*Perfect separation.*")
             warnings.filterwarnings("ignore", message=".*complete separation.*")
+            warnings.filterwarnings("ignore", message=".*Maximum Likelihood optimization failed to converge.*")
             if separation_cols:
                 # Use regularised (penalised) fit to handle separation
                 model = sm.Logit(y, X).fit_regularized(
