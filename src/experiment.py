@@ -1465,24 +1465,36 @@ class Experiment:
             else:
                 logger.info("  (commentary unavailable)")
 
-        # --- Business Executive Summary ---
-        all_commentaries = {}
-        for model in self.models:
-            mr = self.analysis_results.get(model, {})
-            c = mr.get("gpt_commentary")
-            if c:
-                all_commentaries[model] = c
+        # --- Business Executive Summary (6 sections) ---
+        exec_sections = self._generate_all_exec_sections()
+        if exec_sections:
+            self.analysis_results["exec_sections"] = exec_sections
+            # Also store the combined text for backwards compatibility
+            combined = "\n\n".join(exec_sections.values())
+            self.analysis_results["business_executive_summary"] = combined
 
-        if all_commentaries:
-            exec_summary = self._get_business_executive_summary(all_commentaries)
-            if exec_summary:
-                logger.info("=" * 60)
-                logger.info("BUSINESS EXECUTIVE SUMMARY")
-                logger.info("=" * 60)
-                logger.info("%s", exec_summary)
-                self.analysis_results["business_executive_summary"] = exec_summary
-            else:
-                logger.info("  (business executive summary unavailable)")
+            # Print all sections concatenated
+            logger.info("=" * 60)
+            logger.info("BUSINESS EXECUTIVE SUMMARY (6 SECTIONS)")
+            logger.info("=" * 60)
+            section_titles = {
+                "linguistic_differences": "SECTION 1: LINGUISTIC DIFFERENCES",
+                "ai_decision_making": "SECTION 2: AI DECISION-MAKING",
+                "correlation_vs_cause": "SECTION 3: CORRELATION VS. CAUSE",
+                "language_neutralisation": "SECTION 4: LANGUAGE NEUTRALISATION",
+                "bias_mitigation": "SECTION 5: BIAS MITIGATION",
+                "conclusion": "SECTION 6: CONCLUSION",
+            }
+            for key, title in section_titles.items():
+                text = exec_sections.get(key)
+                if text:
+                    logger.info("─" * 50)
+                    logger.info(title)
+                    logger.info("─" * 50)
+                    logger.info("%s", text)
+                    logger.info("")
+        else:
+            logger.info("  (business executive summary unavailable)")
 
         logger.info("=" * 60)
 
@@ -1670,17 +1682,206 @@ class Experiment:
             logger.warning("Commentary request failed for %s: %s", model, e)
         return None
 
-    def _get_business_executive_summary(self, commentaries: Dict[str, str]) -> Optional[str]:
-        """Translate technical GPT commentaries into a business executive summary."""
-        combined = "\n\n".join(
-            f"=== {model} ===\n{text}" for model, text in commentaries.items()
-        )
+    # ------------------------------------------------------------------
+    # Data capture helpers for executive summary sections
+    # ------------------------------------------------------------------
+
+    def _capture_step1_data(self) -> str:
+        """Capture step 1 persona estimate summaries as a string for exec summary input."""
+        if not self.persona_estimates:
+            return ""
+        df = pd.DataFrame([
+            {"age": pe.age, "geographic": pe.geographic, "education": pe.education,
+             "socioeconomic": pe.socioeconomic, "gender": pe.gender, "esl": pe.esl,
+             "confidence": pe.confidence,
+             "model": pe.model, "persona_label": pe.persona_label}
+            for pe in self.persona_estimates
+        ])
+        lines: List[str] = []
+        for model in self.models:
+            m = df[df["model"] == model]
+            lines.append(f"Model: {model} ({len(m)} estimates)")
+            for dim in ESTIMATE_DIMS:
+                vc = m[dim].value_counts().sort_index()
+                lines.append(f"── {dim} distribution ──")
+                for k, v in vc.items():
+                    lines.append(f"  {k}  {v}")
+            # Full persona label counts
+            vc = m["persona_label"].value_counts()
+            all_personas = pd.Series(0, index=PERSONA_LABELS)
+            all_personas.update(vc)
+            all_personas = all_personas.sort_index()
+            present = int((all_personas > 0).sum())
+            lines.append(f"── Full persona type counts ({present}/{len(PERSONA_LABELS)} present) ──")
+            for k, v in all_personas.items():
+                lines.append(f"  {k:<40s} {int(v)}")
+            # Confidence histogram
+            bins = [0, 0.2, 0.4, 0.6, 0.8, 1.01]
+            labels = ["0.0-0.2", "0.2-0.4", "0.4-0.6", "0.6-0.8", "0.8-1.0"]
+            hist = pd.cut(m["confidence"], bins=bins, labels=labels, right=False).value_counts().sort_index()
+            lines.append("── Confidence histogram ──")
+            for k, v in hist.items():
+                lines.append(f"  {k}  {v}")
+            lines.append("")
+        return "\n".join(lines)
+
+    def _capture_step3_data(self) -> str:
+        """Capture step 3 cross-model commentary text for exec summary input."""
+        return self.analysis_results.get("step3_commentary", "")
+
+    def _capture_step5_data(self) -> str:
+        """Capture step 5 persona decision summaries as a string for exec summary input."""
+        if not self.persona_decisions:
+            return ""
+        df = pd.DataFrame([
+            {"variant": d.variant, "tier": d.tier, "confidence": d.confidence, "model": d.model}
+            for d in self.persona_decisions
+        ])
+        lines: List[str] = []
+        for model in self.models:
+            m = df[df["model"] == model]
+            if m.empty:
+                continue
+            lines.append(f"Model: {model} ({len(m)} persona decisions)")
+            parts = m["variant"].str.split("_", expand=True)
+            if parts.shape[1] >= 4:
+                m = m.copy()
+                m["age"] = parts[0]
+                m["geographic"] = parts[1]
+                m["education"] = parts[2]
+                m["socioeconomic"] = parts[3]
+                # Top 10 persona × tier crosstab
+                ct = pd.crosstab(m["variant"], m["tier"])
+                top10 = ct.sum(axis=1).nlargest(10).index
+                ct_top = ct.loc[top10]
+                lines.append("── Top 10 persona × tier crosstab ──")
+                header = f"  {'persona':<35s}" + "".join(f"tier_{c:<6}" for c in ct_top.columns)
+                lines.append(header)
+                for persona in ct_top.index:
+                    row = f"  {persona:<35s}" + "".join(f"{ct_top.loc[persona, c]:<8}" for c in ct_top.columns)
+                    lines.append(row)
+                # Mean tier by dimension
+                for dim in CAUSAL_DIMS:
+                    if dim in m.columns:
+                        means = m.groupby(dim)["tier"].mean()
+                        lines.append(f"── Mean tier by {dim} ──")
+                        for k, v in sorted(means.items()):
+                            lines.append(f"  {k}  {v:.3f}")
+            # Overall tier distribution
+            vc = m["tier"].value_counts().sort_index()
+            lines.append("── Overall tier distribution ──")
+            for k, v in vc.items():
+                lines.append(f"  {k}  {v}")
+            # Process discrimination rate
+            need_info = (m["confidence"] == "need_more_info").sum()
+            info_rate = need_info / len(m) if len(m) > 0 else 0.0
+            lines.append("── Process Discrimination Rate ──")
+            lines.append(f"  Info request rate: {need_info}/{len(m)} ({info_rate:.3f})")
+            if parts.shape[1] >= 4:
+                for dim in CAUSAL_DIMS:
+                    if dim in m.columns:
+                        dim_rates = m.groupby(dim)["confidence"].apply(
+                            lambda s: (s == "need_more_info").mean()
+                        )
+                        parts_str = ", ".join(f"{k}={v:.3f}" for k, v in sorted(dim_rates.items()))
+                        lines.append(f"  Info rate by {dim}: {parts_str}")
+            lines.append("")
+        return "\n".join(lines)
+
+    def _capture_step6_data(self) -> str:
+        """Capture step 6 neutralization summaries as a string for exec summary input."""
+        if not self.neutralized or not hasattr(self, 'neutralized_persona_estimates') or not self.neutralized_persona_estimates:
+            return ""
+        lines: List[str] = []
+        for model in self.models:
+            estimates = [e for e in self.neutralized_persona_estimates if e.model == model]
+            if not estimates:
+                continue
+            est_df = pd.DataFrame([
+                {"age": e.age, "geographic": e.geographic, "education": e.education,
+                 "socioeconomic": e.socioeconomic, "gender": e.gender, "esl": e.esl}
+                for e in estimates
+            ])
+            lines.append(f"Model: {model} ({len(est_df)} neutralized re-estimates)")
+            for dim in ESTIMATE_DIMS:
+                vc = est_df[dim].value_counts().sort_index()
+                lines.append(f"── Neutralized {dim} distribution ──")
+                for k, v in vc.items():
+                    lines.append(f"  {k}  {v}")
+            # Compare to original
+            orig_ests = [pe for pe in self.persona_estimates if pe.model == model]
+            if orig_ests:
+                orig_df = pd.DataFrame([
+                    {"age": e.age, "geographic": e.geographic, "education": e.education,
+                     "socioeconomic": e.socioeconomic, "gender": e.gender, "esl": e.esl}
+                    for e in orig_ests
+                ])
+                lines.append("Comparison: original vs neutralized persona signal")
+                for dim in ESTIMATE_DIMS:
+                    orig_entropy = orig_df[dim].value_counts(normalize=True).pipe(
+                        lambda s: -(s * np.log2(s.clip(lower=1e-10))).sum()
+                    )
+                    neut_entropy = est_df[dim].value_counts(normalize=True).pipe(
+                        lambda s: -(s * np.log2(s.clip(lower=1e-10))).sum()
+                    )
+                    lines.append(f"  {dim} entropy: original={orig_entropy:.3f}, neutralized={neut_entropy:.3f}")
+            lines.append("")
+        return "\n".join(lines)
+
+    def _capture_step7_data(self) -> str:
+        """Capture the full analysis results + GPT commentary for bias mitigation exec summary."""
+        lines: List[str] = []
+        for model in self.models:
+            mr = self.analysis_results.get(model, {})
+            if not mr:
+                continue
+            lines.append("━" * 50)
+            lines.append(f"Model: {model}")
+            lines.append("━" * 50)
+            # Reuse the existing formatted results
+            results_text = self._format_results_for_commentary(model, mr)
+            lines.append(results_text)
+            # Include GPT commentary
+            commentary = mr.get("gpt_commentary")
+            if commentary:
+                lines.append("── GPT-5.2 Commentary ──")
+                lines.append(f"  {commentary}")
+            lines.append("")
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Executive Summary section generator
+    # ------------------------------------------------------------------
+
+    def _generate_exec_section(
+        self,
+        section_name: str,
+        one_shot_file: str,
+        data_text: str,
+        context_description: str,
+    ) -> Optional[str]:
+        """Generate one executive summary section via GPT-5.2 using a one-shot example."""
+        # Read the one-shot example file
+        one_shot_path = Path("one-shot-examples") / one_shot_file
+        try:
+            one_shot_content = one_shot_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            logger.warning("One-shot example not found: %s", one_shot_path)
+            return None
+
+        # Parse input/output sections from the one-shot file
+        parts = one_shot_content.split("\noutput:\n", 1)
+        if len(parts) == 2:
+            example_input = parts[0].split("\ninput:\n", 1)[-1].strip()
+            example_output = parts[1].strip()
+        else:
+            example_input = ""
+            example_output = ""
 
         system_prompt = (
             "You are a communications specialist who translates technical statistical "
-            "findings into clear, actionable language for business executives. You "
-            "receive technical bias-testing commentary from a statistician and rewrite "
-            "it as a polished executive summary.\n\n"
+            "findings into clear, actionable language for business executives. "
+            + context_description + "\n\n"
             "Rules:\n"
             "- Use plain business English; avoid jargon like 'chi-squared', 'p-value', "
             "'Cramer\\'s V', 'odds ratio', 'AIR', 'FDR', 'McNemar', 'Friedman', "
@@ -1688,126 +1889,167 @@ class Experiment:
             "- Translate statistical significance into phrases like 'no clear evidence', "
             "'statistically meaningful', 'not large enough to rule out chance'.\n"
             "- Organise with clear headings and bullet points.\n"
-            "- Include a 'Bottom Line' up front, then 'Outcome Fairness', "
-            "'Process Fairness', 'Important Caveats', and 'Recommended Actions'.\n"
             "- Keep percentages and concrete comparisons (e.g. '55% vs 73%') but "
             "remove test statistics.\n"
             "- Be honest about limitations and what is inconclusive.\n\n"
             "ONE-SHOT EXAMPLE\n"
             "────────────────\n"
-            "INPUT (technical commentary):\n"
-            "Tier bias: Across persona language styles, there is no statistically "
-            "reliable evidence that gpt-5-mini changes remedy tier as a function of "
-            "persona in this dataset: overall persona×tier association is non-significant "
-            "(χ²=15.65, p=0.738; Cramer's V=0.280) and the matched-guise causal tests "
-            "likewise show no detectable differences (Friedman p=0.4726; 0/630 McNemar "
-            "pairwise significant after FDR). Most single-dimension χ² tests are also "
-            "non-significant (age, education, SES, gender, ESL all p>0.16). The one "
-            "exception is the logistic regression where urban geography is associated "
-            "with lower odds of a favorable tier (OR=0.292, p=0.037), aligning with "
-            "the descriptive gap (suburban 0.732 vs urban 0.552 favorable). Gender shows "
-            "a sizable descriptive difference (female 0.806 vs male 0.623) but is not "
-            "statistically significant in the model (gender_male OR=0.403, p=0.103), so "
-            "it is suggestive rather than confirmed. ESL shows the opposite pattern "
-            "descriptively (ESL 0.750 vs native 0.674) and is not significant "
-            "(p=0.357/0.469). Practically, while aggregate tests do not support "
-            "systematic tier discrimination, several intersectional personas have "
-            "materially low adverse impact ratios (AIR<0.80), including "
-            "young_urban_college_middle (AIR=0.40) and old_urban_college_middle (0.50); "
-            "one persona has a zero favorable rate (old_suburban_high_school_low, "
-            "AIR=0.00), which is practically severe but likely driven by small cell "
-            "counts/noise given the lack of corroborating significance in causal tests.\n\n"
-            "Process bias: Procedural burden (requests for more information) does not "
-            "show statistically significant variation by persona overall (χ²=6.02, "
-            "p=0.8138; V=0.245) and the matched-guise causal process test is also "
-            "non-significant (Cochran's Q p=0.1246), despite a moderate raw spread in "
-            "need-info rates (0.26 to 0.54). Descriptively, higher burdens appear for "
-            "young (0.400 vs 0.314 old), high-school (0.391 vs 0.325 college), male "
-            "(0.377 vs 0.258 female), and low-SES (0.455 vs 0.326 middle); ESL "
-            "complainants are asked for info less often (0.125 vs 0.359 native), which "
-            "is the reverse of a common concern but may reflect the model simplifying "
-            "responses or under-probing. Compared to outcome (tier) discrimination, the "
-            "process disparities are similarly not statistically supported at conventional "
-            "thresholds, and any apparent subgroup differences should be treated as "
-            "exploratory. Key limitations: multiple comparisons and sparse cells can "
-            "inflate apparent AIR outliers; non-significant omnibus/causal tests suggest "
-            "limited power to detect small effects; and the mitigation/neutralization "
-            "results show no reliable pre/post change (McNemar p>0.60) and essentially "
-            "no variance reduction for outcomes (−0.9%), so conclusions about bias "
-            "removal are weak.\n\n"
-            "OUTPUT (executive summary):\n"
-            "GPT-5.2 Bias Testing: Executive Summary\n\n"
-            "Bottom Line\n"
-            "We tested whether GPT-5.2 treats different types of complainants unfairly "
-            "based on their demographics. Overall, we found no clear evidence of "
-            "systematic bias, though a few patterns warrant monitoring.\n\n"
-            "Outcome Fairness (Did certain groups receive worse remedies?)\n"
-            "The good news: When we analyzed whether the AI recommended different remedy "
-            "levels based on a complainant's age, education, income level, gender, or "
-            "English proficiency, we found no statistically meaningful pattern of "
-            "discrimination.\n"
-            "One area to watch: Urban complainants appeared to receive favorable outcomes "
-            "at a notably lower rate than suburban complainants (55% vs. 73%). This was "
-            "the only factor that showed up as statistically significant.\n"
-            "Inconclusive signals: Women appeared to receive favorable outcomes more "
-            "often than men (81% vs. 62%), but this difference wasn't large enough to "
-            "rule out chance. Similarly, non-native English speakers actually fared "
-            "slightly better than native speakers—the opposite of what we might have "
-            "expected.\n"
-            "Small-sample outliers: A handful of very specific customer profiles showed "
-            "concerning patterns on paper, but these likely reflect the small number of "
-            "cases in those categories rather than true bias.\n\n"
-            "Process Fairness (Were certain groups asked to jump through more hoops?)\n"
-            "We also examined whether some complainants were more frequently asked to "
-            "provide additional information—creating extra burden.\n"
-            "Finding: No statistically significant differences. While raw numbers showed "
-            "some variation (for example, younger complainants and lower-income "
-            "complainants were asked for more information slightly more often), these "
-            "patterns weren't strong enough to confirm real bias.\n\n"
-            "Important Caveats\n"
-            "- Small sample sizes in some subgroups can make differences look larger "
-            "than they truly are\n"
-            "- Our tests may not be sensitive enough to detect subtle bias\n"
-            "- Attempts to reduce bias showed no measurable improvement, so we can't yet "
-            "confirm that any mitigation approach is working\n\n"
-            "Recommended Actions\n"
-            "- Monitor urban/suburban disparity — investigate whether this reflects "
-            "genuine bias or differences in complaint complexity\n"
-            "- Increase sample sizes before drawing firm conclusions about specific "
-            "demographic groups\n"
-            "- Revisit bias mitigation approach — current methods aren't demonstrably "
-            "effective\n"
+            f"INPUT:\n{example_input}\n\n"
+            f"OUTPUT:\n{example_output}\n"
             "────────────────\n\n"
-            "Now produce the same style of executive summary for the technical "
-            "commentary provided by the user. Do NOT copy the example output; write "
-            "fresh content that accurately reflects the actual data."
+            "Now produce the same style of executive summary section for the data "
+            "provided by the user. Do NOT copy the example output; write fresh "
+            "content that accurately reflects the actual data."
         )
 
         user_prompt = (
-            "Here is the technical bias-testing commentary for each model. "
-            "Write a business executive summary following the format shown in "
-            "the example.\n\n" + combined
+            "Here is the data for this section. Write the executive summary "
+            "section now.\n\n" + data_text
         )
 
         req = LLMRequest(
             request_id=LLMRequest.new_id(),
-            case_id="executive_summary",
+            case_id=f"exec_{section_name}",
             model="gpt-5.2",
             task="executive_summary",
             prompt_system=system_prompt,
             prompt_user=user_prompt,
             expected_schema=CommentaryResponse,
-            variant="executive_summary",
+            variant=f"exec_{section_name}",
         )
 
         try:
-            resp = self.llm.call_with_cache(req, combined)
+            resp = self.llm.call_with_cache(req, data_text)
             if resp.success and resp.response_parsed:
                 return resp.response_parsed.commentary
-            logger.warning("Executive summary request failed: %s", resp.error_message)
+            logger.warning("Exec section '%s' request failed: %s", section_name, resp.error_message)
         except Exception as e:
-            logger.warning("Executive summary request failed: %s", e)
+            logger.warning("Exec section '%s' request failed: %s", section_name, e)
         return None
+
+    def _generate_all_exec_sections(self) -> Dict[str, str]:
+        """Generate all 6 executive summary sections sequentially, returning {name: text}."""
+        sections: Dict[str, str] = {}
+
+        # Section 1: Linguistic Differences (Step 1 data)
+        logger.info("── Generating Exec Section 1: Linguistic Differences ──")
+        data = self._capture_step1_data()
+        if data:
+            text = self._generate_exec_section(
+                "linguistic_differences",
+                "one-shot-example-linguistic-differences.md",
+                data,
+                "We did an experiment that asked ChatGPT to estimate the demographic "
+                "of customers based upon their complaints. The topic is whether ChatGPT "
+                "may be implicitly profiling customers, and if so, what does it look like.",
+            )
+            if text:
+                sections["linguistic_differences"] = text
+                logger.info("  Section 1 generated (%d chars)", len(text))
+            else:
+                logger.warning("  Section 1 generation failed")
+
+        # Section 2: AI Decision-Making (Step 3 cross-model commentary)
+        logger.info("── Generating Exec Section 2: AI Decision-Making ──")
+        data = self._capture_step3_data()
+        if data:
+            text = self._generate_exec_section(
+                "ai_decision_making",
+                "one-shot-example-ai-decision-making.md",
+                data,
+                "We did an experiment that asked ChatGPT to recommend remedial action "
+                "based upon customer complaints. Then we linked that to the estimated "
+                "customer persona. The topic is whether ChatGPT may be biased based "
+                "upon its implicit profiling of customers, and if so, what does it "
+                "look like.",
+            )
+            if text:
+                sections["ai_decision_making"] = text
+                logger.info("  Section 2 generated (%d chars)", len(text))
+            else:
+                logger.warning("  Section 2 generation failed")
+
+        # Section 3: Correlation vs. Cause (Step 5 data)
+        logger.info("── Generating Exec Section 3: Correlation vs. Cause ──")
+        data = self._capture_step5_data()
+        if data:
+            text = self._generate_exec_section(
+                "correlation_vs_cause",
+                "one-shot-example-correlation-vs-cause.md",
+                data,
+                "We carried out an experiment that reworded the same complaints to "
+                "resemble different personas. Our objective was to test whether ChatGPT "
+                "shows bias by personas based upon their writing style. The generated "
+                "text should explain the experiment, then discuss the results, and "
+                "conclude whether ChatGPT is biased on average.",
+            )
+            if text:
+                sections["correlation_vs_cause"] = text
+                logger.info("  Section 3 generated (%d chars)", len(text))
+            else:
+                logger.warning("  Section 3 generation failed")
+
+        # Section 4: Language Neutralisation (Step 6 data)
+        logger.info("── Generating Exec Section 4: Language Neutralisation ──")
+        data = self._capture_step6_data()
+        if data:
+            text = self._generate_exec_section(
+                "language_neutralisation",
+                "one-shot-example-language-neutralisation.md",
+                data,
+                "We carried out an experiment that reworded the same complaints to a "
+                "neutral persona. Our objective was to test whether ChatGPT can "
+                "anonymise stakeholders by making their language persona-neutral. The "
+                "generated text should explain the experiment, then discuss the results, "
+                "and conclude whether ChatGPT is effective at anonymising by "
+                "neutralising persona-specific wordings.",
+            )
+            if text:
+                sections["language_neutralisation"] = text
+                logger.info("  Section 4 generated (%d chars)", len(text))
+            else:
+                logger.warning("  Section 4 generation failed")
+
+        # Section 5: Bias Mitigation (Step 7 analysis + commentary)
+        logger.info("── Generating Exec Section 5: Bias Mitigation ──")
+        data = self._capture_step7_data()
+        if data:
+            text = self._generate_exec_section(
+                "bias_mitigation",
+                "one-shot-example-bias-mitigation.md",
+                data,
+                "We carried out an experiment that reworded complaints to anonymise "
+                "the implicit personas. Our objective was to test whether using a "
+                "common linguistic style removes any bias. The generated text should "
+                "explain the experiment, then discuss the results, and conclude "
+                "whether this risk mitigation approach works.",
+            )
+            if text:
+                sections["bias_mitigation"] = text
+                logger.info("  Section 5 generated (%d chars)", len(text))
+            else:
+                logger.warning("  Section 5 generation failed")
+
+        # Section 6: Conclusion (uses all 5 prior sections)
+        logger.info("── Generating Exec Section 6: Conclusion ──")
+        if sections:
+            combined_sections = "\n\n".join(sections.values())
+            text = self._generate_exec_section(
+                "conclusion",
+                "one-shot-examples-conclusion.md",
+                combined_sections,
+                "Write a half-page Plain English executive summary, suitable for a "
+                "non-technical business executive audience, with 3-5 key findings "
+                "and recommendations. You are synthesising the findings from 5 "
+                "preceding executive summary sections into an overall conclusion.",
+            )
+            if text:
+                sections["conclusion"] = text
+                logger.info("  Section 6 generated (%d chars)", len(text))
+            else:
+                logger.warning("  Section 6 generation failed")
+
+        return sections
 
     # ------------------------------------------------------------------
     # Save artifacts

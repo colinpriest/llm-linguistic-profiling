@@ -115,7 +115,7 @@ class LLMClient:
                     # Reasoning models use internal reasoning tokens from the
                     # same budget, so we need a much larger ceiling to leave
                     # room for the actual JSON output.
-                    kwargs["max_completion_tokens"] = max(self.config.max_tokens, 16_000)
+                    kwargs["max_completion_tokens"] = max(self.config.max_tokens, 32_000)
                 else:
                     kwargs["max_tokens"] = self.config.max_tokens
                     kwargs["temperature"] = self.config.temperature
@@ -171,6 +171,17 @@ class LLMClient:
             except Exception as e:
                 latency_ms = int((time.perf_counter() - t0) * 1000)
                 err_str = str(e).lower()
+
+                # Quota exhaustion is non-retryable — retrying will
+                # never succeed until billing is resolved.
+                if "insufficient_quota" in err_str:
+                    raise RuntimeError(
+                        f"Fatal: OpenAI API quota exceeded. Check your plan "
+                        f"and billing details at "
+                        f"https://platform.openai.com/account/billing . "
+                        f"Original error: {e}"
+                    ) from e
+
                 # Token-limit truncation is non-retryable — the same
                 # prompt will hit the same limit every time.
                 is_token_limit = (
@@ -180,15 +191,21 @@ class LLMClient:
                 )
                 if is_token_limit:
                     is_reasoning = request.model.startswith(_REASONING_PREFIXES)
-                    if is_reasoning:
-                        # For reasoning models this is systematic (budget
-                        # consumed by reasoning tokens) — abort the batch.
+                    # Tasks whose input length varies (neutralize, rewrite,
+                    # remedy) can hit the token ceiling on outlier-long
+                    # narratives even on reasoning models.  Only abort the
+                    # batch for fixed-length tasks (e.g. commentary) where
+                    # truncation signals a systematic budget problem.
+                    _variable_input_tasks = {
+                        "neutralize", "rewrite", "remedy", "persona_estimate",
+                    }
+                    if is_reasoning and request.task not in _variable_input_tasks:
+                        # Systematic budget problem — abort the batch.
                         raise RuntimeError(
                             f"Fatal: output truncated by token limit for model "
                             f"{request.model!r} on {request.task}: {e}"
                         ) from e
-                    # For standard models it's likely an outlier input —
-                    # log a warning and fail just this request.
+                    # Outlier input — log a warning and fail just this request.
                     logger.warning(
                         "Token limit hit for %s (%s/%s): skipping. %s",
                         request.case_id, request.model, request.task, e,

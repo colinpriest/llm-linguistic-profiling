@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from src.schemas import TextFeatures
 
@@ -222,7 +223,8 @@ def extract_features_batch(
 ) -> List[TextFeatures]:
     """Extract features for a list of texts."""
     results = []
-    for text, cid in zip(texts, case_ids):
+    for text, cid in tqdm(zip(texts, case_ids), total=len(texts),
+                          desc=f"Text features ({variant})", unit="doc"):
         try:
             results.append(extract_features(text, cid, variant))
         except Exception as e:
