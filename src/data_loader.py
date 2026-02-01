@@ -298,12 +298,14 @@ def _step_0_load(data_path: str) -> pd.DataFrame:
     df = pd.read_csv(
         data_path,
         usecols=list(COLUMN_MAP.keys()),
-        dtype={"Complaint ID": int},
+        dtype={"Complaint ID": "Int64"},
         low_memory=False,
     )
     df.rename(columns=COLUMN_MAP, inplace=True)
     logger.info("  Loaded %d raw records", len(df))
     df = df.dropna(subset=["narrative"])
+    df = df.dropna(subset=["complaint_id"])
+    df["complaint_id"] = df["complaint_id"].astype(int)
     logger.info("  After dropping null narratives: %d", len(df))
     return df
 
@@ -448,6 +450,12 @@ def load_and_clean(
     checkpoints.
     """
 
+    if num_complaints <= 0:
+        raise ValueError("num_complaints must be a positive integer")
+    data_file = Path(data_path)
+    if not data_file.exists():
+        raise FileNotFoundError(f"CSV data file not found: {data_path}")
+
     # --- Find the latest valid cached step ---
     resume_from = 0  # 0 = must start from raw CSV
     for step_num, _ in _CLEANING_STEPS:
@@ -483,8 +491,11 @@ def load_and_clean(
                       | (int(rng.randint(0, 2**31)) << 62) | (int(rng.randint(0, 2**31)) << 93)).hex
             for _ in range(len(df))
         ]
-        df["date_received"] = pd.to_datetime(df["date_received"], errors="coerce").dt.strftime("%Y-%m-%d")
-        df["year"] = pd.to_datetime(df["date_received"], errors="coerce").dt.strftime("%Y")
+        df["date_received"] = pd.to_datetime(df["date_received"], errors="coerce")
+        df["year"] = df["date_received"].dt.strftime("%Y")
+        df["date_received"] = df["date_received"].dt.strftime("%Y-%m-%d")
+        df["date_received"] = df["date_received"].fillna("unknown")
+        df["year"] = df["year"].fillna("unknown")
 
         # Category groupings
         df["product_category"] = df["product"].map(PRODUCT_CATEGORIES).fillna("Other")
@@ -549,6 +560,8 @@ def load_and_clean(
 
 def _stratified_sample(df: pd.DataFrame, n: int, seed: int) -> pd.DataFrame:
     """Proportional stratified sample by _bucket column."""
+    if n <= 0:
+        return df.head(0).copy()
     rng = np.random.RandomState(seed)
     bucket_counts = df["_bucket"].value_counts()
     bucket_fracs = bucket_counts / len(df)

@@ -125,6 +125,17 @@ class Experiment:
         verbose: bool = False,
         api_key: str = "",
     ) -> None:
+        if num_complaints <= 0:
+            raise ValueError("num_complaints must be a positive integer")
+        if threads <= 0:
+            raise ValueError("threads must be a positive integer")
+        if not (0 < causal_sample_pct <= 1.0):
+            raise ValueError("causal_sample_pct must be within (0, 1]")
+        if not (0 < materiality_threshold <= 1.0):
+            raise ValueError("materiality_threshold must be within (0, 1]")
+        if models is not None and not models:
+            raise ValueError("models must include at least one model identifier")
+
         self.data_path = data_path
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
