@@ -1,10 +1,10 @@
 # LLM Fairness in Financial Complaint Resolution
 
-Tests whether large language models exhibit discriminatory behavior when processing financial complaints. Uses a 7-step methodology to detect linguistic profiling, establish causation through a matched-guise experiment, and test mitigation via language neutralization.
+Tests whether large language models exhibit discriminatory behavior when processing financial complaints. Uses a 7-step methodology to detect linguistic profiling, establish causation through a matched-guise experiment, test mitigation via language neutralization, and analyze whether bias amplifies with complaint severity. Results are synthesized into a GPT-generated business executive summary.
 
 ## Research Design
 
-The experiment evaluates whether LLMs assign different remedy outcomes to complaints based on inferred demographic characteristics of the writer, using 36 persona combinations across four dimensions:
+The experiment evaluates whether LLMs assign different remedy outcomes to complaints based on inferred demographic characteristics of the writer, using 36 persona combinations across four causal dimensions:
 
 | Dimension | Values |
 |-----------|--------|
@@ -13,15 +13,25 @@ The experiment evaluates whether LLMs assign different remedy outcomes to compla
 | Education | high school, college |
 | Socioeconomic | low, middle, high |
 
+Two additional dimensions (gender and ESL status) are estimated from text but not used in causal rewrites, to test whether models infer protected characteristics from writing style.
+
 ### 7-Step Methodology
 
-1. **Persona Estimation** - Classify each complaint's likely demographic persona from linguistic cues
-2. **Remedy Decision (Original)** - Assign remedy tier (no action / non-monetary / monetary) to original text
-3. **Correlation Analysis** - Test whether estimated persona correlates with remedy outcomes
-4. **Persona-Style Rewriting** - Rewrite a sample into all 36 persona styles, preserving factual content
-5. **Remedy Decision (Rewritten)** - Assign remedy tiers to rewritten complaints to test causation
-6. **Language Neutralization** - Rewrite all complaints into demographically neutral language
-7. **Remedy Decision (Neutralized)** - Measure whether neutralization reduces discrimination
+1. **Persona Estimation** — Classify each complaint's likely demographic persona from linguistic cues (6 dimensions: age, geographic, education, socioeconomic, gender, ESL)
+2. **Remedy Decision (Original)** — Assign remedy tier (no action / non-monetary / monetary) to original text
+3. **Correlation Analysis** — Test whether estimated persona correlates with remedy outcomes
+4. **Persona-Style Rewriting** — Rewrite a sample into all 36 persona styles, preserving factual content
+5. **Remedy Decision (Rewritten)** — Assign remedy tiers to rewritten complaints to test causation
+6. **Language Neutralization** — Rewrite all complaints into demographically neutral language
+7. **Remedy Decision (Neutralized)** — Measure whether neutralization reduces discrimination
+
+### Additional Analyses
+
+- **Severity Amplification** — Tests whether bias increases with complaint severity (monetary dollar amounts and issue category), including whether mitigation removes severity-dependent amplification
+- **Dollar Amount Extraction** — LLM-based extraction of monetary amounts from complaint narratives, classified into low/medium/high severity
+- **Issue Severity Scoring** — Product × issue category mapping with 50+ manual overrides for severity classification
+- **GPT-5.2 Executive Summary** — Automated business-audience commentary across 7 sections, generated from statistical results using one-shot examples
+- **Process Discrimination** — Analysis of whether certain personas face higher procedural burdens (information requests)
 
 ## Setup
 
@@ -94,77 +104,117 @@ python llm_fairness_experiment.py --models gpt-4o-mini --verbose
 
 The experiment produces:
 
-- **HTML Report** (`fairness_report_{timestamp}.html`) - Self-contained report with 6 tabs:
-  - Executive Summary
-  - Disparate Impact (outcome analysis)
+- **HTML Report** (`fairness_report_{timestamp}.html`) — Self-contained interactive report with 8 tabs:
+  - Executive Summary (GPT-5.2 generated, business audience)
+  - Technical Summary (experiment parameters, sample statistics)
+  - Disparate Impact (outcome analysis with AIR, chi-squared, logistic regression)
   - Process Discrimination (procedural burden analysis)
-  - Text Features (linguistic feature analysis)
-  - Model Comparison
-  - Detailed Results
-- **CSV files** - Raw results for outcome decisions, persona estimates, text features
-- **JSON** - Repair statistics tracking JSON validation/repair success rates
-- **Log file** - Full experiment log
+  - Text Features (linguistic feature distributions and correlations)
+  - Model Comparison (cross-model performance and bias patterns)
+  - Severity Analysis (7 panels: overview, main effects, amplification, model comparison, worst cases, process fairness, mitigation × severity)
+  - Detailed Results (raw statistics, crosstabs, test results)
+- **Executive Summary** (`executive_summary.txt`) — 7-section business-audience summary as plain text
+- **CSV files** — Raw results for outcome decisions, persona estimates, text features, dollar amounts
+- **JSON files** — Complete analysis results and repair statistics
+- **Log file** — Full experiment log with timestamps
 
 ## Project Structure
 
 ```
 .
-├── llm_fairness_experiment.py     # Main entry point
+├── llm_fairness_experiment.py          # Main entry point (CLI)
 ├── requirements.txt
-├── .env                           # API keys (not in version control)
+├── .env                                # API keys (not in version control)
 │
 ├── src/
-│   ├── schemas.py                 # Pydantic models and dataclasses
-│   ├── prompts.py                 # LLM prompt templates
-│   ├── json_utils.py              # JSON extraction, repair, validation
-│   ├── cache.py                   # Disk-based response cache
-│   ├── data_loader.py             # CFPB data ingestion and cleaning
-│   ├── text_features.py           # Text feature extraction (26 metrics)
-│   ├── llm_client.py              # OpenAI API client with threading
-│   ├── statistics.py              # Disparate impact statistical analysis
-│   ├── process_discrimination.py  # Process discrimination analysis
-│   ├── experiment.py              # 7-step orchestration
-│   └── reporter.py                # HTML report generation
+│   ├── schemas.py                      # Pydantic models and dataclasses
+│   ├── prompts.py                      # LLM prompt templates (versioned)
+│   ├── json_utils.py                   # JSON extraction, repair, validation
+│   ├── cache.py                        # Thread-safe disk-based response cache
+│   ├── data_loader.py                  # CFPB data ingestion, cleaning, severity scoring
+│   ├── text_features.py                # Text feature extraction (26 metrics)
+│   ├── llm_client.py                   # OpenAI API client with threading and circuit breaker
+│   ├── statistics.py                   # Disparate impact statistical analysis
+│   ├── process_discrimination.py       # Process discrimination analysis
+│   ├── severity_analysis.py            # Severity amplification analysis (7 sections)
+│   ├── experiment.py                   # 7-step orchestration + executive summary generation
+│   └── reporter.py                     # HTML report generation (8 tabs, 20+ charts)
+│
+├── one-shot-examples/                  # GPT-5.2 executive summary examples (7 files)
+│   ├── one-shot-example-linguistic-differences.md
+│   ├── one-shot-example-ai-decision-making.md
+│   ├── one-shot-example-correlation-vs-cause.md
+│   ├── one-shot-example-severity-stakes.md
+│   ├── one-shot-example-language-neutralisation.md
+│   ├── one-shot-example-bias-mitigation.md
+│   └── one-shot-examples-conclusion.md
+│
+├── specs/                              # Experiment specifications
+│   ├── llm_fairness_experiment_specification_v1.2.md
+│   ├── llm-fairness-specification-add-gender-esl.md
+│   ├── severity-amplification-specification.md
+│   └── advanced-statistical-specifications.md
 │
 ├── data/
-│   └── complaints.csv             # CFPB data (not in version control)
+│   └── complaints.csv                  # CFPB data (not in version control)
 │
-├── cache/                         # LLM response cache (auto-created)
-├── output/                        # Reports and artifacts (auto-created)
-├── docs/                          # Project documentation
-└── specs/                         # Experiment specification
+├── cache/                              # LLM response cache (auto-created)
+│   ├── persona_estimate/
+│   ├── remedy_decision/
+│   ├── persona_rewrite/
+│   ├── neutralize/
+│   └── dollar_extract/
+│
+└── output/                             # Reports and artifacts (auto-created)
 ```
 
 ## Data Pipeline
 
-The cleaning pipeline processes the raw CFPB data through 10 sequential steps:
+The cleaning pipeline processes the raw CFPB data through 10 sequential steps, each cached as parquet for resumption:
 
 1. Whitespace normalization
 2. Length filter (300-1500 characters)
-3. Language detection (English only via langid)
+3. Language detection (English only via fasttext with langid fallback)
 4. ASCII ratio filter (>= 85%)
 5. Null handling (fill missing product/issue with "Unknown")
 6. Deduplication (Blake2b hash)
 7. Repetition filter (unique-word ratio >= 20%)
 8. Redaction filter (X characters < 20% of text)
-9. ID generation (UUID4, year extraction) + category assignment + exclusion of non-bank category pairs (see [Excluded Category Pairs](#excluded-category-pairs))
-10. Stratified sampling by product/issue category
+9. ID generation (UUID4, year extraction) + category assignment + exclusion of non-bank category pairs (see [Excluded Category Pairs](#excluded-category-pairs)) + issue severity scoring
+10. Stratified sampling by product × issue category
+
+**Dollar amount extraction** runs as a separate cached step using `gpt-4o-mini` to extract monetary values from narratives and classify them into severity bins (low ≤ $100, medium ≤ $1,000, high > $1,000).
 
 ## Statistical Methods
 
 ### Disparate Impact Analysis
 - Chi-squared tests for persona-outcome association
-- Logistic regression (tier ~ age + geographic + education + socioeconomic)
+- Logistic regression (tier ~ age + geographic + education + socioeconomic) with regularization for separation
 - Adverse Impact Ratios with 80% rule threshold
 - McNemar's test for paired pre/post comparisons
 - Friedman test for within-complaint repeated measures
-- Bootstrap confidence intervals
+- Bootstrap confidence intervals (1,000 iterations)
+- One-way ANOVA with partial eta-squared for dimension-level effects
 
 ### Process Discrimination Analysis
 - Information request rate disparities (confidence = "need_more_info")
 - Cochran's Q test for matched conditions
 - Process AIR (inverted: higher burden = worse treatment, threshold > 1.25)
-- Information request content analysis
+- Pairwise McNemar tests with FDR correction
+- Information request content analysis (length ANOVA, word frequency)
+- Pre/post mitigation comparison (variance reduction)
+
+### Severity Amplification Analysis
+- Two independent severity metrics: monetary (dollar amounts) and issue (product × issue category)
+- Severity descriptives with coverage analysis and cross-metric agreement (Cohen's kappa, Spearman correlation)
+- Main effects: one-way ANOVA, chi-squared, Spearman trend tests per severity metric and model
+- Persona × severity interaction: two-way ANOVA with partial eta-squared
+- Simple effects: per-level persona one-way ANOVA with pairwise t-tests and FDR correction
+- Amplification ratio: bias_high / bias_low with bootstrap 95% CI
+- Three-way ANOVA: model × persona × severity
+- Worst-case analysis: identifies the model × severity × persona combination with largest effect size
+- Mitigation × severity comparison: before/after neutralization amplification ratios, per-level bias SD changes, interaction weakening, and summary verdict (eliminated / reduced / increased / unchanged)
+- Process fairness × severity: information request disparity by severity level
 
 ### Multiple Comparison Correction
 Benjamini-Hochberg FDR correction applied within each test family:
@@ -173,21 +223,42 @@ Benjamini-Hochberg FDR correction applied within each test family:
 - Per-dimension tests (4 tests)
 - Per-model comparisons
 - Process discrimination tests
+- Severity simple effects pairwise tests
 
 ### Text Feature Analysis
-26 metrics across 5 categories:
+26 metrics across 5 categories, extracted for original, persona-rewritten, and neutralized complaints:
 - **Length**: word count, character count, sentence count, average lengths
 - **Complexity**: Flesch Reading Ease, Flesch-Kincaid Grade, Gunning Fog, SMOG, ARI
 - **Vocabulary**: type-token ratio, hapax ratio, MTLD, HD-D
-- **Sentiment**: TextBlob polarity/subjectivity, VADER compound/pos/neg/neu
+- **Sentiment**: TextBlob polarity/subjectivity, VADER compound/pos/neg/neu, emotional intensity
 - **Topics**: LDA (10 topics, unsupervised)
+
+## Executive Summary Generation
+
+After all statistical analysis completes, the experiment sends structured results to GPT-5.2 to generate a 7-section business executive summary:
+
+| Section | Topic |
+|---------|-------|
+| 1. Linguistic Differences | How AI perceives demographic traits from writing style |
+| 2. AI Decision-Making | Whether remedy outcomes vary by perceived demographics |
+| 3. Correlation vs. Cause | Matched-guise experiment isolating writing style as causal factor |
+| 4. Severity Stakes | Whether bias amplifies with financial or issue severity |
+| 5. Language Neutralisation | Effectiveness of removing demographic markers |
+| 6. Bias Mitigation | Quantified bias reduction from neutralization |
+| 7. Conclusion | Synthesis and recommendations |
+
+Each section is generated using a one-shot example (in `one-shot-examples/`) that demonstrates the expected format and analytical depth. The full summary is displayed in the console, saved to `output/executive_summary.txt`, and rendered in the HTML report's Executive Summary tab.
 
 ## Caching
 
 LLM responses are cached to disk using Blake2b hashes of (model, task, narrative, prompt_version). This allows:
 - Resuming interrupted runs without re-calling the API
 - Iterating on analysis code without re-running LLM calls
-- Automatic invalidation when prompt templates change (via version string)
+- Automatic invalidation when prompt templates change (via version string in `prompts.py`)
+
+The cache is thread-safe (atomic writes via temp files + `os.replace`) and tracks hit/miss statistics.
+
+Data pipeline steps are separately cached as parquet files in `data/.pipeline/`, invalidated on source CSV modification.
 
 Clear the cache with `--clear-cache` or delete the `./cache/` directory.
 
@@ -229,11 +300,11 @@ Raw CFPB issue descriptions are mapped to four high-level categories:
 | **Account Management** | Managing an account; Problem with a purchase shown on your statement |
 | **Payment Issues** | Struggling to pay mortgage; Trouble during payment process; Problem with a lender or other company charging your account |
 
-Issues not in this mapping are grouped as "Other". The product x issue category combination is used as the stratification key during sampling, ensuring the final sample is proportionally representative of complaint types in the full dataset.
+Issues not in this mapping are grouped as "Other". The product × issue category combination is used as the stratification key during sampling, ensuring the final sample is proportionally representative of complaint types in the full dataset.
 
 ### Excluded Category Pairs
 
-Two product x issue combinations are filtered out before sampling because they are dominated by non-bank actors and are less informative about bank discretion in remedy decisions:
+Two product × issue combinations are filtered out before sampling because they are dominated by non-bank actors and are less informative about bank discretion in remedy decisions:
 
 | Product Category | Issue Category | Reason |
 |-----------------|---------------|--------|
@@ -241,6 +312,15 @@ Two product x issue combinations are filtered out before sampling because they a
 | Debt Collection | Debt Disputes | Discriminatory behavior is driven by third-party collectors rather than the originating bank, making it a weaker signal for inter-bank behavioral differences |
 
 These pairs typically account for a large share of the raw CFPB data. Excluding them focuses the analysis on complaint types where the bank itself has meaningful discretion over the remedy outcome.
+
+### Issue Severity Scoring
+
+Each complaint is assigned an issue severity (low/medium/high) based on its product × issue combination:
+
+- **Base score** (1-3): Assigned by product category (e.g., mortgage = 3, checking account = 1)
+- **Issue modifier** (-1 to +2): Adjusts based on issue type (e.g., foreclosure = +2, account opening = -1)
+- **Manual overrides**: 50+ specific product × issue combinations with explicit severity scores (e.g., mortgage foreclosure = 5 → high)
+- **Thresholds**: score ≤ 2 = low, score ≤ 3 = medium, score ≥ 4 = high
 
 ### Remedy Tiers
 
