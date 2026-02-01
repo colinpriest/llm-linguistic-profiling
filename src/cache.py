@@ -7,6 +7,8 @@ import json
 import logging
 import os
 import shutil
+import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -26,6 +28,7 @@ class ResponseCache:
         self._ensure_dirs()
         self._hits = 0
         self._misses = 0
+        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Public API
@@ -37,12 +40,14 @@ class ResponseCache:
         path = self._path(task, key)
         if path.exists():
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                self._hits += 1
+                with self._lock:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    self._hits += 1
                 return data.get("response")
             except (json.JSONDecodeError, KeyError):
                 logger.warning("Corrupt cache entry %s – ignoring", path)
-        self._misses += 1
+        with self._lock:
+            self._misses += 1
         return None
 
     def put(
@@ -64,7 +69,11 @@ class ResponseCache:
             "created_at": datetime.now(timezone.utc).isoformat(),
             "prompt_version": PROMPT_VERSIONS.get(task, "1.0"),
         }
-        path.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
+        payload = json.dumps(entry, ensure_ascii=False, indent=2)
+        with self._lock:
+            tmp_path = path.with_suffix(f"{path.suffix}.{uuid.uuid4().hex}.tmp")
+            tmp_path.write_text(payload, encoding="utf-8")
+            os.replace(tmp_path, path)
 
     def clear(self) -> int:
         """Delete all cached files. Returns number of files removed."""

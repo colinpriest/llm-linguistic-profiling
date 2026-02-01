@@ -175,10 +175,19 @@ def logistic_regression_analysis(
     import statsmodels.api as sm
     from statsmodels.tools import add_constant
 
+    if df.empty:
+        logger.info(
+            "Logistic regression skipped: empty dataset for target '%s'",
+            target_col,
+        )
+        return {"skipped": True, "reason": "empty dataset"}
+
     y = df[target_col].astype(int)
 
     # Pre-check: target must have both 0 and 1
     if y.nunique() < 2:
+        if y.empty:
+            return {"skipped": True, "reason": "empty target"}
         logger.info(
             "Logistic regression skipped: target '%s' has only value(s) %s",
             target_col, [int(v) for v in sorted(y.unique())],
