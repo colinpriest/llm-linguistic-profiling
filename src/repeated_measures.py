@@ -43,11 +43,13 @@ from __future__ import annotations
 
 import logging
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
+from tqdm import tqdm
 
 from src.statistics import bootstrap_ci, fdr_correction, friedman_test
 
@@ -893,61 +895,64 @@ def run_repeated_measures_analysis(
         },
     }
 
-    # Run per-model analyses
-    for model in models:
-        logger.info("  Repeated-measures analysis for model: %s", model)
-        model_long = long[long["model"] == model]
+    # Define the six sub-analyses that run per model
+    def _run_model_suite(model_name: str) -> Tuple[str, Dict[str, Any]]:
+        model_long = long[long["model"] == model_name]
         if len(model_long) < 20:
-            results[model] = {"skipped": True, "reason": "insufficient data"}
-            continue
+            return model_name, {"skipped": True, "reason": "insufficient data"}
 
         mr: Dict[str, Any] = {}
-
-        # A) Ordinal mixed model
-        logger.info("    A) Ordinal model (outcome tier)...")
-        mr["ordinal_model"] = ordinal_mixed_model(long, model_filter=model)
-
-        # B1) Conditional logistic (favourable)
-        logger.info("    B1) Conditional logistic (favourable)...")
+        mr["ordinal_model"] = ordinal_mixed_model(long, model_filter=model_name)
         mr["conditional_logistic_favourable"] = conditional_logistic_favourable(
-            long, model_filter=model,
+            long, model_filter=model_name,
         )
-
-        # B2) Logistic GEE (favourable)
-        logger.info("    B2) Logistic GEE (favourable)...")
         mr["logistic_gee_favourable"] = logistic_mixed_model_favourable(
-            long, model_filter=model,
+            long, model_filter=model_name,
         )
-
-        # C) Info-request burden
-        logger.info("    C) Logistic GEE (info request)...")
         mr["logistic_gee_info_request"] = logistic_mixed_model_info_request(
-            long, model_filter=model,
+            long, model_filter=model_name,
         )
+        mr["linear_mixed_model"] = linear_mixed_model_tier(long, model_filter=model_name)
+        mr["nonparametric"] = repeated_measures_nonparametric(long, model_filter=model_name)
+        return model_name, mr
 
-        # D) Linear mixed model (robustness)
-        logger.info("    D) Linear mixed model (robustness)...")
-        mr["linear_mixed_model"] = linear_mixed_model_tier(long, model_filter=model)
-
-        # E) Nonparametric repeated-measures tests
-        logger.info("    E) Nonparametric repeated-measures tests...")
-        mr["nonparametric"] = repeated_measures_nonparametric(long, model_filter=model)
-
-        results[model] = mr
-
-    # Pooled (all models)
+    # Run per-model analyses in parallel
+    analysis_targets = list(models)
     if len(models) >= 2:
-        logger.info("  Pooled repeated-measures analysis (all models)...")
-        pooled: Dict[str, Any] = {}
-        pooled["ordinal_model"] = ordinal_mixed_model(long)
-        pooled["logistic_gee_favourable"] = logistic_mixed_model_favourable(long)
-        pooled["logistic_gee_info_request"] = logistic_mixed_model_info_request(long)
-        pooled["linear_mixed_model"] = linear_mixed_model_tier(long)
-        pooled["nonparametric"] = repeated_measures_nonparametric(long)
-        results["pooled"] = pooled
+        analysis_targets.append("__pooled__")
+
+    with ThreadPoolExecutor() as executor:
+        futures = {}
+        for target in analysis_targets:
+            if target == "__pooled__":
+                futures[executor.submit(_run_pooled_suite, long)] = "__pooled__"
+            else:
+                futures[executor.submit(_run_model_suite, target)] = target
+
+        for future in tqdm(
+            as_completed(futures), total=len(futures),
+            desc="Repeated measures", leave=False, delay=0.5,
+        ):
+            key = futures[future]
+            if key == "__pooled__":
+                results["pooled"] = future.result()
+            else:
+                model_name, mr = future.result()
+                results[model_name] = mr
 
     logger.info("Repeated-measures causal analysis complete.")
     return results
+
+
+def _run_pooled_suite(long: pd.DataFrame) -> Dict[str, Any]:
+    """Run the pooled (all-models) repeated-measures suite."""
+    pooled: Dict[str, Any] = {}
+    pooled["ordinal_model"] = ordinal_mixed_model(long)
+    pooled["logistic_gee_favourable"] = logistic_mixed_model_favourable(long)
+    pooled["logistic_gee_info_request"] = logistic_mixed_model_info_request(long)
+    pooled["linear_mixed_model"] = linear_mixed_model_tier(long)
+    pooled["nonparametric"] = repeated_measures_nonparametric(long)
+    return pooled
 
 
 # ---------------------------------------------------------------------------

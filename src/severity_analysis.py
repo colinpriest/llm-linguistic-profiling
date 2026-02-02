@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import logging
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
+from tqdm import tqdm
 
 from src.statistics import (
     bootstrap_ci, chi_squared_test, fdr_correction, one_way_anova,
@@ -585,7 +587,7 @@ def amplification_ratio(
     rng = np.random.RandomState(seed)
     case_ids = df["case_id"].unique()
     boot_ratios = []
-    for _ in range(n_boot):
+    for _ in tqdm(range(n_boot), desc="  bootstrap(amplification)", leave=False, delay=1):
         sample_ids = rng.choice(case_ids, size=len(case_ids), replace=True)
         boot_df = df[df["case_id"].isin(sample_ids)]
         b_low = _bias_at_level(boot_df, "low")
@@ -726,7 +728,7 @@ def dimension_severity_interaction(
     rng = np.random.RandomState(seed)
     case_ids = df["case_id"].unique()
     boot_ratios: list = []
-    for _ in range(n_boot):
+    for _ in tqdm(range(n_boot), desc=f"  bootstrap(dim={dimension})", leave=False, delay=1):
         sample_ids = rng.choice(case_ids, size=len(case_ids), replace=True)
         boot_df = df[df["case_id"].isin(sample_ids)]
         b_low_means = boot_df[boot_df[severity_metric] == "low"].groupby(dimension)["tier"].mean()
@@ -767,16 +769,31 @@ def dimension_severity_all(
     -------
     Dict[metric][model][dimension] -> dimension_severity_interaction result.
     """
-    result: Dict[str, Any] = {}
-    for metric in SEVERITY_METRICS:
-        result[metric] = {}
-        for model in models:
-            result[metric][model] = {}
-            for dim in dimensions:
-                result[metric][model][dim] = dimension_severity_interaction(
-                    decisions_df, metric, model, dim,
-                    n_boot=n_boot, seed=seed,
-                )
+    result: Dict[str, Any] = {m: {mdl: {} for mdl in models} for m in SEVERITY_METRICS}
+
+    tasks = [
+        (metric, model, dim)
+        for metric in SEVERITY_METRICS
+        for model in models
+        for dim in dimensions
+    ]
+
+    with ThreadPoolExecutor() as executor:
+        futures = {
+            executor.submit(
+                dimension_severity_interaction,
+                decisions_df, metric, model, dim,
+                n_boot=n_boot, seed=seed,
+            ): (metric, model, dim)
+            for metric, model, dim in tasks
+        }
+        for future in tqdm(
+            as_completed(futures), total=len(futures),
+            desc="Dimension severity", leave=False, delay=1,
+        ):
+            metric, model, dim = futures[future]
+            result[metric][model][dim] = future.result()
+
     return result
 
 
@@ -856,15 +873,23 @@ def model_specific_amplification(
     seed: int = 42,
 ) -> Dict[str, Any]:
     """Amplification ratio per model per severity metric."""
-    result: Dict[str, Any] = {}
-    for model in models:
-        model_res: Dict[str, Any] = {}
-        for metric in SEVERITY_METRICS:
-            model_res[f"{metric}_amplification"] = amplification_ratio(
+    result: Dict[str, Any] = {m: {} for m in models}
+
+    tasks = [(model, metric) for model in models for metric in SEVERITY_METRICS]
+
+    with ThreadPoolExecutor() as executor:
+        futures = {
+            executor.submit(
+                amplification_ratio,
                 decisions_df, metric, model,
                 persona_col=persona_col, n_boot=n_boot, seed=seed,
-            )
-        result[model] = model_res
+            ): (model, metric)
+            for model, metric in tasks
+        }
+        for future in as_completed(futures):
+            model, metric = futures[future]
+            result[model][f"{metric}_amplification"] = future.result()
+
     return result
 
 
@@ -1544,8 +1569,13 @@ def run_severity_analysis(
     """
     logger.info("Running severity amplification analysis...")
 
+    # Total sections for top-level progress bar
+    has_neutralized = neutralized_df is not None and len(neutralized_df) > 0
+    n_sections = 7 + (2 if has_neutralized else 0)
+    progress = tqdm(total=n_sections, desc="Severity analysis", delay=0.5)
+
     # 1. Descriptives
-    logger.info("  Section 1: Severity descriptives")
+    progress.set_postfix_str("descriptives")
     descriptives = severity_descriptives(complaints_df)
     coverage = severity_coverage(
         complaints_df[["case_id", "monetary_severity", "issue_severity"]],
@@ -1554,78 +1584,88 @@ def run_severity_analysis(
     descriptives["coverage"] = coverage
 
     # 1b. Monetary missingness diagnostic
-    logger.info("  Section 1b: Monetary missingness diagnostic")
+    progress.set_postfix_str("missingness diagnostic")
     missingness = monetary_missingness_diagnostic(
         baseline_df, complaints_df, models, personas_df=personas_df,
     )
+    progress.update(1)
 
     # 2. Main effects (uses baseline decisions)
-    logger.info("  Section 2: Severity main effects")
+    progress.set_postfix_str("main effects")
     main_effects = severity_main_effects_all(baseline_df, models)
+    progress.update(1)
 
     # 3. Interaction analysis (uses baseline merged with personas)
-    logger.info("  Section 3: Severity × persona interaction")
-    interactions: Dict[str, Any] = {}
-    for metric in SEVERITY_METRICS:
-        metric_res: Dict[str, Any] = {}
-        for model in models:
-            model_int: Dict[str, Any] = {}
-            model_int["bias"] = bias_by_severity(
-                baseline_df, metric, model, persona_col="persona_label",
-            )
-            model_int["two_way"] = two_way_anova_persona_severity(
-                baseline_df, metric, model, persona_col="persona_label",
-            )
-            model_int["simple_effects"] = simple_effects_by_severity(
-                baseline_df, metric, model, persona_col="persona_label",
-            )
-            model_int["amplification"] = amplification_ratio(
-                baseline_df, metric, model,
-                persona_col="persona_label", n_boot=n_boot, seed=seed,
-            )
-            metric_res[model] = model_int
-        interactions[metric] = metric_res
+    # Parallelise across metric × model combinations
+    progress.set_postfix_str("interactions (tier)")
+
+    def _compute_interaction(metric: str, model: str, outcome: str = "tier") -> Dict[str, Any]:
+        model_int: Dict[str, Any] = {}
+        model_int["bias"] = bias_by_severity(
+            baseline_df, metric, model, persona_col="persona_label",
+            outcome_col=outcome,
+        )
+        model_int["two_way"] = two_way_anova_persona_severity(
+            baseline_df, metric, model, persona_col="persona_label",
+            outcome_col=outcome,
+        )
+        model_int["simple_effects"] = simple_effects_by_severity(
+            baseline_df, metric, model, persona_col="persona_label",
+            outcome_col=outcome,
+        )
+        model_int["amplification"] = amplification_ratio(
+            baseline_df, metric, model,
+            persona_col="persona_label", n_boot=n_boot, seed=seed,
+            outcome_col=outcome,
+        )
+        return model_int
+
+    interactions: Dict[str, Any] = {m: {} for m in SEVERITY_METRICS}
+    tasks_s3 = [(metric, model) for metric in SEVERITY_METRICS for model in models]
+
+    with ThreadPoolExecutor() as executor:
+        futures = {
+            executor.submit(_compute_interaction, metric, model, "tier"): (metric, model)
+            for metric, model in tasks_s3
+        }
+        for future in tqdm(
+            as_completed(futures), total=len(futures),
+            desc="  S3 interactions", leave=False, delay=1,
+        ):
+            metric, model = futures[future]
+            interactions[metric][model] = future.result()
+    progress.update(1)
 
     # 3-t2. Tier 2 rate interaction analysis
-    logger.info("  Section 3-t2: Tier 2 rate severity × persona interaction")
+    progress.set_postfix_str("interactions (tier2)")
     baseline_df["tier2"] = (baseline_df["tier"] >= 2).astype(int)
-    interactions_tier2: Dict[str, Any] = {}
-    for metric in SEVERITY_METRICS:
-        metric_res_t2: Dict[str, Any] = {}
-        for model in models:
-            m_t2: Dict[str, Any] = {}
-            m_t2["bias"] = bias_by_severity(
-                baseline_df, metric, model, persona_col="persona_label",
-                outcome_col="tier2",
-            )
-            m_t2["two_way"] = two_way_anova_persona_severity(
-                baseline_df, metric, model, persona_col="persona_label",
-                outcome_col="tier2",
-            )
-            m_t2["simple_effects"] = simple_effects_by_severity(
-                baseline_df, metric, model, persona_col="persona_label",
-                outcome_col="tier2",
-            )
-            m_t2["amplification"] = amplification_ratio(
-                baseline_df, metric, model,
-                persona_col="persona_label", n_boot=n_boot, seed=seed,
-                outcome_col="tier2",
-            )
-            metric_res_t2[model] = m_t2
-        interactions_tier2[metric] = metric_res_t2
+    interactions_tier2: Dict[str, Any] = {m: {} for m in SEVERITY_METRICS}
+
+    with ThreadPoolExecutor() as executor:
+        futures = {
+            executor.submit(_compute_interaction, metric, model, "tier2"): (metric, model)
+            for metric, model in tasks_s3
+        }
+        for future in tqdm(
+            as_completed(futures), total=len(futures),
+            desc="  S3-t2 interactions", leave=False, delay=1,
+        ):
+            metric, model = futures[future]
+            interactions_tier2[metric][model] = future.result()
+    progress.update(1)
 
     # 3b. Dimension-specific severity interaction (one-way)
-    logger.info("  Section 3b: Dimension-specific severity interaction")
-    # Determine which causal dimensions are available in baseline_df
+    progress.set_postfix_str("dimension severity")
     _causal_dims = [d for d in ["age", "geographic", "education", "socioeconomic"]
                     if d in baseline_df.columns]
     dim_severity = dimension_severity_all(
         baseline_df, models, _causal_dims,
         n_boot=n_boot, seed=seed,
     )
+    progress.update(1)
 
     # 4. Three-way analysis
-    logger.info("  Section 4: Three-way analysis")
+    progress.set_postfix_str("three-way")
     three_way: Dict[str, Any] = {}
     for metric in SEVERITY_METRICS:
         three_way[metric] = three_way_anova(
@@ -1636,56 +1676,81 @@ def run_severity_analysis(
         persona_col="persona_label", n_boot=n_boot, seed=seed,
     )
     worst = worst_case_analysis(baseline_df, models, persona_col="persona_label")
+    progress.update(1)
 
-    # 5. Process fairness
-    logger.info("  Section 5: Process fairness × severity")
-    process: Dict[str, Any] = {}
-    for metric in SEVERITY_METRICS:
-        process[metric] = {}
-        for model in models:
-            process[metric][model] = process_severity_analysis(
+    # 5. Process fairness — parallelise across metric × model
+    progress.set_postfix_str("process fairness")
+    process: Dict[str, Any] = {m: {} for m in SEVERITY_METRICS}
+
+    with ThreadPoolExecutor() as executor:
+        futures = {
+            executor.submit(
+                process_severity_analysis,
                 baseline_df, metric, model,
                 persona_col="persona_label", n_boot=n_boot, seed=seed,
-            )
+            ): (metric, model)
+            for metric, model in tasks_s3
+        }
+        for future in as_completed(futures):
+            metric, model = futures[future]
+            process[metric][model] = future.result()
+    progress.update(1)
 
     # 6. Consistency
-    logger.info("  Section 6: Consistency check")
+    progress.set_postfix_str("consistency")
     consist = consistency_check(main_effects, interactions)
 
     # 7. Mitigation × severity (optional)
     mitigation_severity: Dict[str, Any] = {}
-    if neutralized_df is not None and len(neutralized_df) > 0:
-        logger.info("  Section 7: Mitigation × severity comparison")
-        for metric in SEVERITY_METRICS:
-            mitigation_severity[metric] = {}
-            for model in models:
-                try:
-                    mitigation_severity[metric][model] = mitigation_severity_comparison(
-                        baseline_df, neutralized_df, metric, model,
-                        persona_col="persona_label", n_boot=n_boot, seed=seed,
-                    )
-                except Exception as exc:
-                    logger.warning("  Mitigation severity failed for %s/%s: %s", metric, model, exc)
-                    mitigation_severity[metric][model] = {"comparison": {"verdict": "insufficient_data"}}
+    if has_neutralized:
+        progress.set_postfix_str("mitigation severity")
+
+        def _safe_mitigation(metric: str, model: str, outcome: str = "tier") -> Tuple[str, str, Dict[str, Any]]:
+            try:
+                return metric, model, mitigation_severity_comparison(
+                    baseline_df, neutralized_df, metric, model,
+                    persona_col="persona_label", n_boot=n_boot, seed=seed,
+                    outcome_col=outcome,
+                )
+            except Exception as exc:
+                logger.warning("  Mitigation severity failed for %s/%s: %s", metric, model, exc)
+                return metric, model, {"comparison": {"verdict": "insufficient_data"}}
+
+        mitigation_severity = {m: {} for m in SEVERITY_METRICS}
+        with ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(_safe_mitigation, metric, model, "tier")
+                for metric, model in tasks_s3
+            ]
+            for future in tqdm(
+                as_completed(futures), total=len(futures),
+                desc="  S7 mitigation", leave=False, delay=1,
+            ):
+                metric, model, res = future.result()
+                mitigation_severity[metric][model] = res
+        progress.update(1)
 
     # 7-t2. Mitigation × severity for Tier 2 rate (optional)
     mitigation_severity_tier2: Dict[str, Any] = {}
-    if neutralized_df is not None and len(neutralized_df) > 0:
-        logger.info("  Section 7-t2: Mitigation × severity comparison (Tier 2 rate)")
+    if has_neutralized:
+        progress.set_postfix_str("mitigation severity (tier2)")
         neutralized_df["tier2"] = (neutralized_df["tier"] >= 2).astype(int)
-        for metric in SEVERITY_METRICS:
-            mitigation_severity_tier2[metric] = {}
-            for model in models:
-                try:
-                    mitigation_severity_tier2[metric][model] = mitigation_severity_comparison(
-                        baseline_df, neutralized_df, metric, model,
-                        persona_col="persona_label", n_boot=n_boot, seed=seed,
-                        outcome_col="tier2",
-                    )
-                except Exception as exc:
-                    logger.warning("  Mitigation severity (tier2) failed for %s/%s: %s", metric, model, exc)
-                    mitigation_severity_tier2[metric][model] = {"comparison": {"verdict": "insufficient_data"}}
+        mitigation_severity_tier2 = {m: {} for m in SEVERITY_METRICS}
+        with ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(_safe_mitigation, metric, model, "tier2")
+                for metric, model in tasks_s3
+            ]
+            for future in tqdm(
+                as_completed(futures), total=len(futures),
+                desc="  S7-t2 mitigation", leave=False, delay=1,
+            ):
+                metric, model, res = future.result()
+                mitigation_severity_tier2[metric][model] = res
+        progress.update(1)
 
+    progress.set_postfix_str("done")
+    progress.close()
     logger.info("Severity amplification analysis complete.")
 
     return {
