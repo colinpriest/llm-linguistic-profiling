@@ -136,7 +136,8 @@ The experiment produces:
 │   ├── llm_client.py                   # OpenAI API client with threading and circuit breaker
 │   ├── statistics.py                   # Disparate impact statistical analysis
 │   ├── process_discrimination.py       # Process discrimination analysis
-│   ├── severity_analysis.py            # Severity amplification analysis (7 sections)
+│   ├── severity_analysis.py            # Severity amplification analysis (7 sections, multithreaded)
+│   ├── repeated_measures.py            # Repeated-measures causal inference (CLMM, GEE, multithreaded)
 │   ├── experiment.py                   # 7-step orchestration + executive summary generation
 │   └── reporter.py                     # HTML report generation (8 tabs, 20+ charts)
 │
@@ -210,11 +211,23 @@ The cleaning pipeline processes the raw CFPB data through 10 sequential steps, e
 - Main effects: one-way ANOVA, chi-squared, Spearman trend tests per severity metric and model
 - Persona × severity interaction: two-way ANOVA with partial eta-squared
 - Simple effects: per-level persona one-way ANOVA with pairwise t-tests and FDR correction
-- Amplification ratio: bias_high / bias_low with bootstrap 95% CI
+- Amplification ratio: bias_high / bias_low with bootstrap 95% CI (progress bars on bootstrap loops)
+- Dimension-specific severity interaction: per-dimension two-way ANOVA + bootstrap (parallelised across metric × model × dimension)
 - Three-way ANOVA: model × persona × severity
 - Worst-case analysis: identifies the model × severity × persona combination with largest effect size
 - Mitigation × severity comparison: before/after neutralization amplification ratios, per-level bias SD changes, interaction weakening, and summary verdict (eliminated / reduced / increased / unchanged)
 - Process fairness × severity: information request disparity by severity level
+
+All severity and repeated-measures analyses are parallelised using `ThreadPoolExecutor` across metric × model combinations, with `tqdm` progress bars at both the orchestrator and bootstrap-iteration level.
+
+### Repeated-Measures Causal Inference
+- Builds a long-format dataset with `complaint_id` as the repeated-measures unit across conditions and personas
+- Ordinal mixed model (CLMM approximation via `OrderedModel` with clustered sandwich SEs)
+- Conditional logistic regression (`ConditionalLogit` with `complaint_id` as stratum) for within-complaint comparisons
+- Logistic GEE (exchangeable correlation, `complaint_id` clustering) for favourable outcome and information-request burden
+- Linear mixed model (`MixedLM` with random intercept) as robustness check treating tier as continuous
+- Nonparametric repeated-measures: Friedman test with post-hoc Wilcoxon signed-rank; Cochran's Q with post-hoc McNemar (all FDR-corrected)
+- Per-model suites and pooled analysis run in parallel via `ThreadPoolExecutor`
 
 ### Multiple Comparison Correction
 Benjamini-Hochberg FDR correction applied within each test family:
