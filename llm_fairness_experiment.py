@@ -178,10 +178,33 @@ def main() -> None:
     )
     logger.info("HTML report generated: %s", report_path)
 
+    # Generate worked examples report
+    from src.worked_examples import generate_worked_examples
+
+    examples_html, examples_json = generate_worked_examples(
+        complaints=experiment.complaints,
+        persona_estimates=experiment.persona_estimates,
+        baseline_decisions=experiment.baseline_decisions,
+        persona_rewrites=experiment.persona_rewrites,
+        persona_decisions=experiment.persona_decisions,
+        neutralized=experiment.neutralized,
+        neutralized_decisions=experiment.neutralized_decisions,
+        rewrite_persona_estimates=getattr(experiment, "rewrite_persona_estimates", []),
+        neutralized_persona_estimates=getattr(experiment, "neutralized_persona_estimates", []),
+        models=args.models,
+        output_dir=args.output_dir,
+        timestamp=experiment.timestamp,
+    )
+    if examples_html:
+        logger.info("Worked examples HTML: %s", examples_html)
+        logger.info("Worked examples JSON: %s", examples_json)
+
     # Summary
     logger.info("=" * 60)
     logger.info("EXPERIMENT COMPLETE")
     logger.info("Report: %s", report_path)
+    if examples_html:
+        logger.info("Worked examples: %s", examples_html)
     logger.info("=" * 60)
 
 

@@ -871,6 +871,42 @@ def run_repeated_measures_analysis(
     """
     logger.info("Running repeated-measures causal analysis...")
 
+    # Suppress known warnings for the entire analysis.  warnings.catch_warnings()
+    # is NOT thread-safe, so per-function guards inside ThreadPoolExecutor workers
+    # are unreliable.  Setting the filters here in the main thread ensures they
+    # are in effect for all child threads (they share the global filter list).
+    _warning_ctx = warnings.catch_warnings()
+    _warning_ctx.__enter__()
+    warnings.filterwarnings(
+        "ignore", category=RuntimeWarning,
+        message=".*Precision loss.*catastrophic cancellation.*",
+    )
+    warnings.filterwarnings("ignore", category=UserWarning, module="statsmodels")
+    warnings.filterwarnings("ignore", category=FutureWarning, module="statsmodels")
+    try:
+        from statsmodels.tools.sm_exceptions import ValueWarning as _SmValueWarning
+        warnings.filterwarnings("ignore", category=_SmValueWarning)
+    except ImportError:
+        pass
+    warnings.filterwarnings(
+        "ignore",
+        message=".*covariance of constraints does not have full rank.*",
+    )
+
+    try:
+        return _run_repeated_measures_inner(
+            baseline_df, persona_decisions_df, neutralized_df,
+            personas_df, severity_df, models,
+        )
+    finally:
+        _warning_ctx.__exit__(None, None, None)
+
+
+def _run_repeated_measures_inner(
+    baseline_df, persona_decisions_df, neutralized_df,
+    personas_df, severity_df, models,
+):
+    """Inner implementation of run_repeated_measures_analysis (called inside warning guard)."""
     # Build long format
     long = build_long_format(
         baseline_df, persona_decisions_df, neutralized_df,

@@ -426,6 +426,15 @@ def two_way_anova_persona_severity(
     if df["persona"].nunique() < 2 or df["severity"].nunique() < 2:
         return {"error": "insufficient factor levels"}
 
+    # Drop personas that don't appear at every severity level so the
+    # interaction design matrix has full column rank (avoids statsmodels
+    # "covariance of constraints does not have full rank" warning).
+    cell_counts = df.groupby(["persona", "severity"]).size().unstack(fill_value=0)
+    complete_personas = cell_counts.index[cell_counts.min(axis=1) > 0]
+    if len(complete_personas) < 2:
+        return {"error": "insufficient complete persona×severity cells"}
+    df = df[df["persona"].isin(complete_personas)]
+
     try:
         import statsmodels.formula.api as smf
         from statsmodels.stats.anova import anova_lm
@@ -668,6 +677,12 @@ def dimension_severity_interaction(
         from statsmodels.stats.anova import anova_lm
 
         df_anova = df.rename(columns={severity_metric: "severity", dimension: "dim_level"})
+        # Ensure every dim_level appears at every severity level for full-rank interaction
+        cc = df_anova.groupby(["dim_level", "severity"]).size().unstack(fill_value=0)
+        complete_levels = cc.index[cc.min(axis=1) > 0]
+        if len(complete_levels) < 2:
+            raise ValueError("insufficient complete dimension×severity cells")
+        df_anova = df_anova[df_anova["dim_level"].isin(complete_levels)]
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             fit = smf.ols("tier ~ C(dim_level) + C(severity) + C(dim_level):C(severity)",
@@ -814,6 +829,17 @@ def three_way_anova(
         return {"error": "need multiple models for three-way ANOVA"}
 
     df = df.rename(columns={severity_metric: "severity", persona_col: "persona"})
+
+    # Keep only persona×severity×model cells that are fully populated so the
+    # three-way interaction design matrix has full column rank.
+    cell_counts = df.groupby(["persona", "severity", "model"]).size().unstack(fill_value=0)
+    complete_personas = cell_counts.groupby("persona").apply(
+        lambda g: (g.min(axis=1) > 0).all()
+    )
+    complete_personas = complete_personas[complete_personas].index
+    if len(complete_personas) < 2:
+        return {"error": "insufficient complete persona×severity×model cells"}
+    df = df[df["persona"].isin(complete_personas)]
 
     try:
         import statsmodels.formula.api as smf
@@ -986,6 +1012,11 @@ def process_severity_analysis(
     # Logistic regression: need_info ~ persona + severity + persona:severity
     df_reg = df.rename(columns={severity_metric: "severity", persona_col: "persona"})
     if df_reg["severity"].nunique() >= 2 and df_reg["persona"].nunique() >= 2:
+        # Keep only personas present at every severity level for full-rank interaction
+        _cc = df_reg.groupby(["persona", "severity"]).size().unstack(fill_value=0)
+        _complete = _cc.index[_cc.min(axis=1) > 0]
+        if len(_complete) >= 2:
+            df_reg = df_reg[df_reg["persona"].isin(_complete)]
         try:
             import statsmodels.formula.api as smf
             with warnings.catch_warnings():
@@ -1300,7 +1331,15 @@ def monetary_missingness_diagnostic(
         wc_present = df_present["word_count"].dropna()
         wc_missing = df_missing["word_count"].dropna()
         if len(wc_present) >= 5 and len(wc_missing) >= 5:
-            u_stat, u_p = sp_stats.mannwhitneyu(wc_present, wc_missing, alternative="two-sided")
+            # mannwhitneyu's normal approximation suffers catastrophic
+            # cancellation when data has massive ties / near-identical values.
+            # Guard against the resulting RuntimeWarning.
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore", category=RuntimeWarning,
+                    message=".*Precision loss.*catastrophic cancellation.*",
+                )
+                u_stat, u_p = sp_stats.mannwhitneyu(wc_present, wc_missing, alternative="two-sided")
             n1, n2 = len(wc_present), len(wc_missing)
             rank_biserial = 1 - 2 * u_stat / (n1 * n2) if n1 * n2 > 0 else 0.0
             characteristics["word_count"] = {
@@ -1327,7 +1366,12 @@ def monetary_missingness_diagnostic(
             t_pres = bl_present.loc[bl_present["model"] == first_model, "tier"].dropna()
             t_miss = bl_missing.loc[bl_missing["model"] == first_model, "tier"].dropna()
             if len(t_pres) >= 5 and len(t_miss) >= 5:
-                t_stat, t_p = sp_stats.ttest_ind(t_pres, t_miss, equal_var=False)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore", category=RuntimeWarning,
+                        message=".*Precision loss.*catastrophic cancellation.*",
+                    )
+                    t_stat, t_p = sp_stats.ttest_ind(t_pres, t_miss, equal_var=False)
                 # Cohen's d as effect size
                 n1, n2 = len(t_pres), len(t_miss)
                 pooled_std = np.sqrt(
@@ -1396,7 +1440,12 @@ def monetary_missingness_diagnostic(
                         # Skip when variance is too low for a meaningful test
                         if pooled_std < 1e-8:
                             continue
-                        _, p = sp_stats.ttest_ind(g1, g2, equal_var=False)
+                        with warnings.catch_warnings():
+                            warnings.filterwarnings(
+                                "ignore", category=RuntimeWarning,
+                                message=".*Precision loss.*catastrophic cancellation.*",
+                            )
+                            _, p = sp_stats.ttest_ind(g1, g2, equal_var=False)
                         if np.isfinite(p):
                             p_values.append(p)
             n_sig_pairs = 0
@@ -1572,8 +1621,47 @@ def run_severity_analysis(
     # Total sections for top-level progress bar
     has_neutralized = neutralized_df is not None and len(neutralized_df) > 0
     n_sections = 7 + (2 if has_neutralized else 0)
+
+    # Suppress known warnings for the entire analysis.  warnings.catch_warnings()
+    # is NOT thread-safe, so per-function guards inside ThreadPoolExecutor workers
+    # are unreliable.  Setting the filters here in the main thread ensures they
+    # are in effect for all child threads (they share the global filter list).
+    _warning_ctx = warnings.catch_warnings()
+    _warning_ctx.__enter__()
+    warnings.filterwarnings(
+        "ignore", category=RuntimeWarning,
+        message=".*Precision loss.*catastrophic cancellation.*",
+    )
+    warnings.filterwarnings("ignore", category=UserWarning, module="statsmodels")
+    warnings.filterwarnings("ignore", category=FutureWarning, module="statsmodels")
+    # statsmodels ValueWarning for rank-deficient covariance of constraints
+    try:
+        from statsmodels.tools.sm_exceptions import ValueWarning as _SmValueWarning
+        warnings.filterwarnings("ignore", category=_SmValueWarning)
+    except ImportError:
+        pass
+    warnings.filterwarnings(
+        "ignore",
+        message=".*covariance of constraints does not have full rank.*",
+    )
+
     progress = tqdm(total=n_sections, desc="Severity analysis", delay=0.5)
 
+    try:
+        return _run_severity_analysis_inner(
+            baseline_df, persona_decisions_df, personas_df, complaints_df,
+            models, n_boot, seed, neutralized_df, has_neutralized, progress,
+        )
+    finally:
+        progress.close()
+        _warning_ctx.__exit__(None, None, None)
+
+
+def _run_severity_analysis_inner(
+    baseline_df, persona_decisions_df, personas_df, complaints_df,
+    models, n_boot, seed, neutralized_df, has_neutralized, progress,
+):
+    """Inner implementation of run_severity_analysis (called inside warning guard)."""
     # 1. Descriptives
     progress.set_postfix_str("descriptives")
     descriptives = severity_descriptives(complaints_df)
@@ -1750,7 +1838,6 @@ def run_severity_analysis(
         progress.update(1)
 
     progress.set_postfix_str("done")
-    progress.close()
     logger.info("Severity amplification analysis complete.")
 
     return {
