@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import uuid
 from pathlib import Path
@@ -38,13 +39,33 @@ def _get_fasttext_model():
 
         model_path = Path(__file__).parent.parent / "data" / "lid.176.ftz"
         if not model_path.exists():
-            logger.info("Downloading fasttext language-id model (once)...")
-            url = "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz"
-            model_path.parent.mkdir(parents=True, exist_ok=True)
-            urllib.request.urlretrieve(url, str(model_path))
-            logger.info("Model saved to %s", model_path)
-        _ft_model = fasttext.load_model(str(model_path))
+            _download_fasttext_model(model_path)
+        try:
+            _ft_model = fasttext.load_model(str(model_path))
+        except Exception as exc:
+            logger.warning("Fasttext model load failed (%s); re-downloading...", exc)
+            if model_path.exists():
+                model_path.unlink()
+            _download_fasttext_model(model_path)
+            _ft_model = fasttext.load_model(str(model_path))
     return _ft_model
+
+
+def _download_fasttext_model(model_path: Path) -> None:
+    logger.info("Downloading fasttext language-id model (once)...")
+    url = "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = model_path.with_suffix(f"{model_path.suffix}.tmp")
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            with open(tmp_path, "wb") as fh:
+                fh.write(response.read())
+        os.replace(tmp_path, model_path)
+        logger.info("Model saved to %s", model_path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
 
 
 def _detect_lang_batch(texts: List[str]) -> List[str]:
