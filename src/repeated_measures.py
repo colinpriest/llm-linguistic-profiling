@@ -214,14 +214,28 @@ def ordinal_mixed_model(
     exog = _drop_constant_columns(df[exog_cols].astype(float))
     endog = df["outcome_tier"].astype(float)
 
-    # Fit ordinal model
+    # Fit ordinal model with clustered sandwich SEs on complaint_id
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             om = OrderedModel(endog, exog, distr="logit")
-            fit = om.fit(method="bfgs", disp=False, maxiter=200)
+            # First pass: unclustered fit to get point estimates
+            fit_plain = om.fit(method="bfgs", disp=False, maxiter=200)
 
-        # Extract model-based SEs first as baseline
+        # Re-fit with clustered covariance (sandwich estimator on complaint_id)
+        used_cluster = False
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                fit = fit_plain.get_robustcov_results(
+                    cov_type="cluster",
+                    groups=df["complaint_id"].values,
+                )
+            used_cluster = True
+        except Exception:
+            logger.info("Ordinal model: clustered SEs unavailable, using model-based SEs")
+            fit = fit_plain
+
         se_base = np.asarray(fit.bse, dtype=float)
         p_base = np.asarray(fit.pvalues, dtype=float)
         try:
@@ -231,24 +245,6 @@ def ordinal_mixed_model(
         except Exception:
             ci_lo_base = fit.params - 1.96 * se_base
             ci_hi_base = fit.params + 1.96 * se_base
-
-        # Try clustered SEs by complaint_id
-        used_cluster = False
-        try:
-            cluster_ids = df["complaint_id"]
-            cov_cluster = fit.cov_params_cluster(groups=cluster_ids.values)
-            se_cluster = np.sqrt(np.diag(cov_cluster))
-            z_cluster = fit.params / se_cluster
-            p_cluster = 2 * sp_stats.norm.sf(np.abs(z_cluster))
-            ci_lo = fit.params - 1.96 * se_cluster
-            ci_hi = fit.params + 1.96 * se_cluster
-            se_base = se_cluster
-            p_base = p_cluster
-            ci_lo_base = ci_lo
-            ci_hi_base = ci_hi
-            used_cluster = True
-        except Exception:
-            logger.info("Ordinal model: clustered SEs unavailable, using model-based SEs")
 
         param_names = list(exog.columns) + [f"threshold_{i}" for i in range(len(fit.params) - len(exog.columns))]
 
