@@ -20,6 +20,7 @@ _nltk_ready = False
 _vader_analyzer = None
 _lda_model = None
 _vectorizer = None
+_topic_count = 10
 
 
 def _ensure_nltk() -> None:
@@ -140,9 +141,16 @@ def fit_topic_model(
     seed: int = 42,
 ) -> Tuple[Any, Any]:
     """Fit LDA topic model on corpus. Returns (lda_model, vectorizer)."""
-    global _lda_model, _vectorizer
+    global _lda_model, _vectorizer, _topic_count
     from sklearn.decomposition import LatentDirichletAllocation
     from sklearn.feature_extraction.text import CountVectorizer
+
+    _topic_count = n_topics
+    if len(texts) < 2:
+        logger.warning("Skipping topic model fit: need at least 2 documents, got %d", len(texts))
+        _lda_model = None
+        _vectorizer = None
+        return _lda_model, _vectorizer
 
     logger.info("Fitting LDA topic model with %d topics on %d documents", n_topics, len(texts))
     _vectorizer = CountVectorizer(
@@ -167,7 +175,7 @@ def _topic_features(text: str) -> Dict[str, Any]:
     """Get topic distribution for a single document. Requires prior fit."""
     if _lda_model is None or _vectorizer is None:
         return {
-            "topic_distribution": [0.0] * 10,
+            "topic_distribution": [0.0] * _topic_count,
             "dominant_topic": 0,
             "topic_coherence": 0.0,
         }

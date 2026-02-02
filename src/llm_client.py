@@ -318,7 +318,13 @@ class LLMClient:
                     attempt_number=0,  # 0 = cache hit
                 )
             except Exception:
-                pass  # Cache entry invalid; fall through to API call
+                logger.warning(
+                    "Invalid cache entry for %s/%s (%s); deleting and re-fetching",
+                    request.model,
+                    request.task,
+                    request.case_id,
+                )
+                self.cache.delete(request.model, request.task, narrative)
 
         response = self._call_once(request, timeout_override=timeout_override, max_attempts=max_attempts)
 
@@ -371,7 +377,9 @@ class LLMClient:
         logger.info("Submitting %d requests (%s) with %d workers",
                      len(requests), desc, self.max_workers)
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+        pool = ThreadPoolExecutor(max_workers=self.max_workers)
+        force_shutdown = False
+        try:
             future_to_idx = {
                 pool.submit(self.call_with_cache, req, narr): i
                 for i, (req, narr) in enumerate(zip(requests, narratives))
@@ -409,6 +417,7 @@ class LLMClient:
                         completed += cancelled
                         failed += cancelled
                         pbar.update(cancelled)
+                        force_shutdown = True
                         raise RuntimeError(
                             f"Batch stalled: no futures completed within {self.FUTURE_TIMEOUT}s for '{desc}'."
                         )
@@ -437,6 +446,7 @@ class LLMClient:
                             # Fatal errors (e.g. bad model params) — cancel remaining work and propagate immediately.
                             for f in pending:
                                 f.cancel()
+                            force_shutdown = True
                             raise
                         except Exception as e:
                             logger.error("Unexpected worker error: %s", e)
@@ -458,10 +468,13 @@ class LLMClient:
                         if completed == window and failed > window * self.CIRCUIT_BREAKER_THRESHOLD:
                             for f in pending:
                                 f.cancel()
+                            force_shutdown = True
                             raise RuntimeError(
                                 f"Circuit breaker tripped: {failed}/{window} "
                                 f"early requests failed for '{desc}'. Aborting batch."
                             )
+        finally:
+            pool.shutdown(wait=not force_shutdown, cancel_futures=force_shutdown)
 
         return [r for r in responses if r is not None]
 

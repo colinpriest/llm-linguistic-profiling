@@ -46,6 +46,7 @@ class ResponseCache:
                 return data.get("response")
             except (json.JSONDecodeError, KeyError):
                 logger.warning("Corrupt cache entry %s – ignoring", path)
+                self._delete_path(path)
         with self._lock:
             self._misses += 1
         return None
@@ -74,6 +75,11 @@ class ResponseCache:
             tmp_path = path.with_suffix(f"{path.suffix}.{uuid.uuid4().hex}.tmp")
             tmp_path.write_text(payload, encoding="utf-8")
             os.replace(tmp_path, path)
+
+    def delete(self, model: str, task: str, narrative: str) -> None:
+        """Remove a cached response if it exists."""
+        path = self._path(task, self._key(model, task, narrative))
+        self._delete_path(path)
 
     def clear(self) -> int:
         """Delete all cached files. Returns number of files removed."""
@@ -115,6 +121,11 @@ class ResponseCache:
         task_dir = self.cache_dir / task
         task_dir.mkdir(parents=True, exist_ok=True)
         return task_dir / f"{key}.json"
+
+    def _delete_path(self, path: Path) -> None:
+        with self._lock:
+            if path.exists():
+                path.unlink()
 
     def _ensure_dirs(self) -> None:
         for task_dir in self.TASK_DIRS:
