@@ -206,9 +206,26 @@ class LLMClient:
                             f"{request.model!r} on {request.task}: {e}"
                         ) from e
                     # Outlier input — log a warning and fail just this request.
+                    prompt_chars = len(request.prompt_system) + len(request.prompt_user)
+                    est_prompt_tokens = prompt_chars // 4  # rough estimate
+                    effective_limit = (
+                        max(self.config.max_tokens, 32_000)
+                        if is_reasoning
+                        else self.config.max_tokens
+                    )
+                    # Extract just the first line of the error to avoid
+                    # dumping the verbose <failed_attempts> block.
+                    err_first_line = str(e).split("\n", 1)[0][:200]
                     logger.warning(
-                        "Token limit hit for %s (%s/%s): skipping. %s",
-                        request.case_id, request.model, request.task, e,
+                        "Token limit hit for %s (%s/%s): skipping. "
+                        "prompt_chars=%d (~%d tokens), "
+                        "user_text_chars=%d, "
+                        "max_tokens=%d. %s",
+                        request.case_id, request.model, request.task,
+                        prompt_chars, est_prompt_tokens,
+                        len(request.prompt_user),
+                        effective_limit,
+                        err_first_line,
                     )
                     self._record_failure(request.task)
                     return LLMResponse(
@@ -217,7 +234,11 @@ class LLMClient:
                         model=request.model,
                         task=request.task,
                         success=False,
-                        error_message=f"Token limit exceeded: {e}",
+                        error_message=(
+                            f"Token limit exceeded: "
+                            f"prompt_chars={prompt_chars} (~{est_prompt_tokens} tokens), "
+                            f"max_tokens={effective_limit}"
+                        ),
                         latency_ms=latency_ms,
                         timestamp=datetime.now(),
                         attempt_number=attempt,

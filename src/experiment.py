@@ -17,7 +17,9 @@ from tqdm import tqdm
 from src.cache import ResponseCache
 from src.data_loader import load_and_clean
 from src.llm_client import LLMClient
+from src.repeated_measures import run_repeated_measures_analysis
 from src.severity_analysis import run_severity_analysis
+from src.sparsity_analysis import run_sparsity_analysis
 from src.process_discrimination import (
     info_request_content_analysis,
     process_causal_analysis,
@@ -330,24 +332,37 @@ class Experiment:
             req = req_by_idx[i]
             resp = final_responses[i]
             narr = narr_by_idx[i]
+            prompt_chars = len(req.prompt_system) + len(req.prompt_user)
+            est_prompt_tokens = prompt_chars // 4  # rough ~4 chars/token
             by_case.setdefault(req.case_id, []).append({
                 "error": resp.error_message or "unknown error",
                 "variant": getattr(req, "variant", ""),
                 "narrative_preview": narr[:200].replace("\n", " "),
                 "narrative_len": str(len(narr)),
+                "prompt_chars": str(prompt_chars),
+                "est_prompt_tokens": str(est_prompt_tokens),
+                "max_tokens": str(self.llm.config.max_tokens),
             })
 
         summary_lines = [
             f"{step_desc}: {n_failed} / {n_total} requests failed ({failure_rate:.2%})"
         ]
         for case_id, details in sorted(by_case.items()):
-            unique_errors = sorted(set(d["error"] for d in details))
+            # Truncate each error to first line (avoids verbose dumps)
+            unique_errors = sorted(set(
+                d["error"].split("\n", 1)[0][:200] for d in details
+            ))
             variants = sorted(set(d["variant"] for d in details if d["variant"]))
             narr_len = details[0]["narrative_len"]
+            prompt_chars = details[0]["prompt_chars"]
+            est_tokens = details[0]["est_prompt_tokens"]
+            max_tok = details[0]["max_tokens"]
             preview = details[0]["narrative_preview"]
             summary_lines.append(
                 f"  case_id={case_id}: {len(details)} failure(s), "
-                f"narrative_len={narr_len}"
+                f"narrative_len={narr_len}, "
+                f"prompt_chars={prompt_chars} (~{est_tokens} tokens), "
+                f"max_tokens={max_tok}"
             )
             if variants:
                 summary_lines.append(f"    variants: {', '.join(variants[:5])}")
@@ -1525,7 +1540,11 @@ class Experiment:
             results[model] = model_results
 
         self.analysis_results = results
+        self._run_power_analysis()
         self._run_severity_analysis()
+        self._collect_multiple_comparisons()
+        self._run_repeated_measures_analysis()
+        self._run_sparsity_analysis()
         self._display_analysis_results()
 
     # ------------------------------------------------------------------
@@ -1546,15 +1565,20 @@ class Experiment:
                 "issue_severity": c.issue_severity,
                 "product_category": c.product_category,
                 "issue_category": c.issue_category,
+                "word_count": len(c.narrative.split()),
             }
             for c in self.complaints
         ])
         sev_cols = severity_df[["case_id", "monetary_severity", "issue_severity"]]
 
-        # Merge severity + persona labels onto baseline decisions
+        # Merge severity + persona labels + causal dimensions onto baseline decisions
+        persona_merge_cols = ["case_id", "model", "persona_label"]
+        for dim in CAUSAL_DIMS:
+            if dim in self.personas_df.columns:
+                persona_merge_cols.append(dim)
         baseline_sev = self.baseline_df.merge(sev_cols, on="case_id", how="left")
         baseline_sev = baseline_sev.merge(
-            self.personas_df[["case_id", "model", "persona_label"]],
+            self.personas_df[persona_merge_cols].drop_duplicates(),
             on=["case_id", "model"],
             how="left",
         )
@@ -1569,7 +1593,7 @@ class Experiment:
         if self.neutralized_df is not None and len(self.neutralized_df) > 0:
             neutralized_sev = self.neutralized_df.merge(sev_cols, on="case_id", how="left")
             neutralized_sev = neutralized_sev.merge(
-                self.personas_df[["case_id", "model", "persona_label"]],
+                self.personas_df[persona_merge_cols].drop_duplicates(),
                 on=["case_id", "model"],
                 how="left",
             )
@@ -1585,6 +1609,33 @@ class Experiment:
             neutralized_df=neutralized_sev,
         )
         self.analysis_results["severity"] = result
+
+        # Console summary: missingness diagnostic
+        miss_diag = result.get("missingness_diagnostic", {})
+        if miss_diag and not miss_diag.get("skipped"):
+            logger.info("── Monetary Missingness Diagnostic ──")
+            logger.info("  Amount present: %d (%.1f%%), Amount missing: %d (%.1f%%)",
+                        miss_diag["n_present"],
+                        (1 - miss_diag["pct_missing"]) * 100,
+                        miss_diag["n_missing"],
+                        miss_diag["pct_missing"] * 100)
+            chars = miss_diag.get("complaint_characteristics", {})
+            m_type = chars.get("missingness_type", "unknown")
+            n_sig = chars.get("n_significant_tests", 0)
+            sig_tests = chars.get("significant_tests", [])
+            sig_str = ", ".join(sig_tests) if sig_tests else "none"
+            logger.info("  Missingness type: %s (%d/5 tests significant: %s)",
+                        m_type, n_sig, sig_str)
+            for model in self.models:
+                fc = miss_diag.get("fairness_comparison", {}).get(model, {})
+                pres = fc.get("present", {})
+                miss = fc.get("missing", {})
+                ratio = fc.get("bias_sd_ratio", float("nan"))
+                logger.info("  %s: bias_sd present=%.4f, missing=%.4f, ratio=%.2f",
+                            model,
+                            pres.get("bias_sd", float("nan")),
+                            miss.get("bias_sd", float("nan")),
+                            ratio)
 
         # Console summary of key findings
         logger.info("── Severity Amplification Summary ──")
@@ -1671,6 +1722,260 @@ class Experiment:
                             "    %s: bias SD %.4f → %.4f (%+.4f)",
                             level, b_sd, n_sd, d_sd,
                         )
+
+    # ------------------------------------------------------------------
+    # Power analysis
+    # ------------------------------------------------------------------
+
+    def _run_power_analysis(self) -> None:
+        """Run post-hoc power analysis: minimum detectable effect sizes."""
+        if self.personas_df is None or self.baseline_df is None:
+            return
+
+        from src.statistics import power_analysis
+
+        n_complaints = len(self.complaints)
+        n_personas = len(PERSONA_LABELS)
+        causal_sample = int(n_complaints * self.causal_sample_pct)
+
+        # Compute minimum cell size for each causal dimension
+        merged = self.baseline_df.merge(
+            self.personas_df[["case_id", "model"] + [d for d in CAUSAL_DIMS if d in self.personas_df.columns]],
+            on=["case_id", "model"], how="inner",
+        )
+        first_model = self.models[0] if self.models else None
+        n_per_cell: Dict[str, int] = {}
+        if first_model:
+            m = merged[merged["model"] == first_model]
+            for dim in CAUSAL_DIMS:
+                if dim in m.columns:
+                    n_per_cell[dim] = int(m.groupby(dim).size().min())
+
+        result = power_analysis(
+            n_complaints=n_complaints,
+            n_personas=n_personas,
+            n_per_cell=n_per_cell,
+            causal_sample=causal_sample,
+        )
+        self.analysis_results["power_analysis"] = result
+        logger.info("Power analysis complete: min detectable paired d=%.3f",
+                    result.get("matched_guise", {}).get("min_detectable_d", float("nan")))
+
+    # ------------------------------------------------------------------
+    # Multiple comparisons summary
+    # ------------------------------------------------------------------
+
+    def _collect_multiple_comparisons(self) -> None:
+        """Collect metadata about all FDR-corrected test families."""
+        from src.statistics import multiple_comparisons_summary, fdr_correction
+
+        records: List[Dict[str, Any]] = []
+
+        # 1. Pairwise McNemar tests (causal analysis, per model)
+        for model in self.models:
+            mr = self.analysis_results.get(model, {})
+            mcnemar = mr.get("causal", {}).get("pairwise_mcnemar", [])
+            if mcnemar:
+                n_tests = len(mcnemar)
+                n_surv = sum(1 for r in mcnemar if r.get("significant", False))
+                records.append({
+                    "family_label": f"Pairwise McNemar ({model})",
+                    "n_tests": n_tests,
+                    "n_surviving": n_surv,
+                })
+
+        # 2. Severity simple effects pairwise t-tests
+        sev = self.analysis_results.get("severity", {})
+        interactions = sev.get("interactions", {})
+        for metric in ["monetary_severity", "issue_severity"]:
+            for model in self.models:
+                se = interactions.get(metric, {}).get(model, {}).get("simple_effects", {})
+                for level in ["low", "medium", "high"]:
+                    sl = se.get(level, {})
+                    n_sig = sl.get("n_significant", 0)
+                    n = sl.get("n", 0)
+                    if n > 0:
+                        # Number of pairwise tests = C(n_personas, 2)
+                        n_personas_in_level = n  # approximate
+                        records.append({
+                            "family_label": f"Severity simple effects ({metric}/{model}/{level})",
+                            "n_tests": n_personas_in_level,
+                            "n_surviving": n_sig,
+                        })
+
+        # 3. Per-dimension chi-squared tests (correlation analysis)
+        for model in self.models:
+            mr = self.analysis_results.get(model, {})
+            corr = mr.get("correlation", {})
+            dim_tests = [k for k in corr if k.endswith("_chi2")]
+            if dim_tests:
+                import numpy as np
+                p_vals = [corr[k].get("p_value", 1.0) for k in dim_tests]
+                adj = fdr_correction(p_vals)
+                n_surv = int((np.array(adj) < 0.05).sum())
+                records.append({
+                    "family_label": f"Dimension chi-squared ({model})",
+                    "n_tests": len(dim_tests),
+                    "n_surviving": n_surv,
+                })
+
+        # 4. Process discrimination pairwise McNemar (per model)
+        for model in self.models:
+            mr = self.analysis_results.get(model, {})
+            proc_causal = mr.get("process_causal", {})
+            pw = proc_causal.get("pairwise_mcnemar", [])
+            if pw:
+                n_tests = len(pw)
+                n_surv = sum(1 for r in pw if r.get("significant", False))
+                records.append({
+                    "family_label": f"Process McNemar ({model})",
+                    "n_tests": n_tests,
+                    "n_surviving": n_surv,
+                })
+
+        self.analysis_results["multiple_comparisons"] = multiple_comparisons_summary(records)
+        mc = self.analysis_results["multiple_comparisons"]
+        logger.info("Multiple comparisons summary: %d tests across %d families, %d surviving FDR",
+                    mc["total_tests"], len(mc["families"]), mc["total_surviving"])
+
+    # ------------------------------------------------------------------
+    # Repeated-measures causal analysis
+    # ------------------------------------------------------------------
+
+    def _run_repeated_measures_analysis(self) -> None:
+        """Run dependence-aware repeated-measures models for matched-guise data.
+
+        Builds the canonical long-format dataset and fits:
+        A) Ordinal mixed model (outcome tier) with clustered SEs
+        B) Conditional logistic / GEE (favourable) with complaint_id strata
+        C) GEE (info request) with complaint_id clustering
+        D) Linear mixed model (robustness)
+        E) Friedman / Cochran's Q nonparametric tests with FDR post-hoc
+        """
+        if self.baseline_df is None or self.personas_df is None:
+            logger.info("Skipping repeated-measures analysis (no baseline decisions or personas)")
+            return
+
+        # Build severity metadata
+        severity_df = pd.DataFrame([
+            {
+                "case_id": c.case_id,
+                "monetary_severity": c.monetary_severity,
+                "issue_severity": c.issue_severity,
+            }
+            for c in self.complaints
+        ])
+
+        result = run_repeated_measures_analysis(
+            baseline_df=self.baseline_df,
+            persona_decisions_df=self.persona_decisions_df,
+            neutralized_df=self.neutralized_df,
+            personas_df=self.personas_df,
+            severity_df=severity_df,
+            models=self.models,
+        )
+        self.analysis_results["repeated_measures"] = result
+
+        # Console summary
+        if result.get("skipped"):
+            logger.info("Repeated-measures analysis skipped: %s", result.get("reason"))
+            return
+
+        ds = result.get("data_summary", {})
+        logger.info("── Repeated-Measures Causal Analysis ──")
+        logger.info("  Long-format: %d rows, %d complaints, %d personas",
+                     ds.get("n_rows", 0), ds.get("n_complaints", 0), ds.get("n_personas", 0))
+
+        for model in self.models:
+            mr = result.get(model, {})
+            if not mr or mr.get("skipped"):
+                continue
+
+            # Ordinal model summary
+            om = mr.get("ordinal_model", {})
+            if not om.get("skipped"):
+                pxs_p = om.get("p_values", {}).get("persona_x_severity", float("nan"))
+                logger.info("  %s ordinal model: n=%d, %d clusters, persona×severity p=%.4f%s",
+                            model, om.get("n_obs", 0), om.get("n_clusters", 0),
+                            pxs_p, " *" if pxs_p < 0.05 else "")
+
+            # Conditional logistic summary
+            cl = mr.get("conditional_logistic_favourable", {})
+            if not cl.get("skipped"):
+                ps_or = cl.get("odds_ratios", {}).get("persona_score", float("nan"))
+                logger.info("  %s conditional logistic: %d strata, persona_score OR=%.3f",
+                            model, cl.get("n_strata", 0), ps_or)
+
+            # LMM ICC
+            lmm = mr.get("linear_mixed_model", {})
+            if not lmm.get("skipped"):
+                icc = lmm.get("icc", 0)
+                logger.info("  %s LMM: ICC=%.3f (%.1f%% variance between complaints)",
+                            model, icc, icc * 100)
+
+            # Nonparametric summary
+            np_res = mr.get("nonparametric", {})
+            if not np_res.get("skipped"):
+                fr = np_res.get("friedman_tier", {})
+                if not fr.get("skipped"):
+                    logger.info("  %s Friedman (tier): stat=%.2f, p=%.4f",
+                                model, fr.get("statistic", 0), fr.get("p_value", 1))
+                cq = np_res.get("cochran_favourable", {})
+                if not cq.get("skipped"):
+                    logger.info("  %s Cochran's Q (favourable): stat=%.2f, p=%.4f",
+                                model, cq.get("statistic", 0), cq.get("p_value", 1))
+
+    # ------------------------------------------------------------------
+    # Sparsity-aware analysis
+    # ------------------------------------------------------------------
+
+    def _run_sparsity_analysis(self) -> None:
+        """Run sparsity-aware fairness analysis (small-cell handling)."""
+        if self.baseline_df is None or self.personas_df is None:
+            logger.info("Skipping sparsity analysis (no baseline decisions or personas)")
+            return
+
+        result = run_sparsity_analysis(
+            baseline_df=self.baseline_df,
+            personas_df=self.personas_df,
+            models=self.models,
+            seed=self.seed,
+            persona_decisions_df=self.persona_decisions_df,
+            neutralized_df=self.neutralized_df,
+        )
+        self.analysis_results["sparsity"] = result
+
+        # Console summary
+        logger.info("── Sparsity-Aware Analysis Summary ──")
+        for model in self.models:
+            mr = result.get(model, {})
+            if not mr:
+                continue
+            obs = mr.get("observed_persona", {})
+            support = obs.get("support", {})
+            logger.info(
+                "  %s: %d groups (%d insufficient, %d screening, %d reliable)",
+                model,
+                support.get("n_groups", 0),
+                support.get("n_insufficient", 0),
+                support.get("n_screening", 0),
+                support.get("n_reliable", 0),
+            )
+            sens = mr.get("sensitivity_persona", {})
+            verdict = sens.get("verdict", {})
+            if verdict:
+                logger.info("    Robustness: %s", verdict.get("summary", "N/A"))
+
+            pooling = mr.get("partial_pooling", {})
+            shrinkage = pooling.get("shrinkage_summary", {})
+            if shrinkage:
+                logger.info(
+                    "    Partial pooling: mean |shrinkage|=%.4f, max=%.4f, "
+                    "%d cells shrunk >5%%",
+                    shrinkage.get("mean_abs_shrinkage", 0),
+                    shrinkage.get("max_abs_shrinkage", 0),
+                    shrinkage.get("n_cells_shrunk_gt_5pct", 0),
+                )
 
     # ------------------------------------------------------------------
     # Display analysis results
@@ -1996,6 +2301,47 @@ class Experiment:
             if var_red is not None:
                 lines.append(f"  Variance reduction: {var_red * 100:.1f}%")
 
+        # Repeated-measures causal analysis
+        rm = self.analysis_results.get("repeated_measures", {})
+        rm_model = rm.get(model, {}) if rm and not rm.get("skipped") else {}
+        if rm_model and not rm_model.get("skipped"):
+            lines.append("\nREPEATED-MEASURES CAUSAL ANALYSIS (dependence-aware models):")
+            lines.append("  Design: same complaint observed under 36 persona framings; complaint_id clustering is non-negotiable.")
+
+            lmm = rm_model.get("linear_mixed_model", {})
+            if lmm and not lmm.get("skipped"):
+                icc = lmm.get("icc", 0)
+                lines.append(f"  LMM ICC={icc:.3f} ({icc*100:.1f}% of tier variance is between complaints)")
+                for k, v in lmm.get("coefficients", {}).items():
+                    p = lmm.get("p_values", {}).get(k, 1)
+                    sig = " *" if p < 0.05 else ""
+                    lines.append(f"    {k}: coeff={v:.4f}, p={p:.4f}{sig}")
+
+            om = rm_model.get("ordinal_model", {})
+            if om and not om.get("skipped"):
+                lines.append(f"  Ordinal model (clustered SEs): n={om.get('n_obs', 0)}, clusters={om.get('n_clusters', 0)}")
+                for k, v in om.get("coefficients", {}).items():
+                    p = om.get("p_values", {}).get(k, 1)
+                    sig = " *" if p < 0.05 else ""
+                    lines.append(f"    {k}: coeff={v:.4f}, p={p:.4f}{sig}")
+
+            cl = rm_model.get("conditional_logistic_favourable", {})
+            if cl and not cl.get("skipped"):
+                lines.append(f"  Conditional logistic: n={cl.get('n_obs', 0)}, strata={cl.get('n_strata', 0)}")
+                for k, v in cl.get("odds_ratios", {}).items():
+                    p = cl.get("p_values", {}).get(k, 1)
+                    sig = " *" if p < 0.05 else ""
+                    lines.append(f"    {k}: OR={v:.3f}, p={p:.4f}{sig}")
+
+            np_res = rm_model.get("nonparametric", {})
+            if np_res and not np_res.get("skipped"):
+                fr = np_res.get("friedman_tier", {})
+                if fr and not fr.get("skipped"):
+                    lines.append(f"  Friedman (tier, within-complaint): stat={fr.get('statistic', 0):.2f}, p={fr.get('p_value', 1):.4f}")
+                cq = np_res.get("cochran_favourable", {})
+                if cq and not cq.get("skipped"):
+                    lines.append(f"  Cochran's Q (favourable): stat={cq.get('statistic', 0):.2f}, p={cq.get('p_value', 1):.4f}")
+
         # Info Content
         info = mr.get("info_content", {})
         if info and info.get("n_requests", 0) > 0:
@@ -2265,7 +2611,8 @@ class Experiment:
                 anova = mfx.get("anova", {})
                 if anova:
                     lines.append(f"    ANOVA: F={anova.get('F', 0):.2f}, p={anova.get('p_value', 1):.4f}, "
-                                 f"partial eta-sq={anova.get('eta_sq_partial', 0):.3f}")
+                                 f"partial eta-sq={anova.get('eta_sq_partial', 0):.3f} "
+                                 f"({anova.get('eta_sq_interpretation', 'N/A')})")
                 trend = mfx.get("trend", {})
                 if trend:
                     lines.append(f"    Trend: Spearman r={trend.get('spearman_r', 0):.3f}, "
@@ -2307,7 +2654,8 @@ class Experiment:
                          f"Level: {wc.get('severity_level')}")
             lines.append(f"  Most advantaged persona: {wc.get('most_advantaged')}")
             lines.append(f"  Most disadvantaged persona: {wc.get('most_disadvantaged')}")
-            lines.append(f"  Effect size (Cohen's d): {wc.get('effect_size_d', 0):.2f}")
+            lines.append(f"  Effect size (Cohen's d): {wc.get('effect_size_d', 0):.2f} "
+                         f"({wc.get('effect_size_interpretation', 'N/A')})")
 
         # --- Process ---
         proc = sev.get("process", {})
@@ -2341,6 +2689,40 @@ class Experiment:
                 if isinstance(p_i, float):
                     p_i = f"{p_i:.4f}"
                 lines.append(f"  {finding}: monetary={p_m}, issue={p_i} — {rob}")
+
+        # --- Missingness diagnostic ---
+        miss_diag = sev.get("missingness_diagnostic", {})
+        if miss_diag and not miss_diag.get("skipped"):
+            lines.append("")
+            lines.append("── Missingness Diagnostic ──")
+            n_pres = miss_diag.get("n_present", 0)
+            n_miss = miss_diag.get("n_missing", 0)
+            pct_miss = miss_diag.get("pct_missing", 0)
+            lines.append(f"  Complaints with extractable dollar amount: {n_pres} ({1 - pct_miss:.1%})")
+            lines.append(f"  Complaints without dollar amount: {n_miss} ({pct_miss:.1%})")
+            chars = miss_diag.get("complaint_characteristics", {})
+            m_type = chars.get("missingness_type", "unknown")
+            n_sig = chars.get("n_significant_tests", 0)
+            sig_tests = chars.get("significant_tests", [])
+            sig_str = ", ".join(sig_tests) if sig_tests else "none"
+            lines.append(f"  Missingness pattern: {m_type} ({n_sig}/5 characteristic tests significant)")
+            if sig_tests:
+                lines.append(f"  Significant differences: {sig_str}")
+            for model in self.models:
+                fc = miss_diag.get("fairness_comparison", {}).get(model, {})
+                pres = fc.get("present", {})
+                miss_stats = fc.get("missing", {})
+                ratio = fc.get("bias_sd_ratio", float("nan"))
+                lines.append(
+                    f"  {model}: bias SD with amounts={pres.get('bias_sd', 0):.4f}, "
+                    f"without amounts={miss_stats.get('bias_sd', 0):.4f}, ratio={ratio:.2f}"
+                )
+                lines.append(
+                    f"    sig pairs: present={pres.get('n_significant_pairs', 0)}, "
+                    f"missing={miss_stats.get('n_significant_pairs', 0)}"
+                )
+                lines.append(f"    Conclusion: {fc.get('conclusion', 'N/A')}")
+            lines.append(f"  Overall: {miss_diag.get('overall_conclusion', 'N/A')}")
 
         # --- Mitigation × severity ---
         mit_sev = sev.get("mitigation_severity", {})
@@ -2380,6 +2762,67 @@ class Experiment:
                         f"    Interaction p: baseline={int_p_base:.4f}, "
                         f"neutralized={int_p_neut:.4f}, weakened={weakened}"
                     )
+
+        # --- Dimension-specific severity amplification ---
+        dim_sev = sev.get("dimension_severity", {})
+        if dim_sev:
+            lines.append("")
+            lines.append("── Dimension-Specific Severity Amplification (One-Way Tests) ──")
+            lines.append("(Tests each demographic dimension individually against severity — "
+                         "each cell has ~200+ observations for much higher statistical power)")
+            for metric in ["monetary_severity", "issue_severity"]:
+                for model in self.models:
+                    for dim in CAUSAL_DIMS:
+                        ds = dim_sev.get(metric, {}).get(model, {}).get(dim, {})
+                        if "error" in ds:
+                            continue
+                        amp = ds.get("amplification", {})
+                        anova = ds.get("anova", {})
+                        inter = anova.get("interaction", {})
+                        lines.append(
+                            f"  {metric} [{model}] {dim}: "
+                            f"interaction F={inter.get('F', 0):.2f}, p={inter.get('p_value', 1):.4f}, "
+                            f"eta-sq={inter.get('eta_sq_partial', 0):.4f} ({inter.get('eta_sq_interpretation', '')}), "
+                            f"amplification={amp.get('point', 0):.2f}x "
+                            f"[{amp.get('ci_lower', 0):.2f}, {amp.get('ci_upper', 0):.2f}]"
+                        )
+                        # Show dimension-level means at each severity
+                        means_by_sev = ds.get("dimension_means_by_severity", {})
+                        for level in ["low", "high"]:
+                            means = means_by_sev.get(level, {})
+                            if means:
+                                means_str = ", ".join(f"{k}={v:.3f}" for k, v in means.items())
+                                lines.append(f"    {level}: {means_str}")
+
+        # --- Power analysis ---
+        pa = self.analysis_results.get("power_analysis")
+        if pa:
+            lines.append("")
+            lines.append("── Power Analysis (Sample Size Justification) ──")
+            mg = pa.get("matched_guise", {})
+            lines.append(f"Matched-guise design ({mg.get('n_pairs', 0)} complaint pairs, within-complaint):")
+            lines.append(f"  Min detectable Cohen's d: {mg.get('min_detectable_d', 0):.3f} ({mg.get('interpretation', '')})")
+            bp = pa.get("between_persona", {})
+            for dim, info in bp.items():
+                lines.append(f"Between-persona ({dim}, n={info['n_per_cell']} per cell):")
+                lines.append(f"  Min detectable d: {info['min_detectable_d']:.3f} ({info['interpretation']})")
+            av = pa.get("anova", {})
+            for dim, info in av.items():
+                lines.append(f"ANOVA ({dim}, k={info['k_groups']}, n={info['n_per_group']} per group):")
+                lines.append(f"  Min detectable f: {info['min_detectable_f']:.3f}, "
+                             f"eta-sq: {info['min_detectable_eta_sq']:.4f} ({info['interpretation']})")
+
+        # --- Multiple comparisons ---
+        mc = self.analysis_results.get("multiple_comparisons")
+        if mc:
+            lines.append("")
+            lines.append("── Multiple Comparisons Correction (Family-Wise Error Rate) ──")
+            lines.append(f"Method: {mc['method']}")
+            lines.append(f"Total tests across all families: {mc['total_tests']}")
+            lines.append(f"Total surviving FDR correction at alpha=0.05: {mc['total_surviving']}")
+            for fam in mc.get("families", []):
+                lines.append(f"  {fam['family']}: {fam['n_surviving']}/{fam['n_tests']} survive "
+                             f"({fam['survival_rate']:.0%})")
 
         return "\n".join(lines)
 
@@ -2654,15 +3097,14 @@ class Experiment:
             json.dumps(repair_stats, indent=2), encoding="utf-8"
         )
 
-        # Severity analysis JSON files
-        sev = self.analysis_results.get("severity", {})
-        if sev:
-            for key in ("descriptives", "main_effects", "interactions", "model_comparison"):
-                data = sev.get(key, {})
-                if data:
-                    (self.output_dir / f"severity_{key}_{ts}.json").write_text(
-                        json.dumps(data, indent=2, default=str), encoding="utf-8"
-                    )
+        # Full analysis results JSON (mirrors every metric in the HTML dashboard)
+        if self.analysis_results:
+            json_path = self.output_dir / f"analysis_results_{ts}.json"
+            json_path.write_text(
+                json.dumps(self.analysis_results, indent=2, default=str),
+                encoding="utf-8",
+            )
+            logger.info("Analysis results JSON written: %s", json_path)
 
         # Executive summary text file
         exec_sections = self.analysis_results.get("exec_sections", {})

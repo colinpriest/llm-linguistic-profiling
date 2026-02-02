@@ -6,6 +6,7 @@ import base64
 import html
 import io
 import logging
+import re
 import warnings
 from collections import Counter
 from typing import Any, Dict, List, Optional
@@ -774,6 +775,35 @@ tr:hover {{ background: #f8f9fa; }}
 .metric-card .value {{ font-size: 1.6rem; font-weight: 700; color: #3498db; }}
 .metric-card .label {{ font-size: 0.8rem; color: #7f8c8d; margin-top: 4px; }}
 
+/* Executive summary section cards */
+.exec-card {{
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 10px;
+    padding: 24px 28px;
+    margin: 18px 0;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}}
+.exec-card h3 {{
+    font-size: 1.2rem;
+    color: #2c3e50;
+    margin: 0 0 14px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #3498db;
+}}
+.exec-card p {{ margin: 8px 0; line-height: 1.7; }}
+.exec-card ul, .exec-card ol {{ margin: 8px 0 8px 1.5em; line-height: 1.7; }}
+.exec-card li {{ margin: 4px 0; }}
+.exec-card strong {{ color: #2c3e50; }}
+.exec-card em {{ color: #555; }}
+.exec-card blockquote {{
+    border-left: 3px solid #3498db;
+    margin: 10px 0;
+    padding: 6px 14px;
+    background: #f8f9fa;
+    border-radius: 0 4px 4px 0;
+}}
+
 /* Charts */
 .chart-container {{ text-align: center; margin: 15px 0; }}
 .chart-container img {{ max-width: 100%; height: auto; border-radius: 6px; }}
@@ -875,53 +905,135 @@ document.querySelectorAll('table.sortable').forEach(function(table) {{
 # Tab content builders
 # ---------------------------------------------------------------------------
 
+def _md_to_html(md: str) -> str:
+    """Convert a markdown string to HTML.
+
+    Handles headings, bold, italic, bullet/numbered lists, blockquotes, and
+    paragraphs.  Does *not* depend on any external library.
+    """
+
+    def _inline(text: str) -> str:
+        """Convert inline markdown (bold, italic, links, code) within already-escaped HTML."""
+        # Bold: **text** or __text__
+        text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+        text = re.sub(r"__(.+?)__", r"<strong>\1</strong>", text)
+        # Italic: *text* or _text_  (but not inside words for _)
+        text = re.sub(r"(?<!\w)\*(.+?)\*(?!\w)", r"<em>\1</em>", text)
+        text = re.sub(r"(?<!\w)_(.+?)_(?!\w)", r"<em>\1</em>", text)
+        # Inline code: `code`
+        text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
+        # Links: [text](url)
+        text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
+        return text
+
+    out: List[str] = []
+    lines = md.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Blank line
+        if not stripped:
+            i += 1
+            continue
+
+        # Headings: # ... ######
+        m = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+        if m:
+            level = len(m.group(1))
+            # Render section headings one level down (h4-h6) since h3 is used for card title
+            tag = f"h{min(level + 1, 6)}"
+            out.append(f"<{tag}>{_inline(html.escape(m.group(2)))}</{tag}>")
+            i += 1
+            continue
+
+        # Blockquote
+        if stripped.startswith(">"):
+            bq_lines: List[str] = []
+            while i < len(lines) and lines[i].strip().startswith(">"):
+                bq_lines.append(html.escape(lines[i].strip().lstrip(">").strip()))
+                i += 1
+            out.append(f"<blockquote><p>{_inline(' '.join(bq_lines))}</p></blockquote>")
+            continue
+
+        # Unordered list (- or * or •)
+        if re.match(r"^[-*•]\s", stripped):
+            out.append("<ul>")
+            while i < len(lines) and re.match(r"^\s*[-*•]\s", lines[i]):
+                item = re.sub(r"^\s*[-*•]\s+", "", lines[i]).strip()
+                out.append(f"<li>{_inline(html.escape(item))}</li>")
+                i += 1
+            out.append("</ul>")
+            continue
+
+        # Ordered list (1. 2. etc.)
+        if re.match(r"^\d+[.)]\s", stripped):
+            out.append("<ol>")
+            while i < len(lines) and re.match(r"^\s*\d+[.)]\s", lines[i]):
+                item = re.sub(r"^\s*\d+[.)]\s+", "", lines[i]).strip()
+                out.append(f"<li>{_inline(html.escape(item))}</li>")
+                i += 1
+            out.append("</ol>")
+            continue
+
+        # Horizontal rule
+        if re.match(r"^[-*_]{3,}\s*$", stripped):
+            out.append("<hr>")
+            i += 1
+            continue
+
+        # Paragraph: collect consecutive non-blank, non-special lines
+        para_lines: List[str] = []
+        while i < len(lines):
+            s = lines[i].strip()
+            if not s:
+                break
+            if re.match(r"^#{1,6}\s", s) or re.match(r"^[-*•]\s", s) or re.match(r"^\d+[.)]\s", s) or s.startswith(">") or re.match(r"^[-*_]{3,}\s*$", s):
+                break
+            para_lines.append(html.escape(s))
+            i += 1
+        if para_lines:
+            out.append(f"<p>{_inline(' '.join(para_lines))}</p>")
+
+    return "\n".join(out)
+
+
 def _build_tab_business_executive_summary(
     analysis_results: Dict[str, Any],
 ) -> str:
-    """Build the Business Executive Summary tab from GPT-generated plain-language summary."""
+    """Build the Business Executive Summary tab with each section in its own card."""
     parts: List[str] = []
+    parts.append("<h2>Executive Summary</h2>")
 
-    biz_summary = analysis_results.get("business_executive_summary")
-    if biz_summary:
-        parts.append("<h2>Executive Summary</h2>")
-        # Convert the plain-text summary into styled HTML
-        for block in biz_summary.split("\n\n"):
-            block = block.strip()
-            if not block:
+    exec_sections: Optional[Dict[str, str]] = analysis_results.get("exec_sections")
+
+    if exec_sections:
+        section_meta = [
+            ("linguistic_differences", "Linguistic Differences"),
+            ("ai_decision_making", "AI Decision-Making"),
+            ("correlation_vs_cause", "Correlation vs. Cause"),
+            ("severity_stakes", "Severity &amp; Stakes"),
+            ("language_neutralisation", "Language Neutralisation"),
+            ("bias_mitigation", "Bias Mitigation"),
+            ("conclusion", "Conclusion"),
+        ]
+        for key, title in section_meta:
+            md_text = exec_sections.get(key)
+            if not md_text:
                 continue
-            # Detect heading-like lines (short, no period at end, not starting with -)
-            lines = block.split("\n")
-            first = lines[0].strip()
-            # Top-level title line (contains "Executive Summary" or "Bias Testing")
-            if len(lines) == 1 and len(first) < 80 and not first.endswith(".") and ":" in first:
-                parts.append(f"<h3>{html.escape(first)}</h3>")
-                continue
-            # Section headings: short single line without trailing period
-            if len(lines) == 1 and len(first) < 80 and not first.endswith(".") and not first.startswith("-"):
-                parts.append(f"<h3>{html.escape(first)}</h3>")
-                continue
-            # Bullet list block
-            if all(l.strip().startswith("-") or l.strip().startswith("•") for l in lines if l.strip()):
-                parts.append("<ul>")
-                for l in lines:
-                    l = l.strip().lstrip("-•").strip()
-                    if l:
-                        parts.append(f"<li>{html.escape(l)}</li>")
-                parts.append("</ul>")
-                continue
-            # Mixed paragraph with some bullets
-            if any(l.strip().startswith("-") or l.strip().startswith("•") for l in lines):
-                for l in lines:
-                    l_stripped = l.strip()
-                    if l_stripped.startswith("-") or l_stripped.startswith("•"):
-                        parts.append(f"<p style=\"margin-left:1.5em;\">&#8226; {html.escape(l_stripped.lstrip('-•').strip())}</p>")
-                    elif l_stripped:
-                        parts.append(f"<p>{html.escape(l_stripped)}</p>")
-                continue
-            # Regular paragraph
-            parts.append(f"<p>{html.escape(block)}</p>")
+            body_html = _md_to_html(md_text)
+            parts.append(f'<div class="exec-card">')
+            parts.append(f"<h3>{title}</h3>")
+            parts.append(body_html)
+            parts.append("</div>")
+    elif analysis_results.get("business_executive_summary"):
+        # Fallback: single combined markdown blob in one card
+        md_text = analysis_results["business_executive_summary"]
+        parts.append('<div class="exec-card">')
+        parts.append(_md_to_html(md_text))
+        parts.append("</div>")
     else:
-        parts.append("<h2>Executive Summary</h2>")
         parts.append('<p class="muted">Business executive summary not available. '
                      "Run the experiment with GPT-5.2 commentary enabled to generate this section.</p>")
 
@@ -1569,6 +1681,37 @@ def _build_comparison_rows(
     _add_row("Process Variance Reduction", lambda mr: _safe_get(mr, "process_mitigation", "variance_reduction"))
     _add_row("Cochran's Q p-value", lambda mr: _safe_get(mr, "process_causal", "cochrans_q", "p_value"))
 
+    # Repeated-measures model results (per-model rows)
+    rm = analysis_results.get("repeated_measures", {})
+    if rm and not rm.get("skipped"):
+        def _rm_extractor(*keys):
+            def extractor(mr_unused):
+                # mr_unused is the per-model analysis_results[model] dict,
+                # but repeated-measures results are stored under analysis_results["repeated_measures"][model].
+                # We iterate models in the row builder, so just return None here;
+                # the actual per-model values are added below.
+                return None
+            return extractor
+
+        # Add per-model ICC row manually
+        row_icc = {"label": "LMM ICC (complaint clustering)"}
+        for m in models:
+            icc = _safe_get(rm, m, "linear_mixed_model", "icc")
+            row_icc[m] = _fmt(icc) if isinstance(icc, (int, float)) else "N/A"
+        rows.append(row_icc)
+
+        row_clogit = {"label": "Cond. Logistic persona_score OR"}
+        for m in models:
+            or_val = _safe_get(rm, m, "conditional_logistic_favourable", "odds_ratios", "persona_score")
+            row_clogit[m] = _fmt(or_val) if isinstance(or_val, (int, float)) else "N/A"
+        rows.append(row_clogit)
+
+        row_pxs = {"label": "Ordinal persona×severity p"}
+        for m in models:
+            p_val = _safe_get(rm, m, "ordinal_model", "p_values", "persona_x_severity")
+            row_pxs[m] = _fmt(p_val) if isinstance(p_val, (int, float)) else "N/A"
+        rows.append(row_pxs)
+
     return rows
 
 
@@ -1805,16 +1948,24 @@ def _chart_severity_dist(sev: Dict[str, Any]) -> Optional[str]:
 
 
 def _chart_severity_crosstab(sev: Dict[str, Any]) -> Optional[str]:
-    """Heatmap of monetary × issue severity cross-tabulation."""
-    ct_data = _safe_get(sev, "descriptives", "agreement", "cross_tab", default={})
+    """Heatmap of monetary × issue severity cross-tabulation (including unknown)."""
+    # Prefer the full cross-tab that includes "unknown" monetary severity
+    ct_data = _safe_get(sev, "descriptives", "agreement", "cross_tab_full", default={})
+    if not ct_data:
+        ct_data = _safe_get(sev, "descriptives", "agreement", "cross_tab", default={})
     if not ct_data:
         return None
     try:
-        ct = pd.DataFrame(ct_data).reindex(index=["low", "medium", "high"], columns=["low", "medium", "high"]).fillna(0)
+        row_order = ["low", "medium", "high", "unknown"]
+        col_order = ["low", "medium", "high"]
+        ct = pd.DataFrame(ct_data)
+        # Keep only rows that exist in the data
+        row_order = [r for r in row_order if r in ct.index]
+        ct = ct.reindex(index=row_order, columns=col_order).fillna(0)
     except Exception:
         return None
 
-    fig, ax = plt.subplots(figsize=(5, 4))
+    fig, ax = plt.subplots(figsize=(5, 4.5))
     sns.heatmap(ct, annot=True, fmt=".0f", cmap="YlOrRd", ax=ax, linewidths=0.5,
                 cbar_kws={"label": "Count"})
     ax.set_xlabel("Issue Severity")
@@ -1867,9 +2018,15 @@ def _chart_severity_main_effects(sev: Dict[str, Any], models: List[str]) -> Opti
     return _fig_to_base64(fig)
 
 
-def _chart_amplification_bars(sev: Dict[str, Any], models: List[str]) -> Optional[str]:
+def _chart_amplification_bars(
+    sev: Dict[str, Any],
+    models: List[str],
+    interactions_key: str = "interactions",
+    ylabel: str = "Bias (SD of persona means)",
+    title: str = "Bias Magnitude by Severity Level",
+) -> Optional[str]:
     """Bar chart: bias at each severity level with CI error bars."""
-    interactions = _safe_get(sev, "interactions", default={})
+    interactions = _safe_get(sev, interactions_key, default={})
     if not interactions:
         return None
 
@@ -1888,12 +2045,12 @@ def _chart_amplification_bars(sev: Dict[str, Any], models: List[str]) -> Optiona
 
         ax.set_xticks(np.arange(len(levels)) + bar_width * (len(models) - 1) / 2)
         ax.set_xticklabels([l.title() for l in levels])
-        ax.set_ylabel("Bias (SD of persona means)")
+        ax.set_ylabel(ylabel)
         ax.set_title(metric.replace("_", " ").title(), fontweight="bold")
         ax.legend(fontsize=8)
         ax.grid(axis="y", alpha=0.3)
 
-    fig.suptitle("Bias Magnitude by Severity Level", fontsize=13, fontweight="bold")
+    fig.suptitle(title, fontsize=13, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.93])
     return _fig_to_base64(fig)
 
@@ -1975,6 +2132,78 @@ def _traffic_light(ratio: float) -> Tuple[str, str, str]:
     return "#e74c3c", "#fdecea", "Severe"
 
 
+def _chart_missingness_distributions(distributions: Dict[str, Any]) -> Optional[str]:
+    """Grouped bar charts showing value distributions split by monetary present/missing."""
+    if not distributions:
+        return None
+
+    # Define display groups with labels
+    chart_groups = [
+        ("tier", "Remedy Tier"),
+        ("age", "Age"),
+        ("gender", "Gender"),
+        ("geographic", "Geography"),
+        ("education", "Education"),
+        ("socioeconomic", "Socio-Economic"),
+        ("esl", "ESL Status"),
+        ("product_category", "Product"),
+        ("issue_category", "Issue"),
+        ("issue_severity", "Issue Severity"),
+    ]
+
+    # Filter to variables that exist
+    available = [(key, label) for key, label in chart_groups if key in distributions]
+    if not available:
+        return None
+
+    n_charts = len(available)
+    n_cols = min(3, n_charts)
+    n_rows = (n_charts + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.5 * n_cols, 4.0 * n_rows))
+    if n_rows * n_cols == 1:
+        axes = np.array([axes])
+    axes = axes.flatten()
+
+    for idx, (key, label) in enumerate(available):
+        ax = axes[idx]
+        dist = distributions[key]
+        pres = dist.get("present", {})
+        miss = dist.get("missing", {})
+
+        # Union of all category values, sorted
+        all_cats = sorted(set(list(pres.keys()) + list(miss.keys())),
+                          key=lambda x: (isinstance(x, str), x))
+
+        # Convert to percentages within each group
+        pres_total = max(sum(pres.values()), 1)
+        miss_total = max(sum(miss.values()), 1)
+        pres_pcts = [pres.get(c, 0) / pres_total * 100 for c in all_cats]
+        miss_pcts = [miss.get(c, 0) / miss_total * 100 for c in all_cats]
+
+        x = np.arange(len(all_cats))
+        width = 0.38
+        ax.bar(x - width / 2, pres_pcts, width, label="$ Present", color="#3498db", alpha=0.85)
+        ax.bar(x + width / 2, miss_pcts, width, label="$ Missing", color="#e74c3c", alpha=0.85)
+
+        # Truncate long labels
+        cat_labels = [str(c)[:18] for c in all_cats]
+        ax.set_xticks(x)
+        ax.set_xticklabels(cat_labels, rotation=45 if len(all_cats) > 3 else 0,
+                           ha="right" if len(all_cats) > 3 else "center", fontsize=8)
+        ax.set_ylabel("% within group", fontsize=8)
+        ax.set_title(label, fontweight="bold", fontsize=10)
+        if idx == 0:
+            ax.legend(fontsize=7, loc="upper right")
+
+    # Hide unused axes
+    for idx in range(len(available), len(axes)):
+        axes[idx].set_visible(False)
+
+    fig.suptitle("Distributions by Monetary Amount Presence", fontweight="bold", fontsize=12, y=1.01)
+    fig.tight_layout()
+    return _fig_to_base64(fig)
+
+
 def _build_tab_severity(
     analysis_results: Dict[str, Any],
     complaints: list,
@@ -2033,6 +2262,115 @@ def _build_tab_severity(
         if small:
             parts.append(f'<p style="color:#e67e22;"><strong>{metric}:</strong> {len(small)} persona×severity cells have &lt; 30 observations</p>')
 
+    # ── Missingness diagnostic sub-section ──
+    miss_diag = sev.get("missingness_diagnostic", {})
+    if miss_diag and not miss_diag.get("skipped"):
+        parts.append('<h3>Monetary Severity: Missingness Diagnostic</h3>')
+        parts.append('<p>About {:.0%} of complaints have no extractable dollar amount. '
+                     'This diagnostic tests whether that subset differs systematically '
+                     'from complaints with known amounts.</p>'.format(miss_diag.get("pct_missing", 0)))
+
+        chars = miss_diag.get("complaint_characteristics", {})
+        m_type = chars.get("missingness_type", "unknown")
+        n_sig = chars.get("n_significant_tests", 0)
+
+        # Verdict card
+        if m_type == "MCAR":
+            v_color, v_bg = "#27ae60", "#eafaf1"
+            v_label = "Random (MCAR)"
+            v_desc = "Missingness appears random. Monetary severity findings likely generalise."
+        else:
+            v_color, v_bg = "#e74c3c", "#fdedec"
+            v_label = "Systematic (MAR)"
+            v_desc = f"{n_sig}/5 tests significant — complaints with dollar amounts differ from those without."
+
+        parts.append(f'<div class="metric-card" style="border-left: 4px solid {v_color}; background: {v_bg}; '
+                     f'margin: 10px 0; padding: 12px;">')
+        parts.append(f'<div class="value" style="color: {v_color}; font-size: 1.2rem;">{v_label}</div>')
+        parts.append(f'<div style="font-size: 0.85rem;">{v_desc}</div>')
+        parts.append('</div>')
+
+        # Distribution histograms
+        dist_chart = _chart_missingness_distributions(miss_diag.get("distributions", {}))
+        if dist_chart:
+            parts.append('<h4>Distribution Profiles by Missingness Group</h4>')
+            parts.append('<p style="font-size: 0.85rem;">Percentage distributions within each group '
+                         '(blue = dollar amount present, red = dollar amount missing). '
+                         'Differences indicate systematic patterns in which complaints '
+                         'contain extractable dollar amounts.</p>')
+            parts.append(f'<div class="chart-container"><img src="data:image/png;base64,{dist_chart}" '
+                         f'alt="Missingness distribution profiles"></div>')
+
+        # Characteristic comparison table
+        parts.append('<table><thead><tr>')
+        parts.append('<th>Test</th><th>Statistic</th><th>p-value</th><th>Effect Size</th><th>Significant?</th>')
+        parts.append('</tr></thead><tbody>')
+
+        sig_tests = chars.get("significant_tests", [])
+
+        def _miss_row(name: str, label: str, stat_key: str, p_key: str, effect_key: str, effect_label: str) -> str:
+            d = chars.get(name, {})
+            if d.get("error"):
+                return f'<tr><td>{label}</td><td colspan="4">Error</td></tr>'
+            stat_val = d.get(stat_key, d.get("chi2", float("nan")))
+            p_val = d.get(p_key, d.get("p_value", float("nan")))
+            eff = d.get(effect_key, d.get("cramers_v", float("nan")))
+            is_sig = name in sig_tests
+            sig_style = ' style="color: #e74c3c; font-weight: bold;"' if is_sig else ""
+            return (f'<tr{sig_style}><td>{label}</td>'
+                    f'<td>{_fmt(stat_val)}</td>'
+                    f'<td>{_fmt(p_val)}</td>'
+                    f'<td>{_fmt(eff)} ({effect_label})</td>'
+                    f'<td>{"Yes" if is_sig else "No"}</td></tr>')
+
+        parts.append(_miss_row("issue_category", "Issue Category", "chi2", "p_value", "cramers_v", "Cram\u00e9r's V"))
+        parts.append(_miss_row("product_category", "Product Category", "chi2", "p_value", "cramers_v", "Cram\u00e9r's V"))
+        parts.append(_miss_row("word_count", "Word Count", "U_statistic", "p_value", "rank_biserial", "rank-biserial r"))
+        parts.append(_miss_row("mean_tier", "Mean Remedy Tier", "t_statistic", "p_value", "cohens_d", "Cohen\u2019s d"))
+        parts.append(_miss_row("tier_distribution", "Tier Distribution", "chi2", "p_value", "cramers_v", "Cram\u00e9r's V"))
+
+        parts.append('</tbody></table>')
+
+        # Word count means (if available)
+        wc = chars.get("word_count", {})
+        if wc and not wc.get("error"):
+            parts.append(f'<p style="font-size: 0.85rem;">Mean word count: '
+                         f'present = {wc.get("mean_present", 0):.0f}, '
+                         f'missing = {wc.get("mean_missing", 0):.0f}</p>')
+
+        # Fairness comparison table
+        fairness = miss_diag.get("fairness_comparison", {})
+        if fairness:
+            parts.append('<h4>Fairness: Amount Present vs Missing</h4>')
+            parts.append('<table><thead><tr>')
+            parts.append('<th>Model</th><th>Subset</th><th>N</th><th>Bias SD</th><th>Bias Range</th><th>Sig. Pairs</th>')
+            parts.append('</tr></thead><tbody>')
+            for model in models:
+                fc = fairness.get(model, {})
+                if not fc:
+                    continue
+                for subset_label, subset_key in [("Present", "present"), ("Missing", "missing")]:
+                    s = fc.get(subset_key, {})
+                    parts.append(f'<tr><td>{html.escape(model)}</td><td>{subset_label}</td>'
+                                 f'<td>{s.get("n", 0)}</td>'
+                                 f'<td>{_fmt(s.get("bias_sd"))}</td>'
+                                 f'<td>{_fmt(s.get("bias_range"))}</td>'
+                                 f'<td>{s.get("n_significant_pairs", 0)}</td></tr>')
+                # Ratio row
+                ratio = fc.get("bias_sd_ratio", float("nan"))
+                ratio_color = "#e74c3c" if np.isfinite(ratio) and abs(ratio - 1.0) > 0.2 else "#27ae60"
+                parts.append(f'<tr style="font-weight: bold;"><td>{html.escape(model)}</td>'
+                             f'<td>Ratio (missing/present)</td><td></td>'
+                             f'<td style="color: {ratio_color};">{_fmt(ratio, 2)}</td>'
+                             f'<td colspan="2">{html.escape(fc.get("conclusion", ""))}</td></tr>')
+            parts.append('</tbody></table>')
+
+        # Overall conclusion
+        overall = miss_diag.get("overall_conclusion", "")
+        if overall:
+            parts.append(f'<p style="margin-top: 10px; padding: 8px; background: #f8f9fa; '
+                         f'border-radius: 4px; font-size: 0.85rem;"><strong>Summary:</strong> {html.escape(overall)}</p>')
+
     parts.append('</div></div>')
 
     # ── Panel 2: Main Effects ──
@@ -2048,7 +2386,7 @@ def _build_tab_severity(
     me = sev.get("main_effects", {})
     parts.append('<table class="sortable"><thead><tr>')
     parts.append('<th>Metric</th><th>Model</th><th>ANOVA F</th><th>ANOVA p</th>')
-    parts.append('<th>Partial &eta;&sup2;</th><th>Chi&sup2; p</th><th>Trend r</th><th>Trend p</th>')
+    parts.append('<th>Partial &eta;&sup2;</th><th>&eta;&sup2; Size</th><th>Chi&sup2; p</th><th>Trend r</th><th>Trend p</th>')
     parts.append('</tr></thead><tbody>')
     for metric in ["monetary_severity", "issue_severity"]:
         for model in models:
@@ -2059,6 +2397,7 @@ def _build_tab_severity(
             parts.append(f'<tr><td>{metric.replace("_"," ").title()}</td><td>{html.escape(model)}</td>')
             parts.append(f'<td>{_fmt(anova.get("F"))}</td><td>{_fmt(anova.get("p_value"))}</td>')
             parts.append(f'<td>{_fmt(anova.get("eta_sq_partial"))}</td>')
+            parts.append(f'<td>{anova.get("eta_sq_interpretation", "")}</td>')
             parts.append(f'<td>{_fmt(chi2.get("p_value"))}</td>')
             parts.append(f'<td>{_fmt(trend.get("spearman_r"))}</td><td>{_fmt(trend.get("p_value"))}</td></tr>')
     parts.append('</tbody></table>')
@@ -2192,8 +2531,8 @@ def _build_tab_severity(
     # Simple effects summary
     parts.append('<h3>Simple Effects: Persona Effect at Each Severity Level</h3>')
     parts.append('<table class="sortable"><thead><tr>')
-    parts.append('<th>Metric</th><th>Model</th><th>Severity</th><th>Partial &eta;&sup2;</th>')
-    parts.append('<th>Largest d</th><th>N significant pairs</th><th>N</th>')
+    parts.append('<th>Metric</th><th>Model</th><th>Severity</th><th>Partial &eta;&sup2;</th><th>&eta;&sup2; Size</th>')
+    parts.append('<th>Largest d</th><th>d Size</th><th>N significant pairs</th><th>N</th>')
     parts.append('</tr></thead><tbody>')
     for metric in ["monetary_severity", "issue_severity"]:
         for model in models:
@@ -2203,10 +2542,160 @@ def _build_tab_severity(
                 parts.append(f'<tr><td>{metric.replace("_"," ").title()}</td>')
                 parts.append(f'<td>{html.escape(model)}</td><td>{level.title()}</td>')
                 parts.append(f'<td>{_fmt(ld.get("eta_sq_partial"))}</td>')
+                parts.append(f'<td>{ld.get("eta_sq_interpretation", "")}</td>')
                 parts.append(f'<td>{_fmt(ld.get("largest_pairwise_d"))}</td>')
+                parts.append(f'<td>{ld.get("largest_pairwise_d_interpretation", "")}</td>')
                 parts.append(f'<td>{ld.get("n_significant", 0)}</td>')
                 parts.append(f'<td>{ld.get("n", 0)}</td></tr>')
     parts.append('</tbody></table>')
+
+    # ── Tier 2 Rate Amplification sub-section ──
+    interactions_t2 = sev.get("interactions_tier2", {})
+    if interactions_t2:
+        parts.append('<hr style="margin: 25px 0;">')
+        parts.append('<h3>Tier 2 (Escalated) Rate Amplification</h3>')
+        parts.append('<p>Parallel amplification analysis using <strong>proportion of complaints '
+                     'receiving a Tier 2 (escalated/monetary) recommendation</strong> as the '
+                     'fairness measure, instead of mean tier. Bias is measured as the SD of '
+                     'Tier 2 rates across personas at each severity level.</p>')
+
+        # Tier 2 metric cards
+        parts.append('<div class="metrics-grid">')
+        for metric in ["monetary_severity", "issue_severity"]:
+            for model in models:
+                amp = _safe_get(interactions_t2, metric, model, "amplification", default={})
+                ratio = amp.get("point", float("nan"))
+                ci_lo = amp.get("ci_lower", float("nan"))
+                ci_hi = amp.get("ci_upper", float("nan"))
+                color, bg, label = _traffic_light(ratio)
+                parts.append(f'<div class="metric-card" style="border-left: 4px solid {color}; background: {bg};">')
+                parts.append(f'<div class="value" style="color: {color};">{_fmt(ratio, 2)}x</div>')
+                parts.append(f'<div class="label">Tier 2 Rate — {metric.replace("_"," ").title()} ({model})</div>')
+                parts.append(f'<div style="font-size:0.8rem;">CI: [{_fmt(ci_lo, 2)}, {_fmt(ci_hi, 2)}] — {label}</div>')
+                parts.append('</div>')
+        parts.append('</div>')
+
+        # Tier 2 amplification bar chart
+        chart_t2 = _chart_amplification_bars(
+            sev, models, interactions_key="interactions_tier2",
+            ylabel="Bias (SD of Tier 2 rates)",
+            title="Tier 2 Rate Bias by Severity Level",
+        )
+        if chart_t2:
+            parts.append(f'<div class="chart-container"><img src="data:image/png;base64,{chart_t2}" '
+                         f'alt="Tier 2 Rate Amplification"></div>')
+
+        # Tier 2 bias detail table
+        parts.append('<h4>Tier 2 Rate Bias by Severity Level</h4>')
+        parts.append('<p>Shows how disparity in Tier 2 recommendation rates across personas changes '
+                     'with severity. Higher SD at high severity indicates amplification.</p>')
+        parts.append('<table class="sortable"><thead><tr>')
+        parts.append('<th>Metric</th><th>Model</th><th>Severity</th><th>N</th>'
+                     '<th>Tier 2 Rate SD</th><th>Tier 2 Rate Range</th>'
+                     '<th>Persona &eta;&sup2;</th><th>Largest d</th><th>Sig. Pairs</th>')
+        parts.append('</tr></thead><tbody>')
+        for metric in ["monetary_severity", "issue_severity"]:
+            for model in models:
+                mi = _safe_get(interactions_t2, metric, model, default={})
+                bias_data = mi.get("bias", {})
+                se_data = mi.get("simple_effects", {})
+                sds_t2 = {lvl: bias_data.get(lvl, {}).get("sd_across_personas", 0) for lvl in ["low", "medium", "high"]}
+                max_sd_level = max(sds_t2, key=lambda k: sds_t2[k]) if any(sds_t2.values()) else None
+                for level in ["low", "medium", "high"]:
+                    bl = bias_data.get(level, {})
+                    sl = se_data.get(level, {})
+                    n = bl.get("n", 0)
+                    sd = bl.get("sd_across_personas", float("nan"))
+                    rng = bl.get("range", float("nan"))
+                    eta = sl.get("eta_sq_partial", float("nan"))
+                    largest_d = sl.get("largest_pairwise_d", float("nan"))
+                    n_sig = sl.get("n_significant", 0)
+                    style = ' style="background:#fdecea;font-weight:bold;"' if level == max_sd_level else ""
+                    parts.append(f'<tr{style}>')
+                    parts.append(f'<td>{metric.replace("_"," ").title()}</td>')
+                    parts.append(f'<td>{html.escape(model)}</td><td>{level.title()}</td>')
+                    parts.append(f'<td>{n}</td><td>{_fmt(sd, 4)}</td><td>{_fmt(rng, 4)}</td>')
+                    parts.append(f'<td>{_fmt(eta, 4)}</td><td>{_fmt(largest_d, 3)}</td>')
+                    parts.append(f'<td>{n_sig}</td></tr>')
+        parts.append('</tbody></table>')
+
+        # Tier 2 most/least advantaged personas
+        parts.append('<h4>Most &amp; Least Advantaged Personas by Tier 2 Rate</h4>')
+        parts.append('<table class="sortable"><thead><tr>')
+        parts.append('<th>Metric</th><th>Model</th><th>Severity</th>'
+                     '<th>Highest Tier 2 Rate</th><th>Rate</th>'
+                     '<th>Lowest Tier 2 Rate</th><th>Rate</th><th>Gap</th>')
+        parts.append('</tr></thead><tbody>')
+        for metric in ["monetary_severity", "issue_severity"]:
+            for model in models:
+                mi = _safe_get(interactions_t2, metric, model, default={})
+                bias_data = mi.get("bias", {})
+                for level in ["low", "medium", "high"]:
+                    pm = bias_data.get(level, {}).get("persona_means", {})
+                    if len(pm) < 2:
+                        continue
+                    sorted_pm = sorted(pm.items(), key=lambda x: x[1])
+                    worst_name, worst_val = sorted_pm[0]
+                    best_name, best_val = sorted_pm[-1]
+                    gap = best_val - worst_val
+                    style = ' style="background:#fdecea;"' if level == "high" and gap > 0.02 else ""
+                    parts.append(f'<tr{style}>')
+                    parts.append(f'<td>{metric.replace("_"," ").title()}</td>')
+                    parts.append(f'<td>{html.escape(model)}</td><td>{level.title()}</td>')
+                    parts.append(f'<td>{html.escape(str(best_name))}</td><td>{_fmt(best_val, 3)}</td>')
+                    parts.append(f'<td>{html.escape(str(worst_name))}</td><td>{_fmt(worst_val, 3)}</td>')
+                    parts.append(f'<td>{_fmt(gap, 3)}</td></tr>')
+        parts.append('</tbody></table>')
+
+        # Tier 2 two-way ANOVA interaction
+        parts.append('<h4>Persona × Severity Interaction Tests (Tier 2 Rate)</h4>')
+        parts.append('<table class="sortable"><thead><tr>')
+        parts.append('<th>Metric</th><th>Model</th><th>F</th><th>p-value</th><th>Partial &eta;&sup2;</th><th>Interpretation</th>')
+        parts.append('</tr></thead><tbody>')
+        for metric in ["monetary_severity", "issue_severity"]:
+            for model in models:
+                tw = _safe_get(interactions_t2, metric, model, "two_way", default={})
+                inter = tw.get("interaction", {})
+                p = inter.get("p_value", float("nan"))
+                eta = inter.get("eta_sq_partial", 0)
+                if np.isfinite(p) and p < 0.05:
+                    interp = "Significant"
+                    row_style = ' style="background:#fdecea;"'
+                else:
+                    interp = "Not significant"
+                    row_style = ""
+                if eta >= 0.14:
+                    interp += " (Large)"
+                elif eta >= 0.06:
+                    interp += " (Medium)"
+                elif eta >= 0.01:
+                    interp += " (Small)"
+                parts.append(f'<tr{row_style}><td>{metric.replace("_"," ").title()}</td>')
+                parts.append(f'<td>{html.escape(model)}</td>')
+                parts.append(f'<td>{_fmt(inter.get("F"))}</td><td>{_fmt(p)}</td>')
+                parts.append(f'<td>{_fmt(eta)}</td><td>{interp}</td></tr>')
+        parts.append('</tbody></table>')
+
+        # Tier 2 simple effects
+        parts.append('<h4>Simple Effects: Persona Effect on Tier 2 Rate at Each Severity</h4>')
+        parts.append('<table class="sortable"><thead><tr>')
+        parts.append('<th>Metric</th><th>Model</th><th>Severity</th><th>Partial &eta;&sup2;</th><th>&eta;&sup2; Size</th>')
+        parts.append('<th>Largest d</th><th>d Size</th><th>N significant pairs</th><th>N</th>')
+        parts.append('</tr></thead><tbody>')
+        for metric in ["monetary_severity", "issue_severity"]:
+            for model in models:
+                se = _safe_get(interactions_t2, metric, model, "simple_effects", default={})
+                for level in ["low", "medium", "high"]:
+                    ld = se.get(level, {})
+                    parts.append(f'<tr><td>{metric.replace("_"," ").title()}</td>')
+                    parts.append(f'<td>{html.escape(model)}</td><td>{level.title()}</td>')
+                    parts.append(f'<td>{_fmt(ld.get("eta_sq_partial"))}</td>')
+                    parts.append(f'<td>{ld.get("eta_sq_interpretation", "")}</td>')
+                    parts.append(f'<td>{_fmt(ld.get("largest_pairwise_d"))}</td>')
+                    parts.append(f'<td>{ld.get("largest_pairwise_d_interpretation", "")}</td>')
+                    parts.append(f'<td>{ld.get("n_significant", 0)}</td>')
+                    parts.append(f'<td>{ld.get("n", 0)}</td></tr>')
+        parts.append('</tbody></table>')
 
     parts.append('</div></div>')
 
@@ -2255,7 +2744,8 @@ def _build_tab_severity(
         parts.append(f'<tr><td>Bias Magnitude</td><td>{_fmt(wc.get("bias_magnitude"))}</td></tr>')
         parts.append(f'<tr><td>Most Advantaged Persona</td><td>{html.escape(str(wc.get("most_advantaged")))}</td></tr>')
         parts.append(f'<tr><td>Most Disadvantaged Persona</td><td>{html.escape(str(wc.get("most_disadvantaged")))}</td></tr>')
-        parts.append(f'<tr><td>Effect Size (Cohen\'s d)</td><td>{_fmt(wc.get("effect_size_d"))}</td></tr>')
+        parts.append(f'<tr><td>Effect Size (Cohen\'s d)</td><td>{_fmt(wc.get("effect_size_d"))} '
+                     f'({html.escape(wc.get("effect_size_interpretation", ""))})</td></tr>')
         parts.append('</tbody></table>')
     else:
         parts.append('<p>No worst-case data available.</p>')
@@ -2396,7 +2886,669 @@ def _build_tab_severity(
                 parts.append(f'<td style="color:{w_color};font-weight:bold;">{w_label}</td></tr>')
         parts.append('</tbody></table>')
 
+        # ── Tier 2 Rate Mitigation sub-section ──
+        mit_sev_t2 = sev.get("mitigation_severity_tier2", {})
+        if mit_sev_t2:
+            parts.append('<hr style="margin: 25px 0;">')
+            parts.append('<h3>Tier 2 Rate: Before vs After Mitigation</h3>')
+            parts.append('<p>Parallel mitigation analysis using Tier 2 recommendation rate as the fairness measure.</p>')
+
+            # Verdict cards
+            parts.append('<div class="metrics-grid">')
+            for metric in ["monetary_severity", "issue_severity"]:
+                for model in models:
+                    ms = _safe_get(mit_sev_t2, metric, model, default={})
+                    comp = ms.get("comparison", {})
+                    verdict = comp.get("verdict", "N/A")
+                    base_amp = ms.get("baseline", {}).get("amplification", {})
+                    neut_amp = ms.get("neutralized", {}).get("amplification", {})
+                    base_ratio = base_amp.get("point", float("nan"))
+                    neut_ratio = neut_amp.get("point", float("nan"))
+                    delta = comp.get("amplification_change", float("nan"))
+                    pct = comp.get("amplification_pct_change", float("nan"))
+                    v_colors = {
+                        "eliminated": ("#2ecc71", "#eafaf1"),
+                        "reduced": ("#27ae60", "#eafaf1"),
+                        "unchanged": ("#f39c12", "#fef9e7"),
+                        "increased": ("#e74c3c", "#fdedec"),
+                        "insufficient_data": ("#95a5a6", "#f2f3f4"),
+                    }
+                    color, bg = v_colors.get(verdict, ("#95a5a6", "#f2f3f4"))
+                    parts.append(f'<div class="metric-card" style="border-left: 4px solid {color}; background: {bg};">')
+                    parts.append(f'<div class="value" style="color: {color};">{verdict.upper()}</div>')
+                    parts.append(f'<div class="label">Tier 2 Rate — {metric.replace("_"," ").title()} ({model})</div>')
+                    parts.append(f'<div style="font-size:0.8rem;">Baseline: {_fmt(base_ratio, 2)}x → '
+                                 f'Neutralized: {_fmt(neut_ratio, 2)}x</div>')
+                    if np.isfinite(delta) and np.isfinite(pct):
+                        parts.append(f'<div style="font-size:0.8rem;">Delta: {delta:+.2f} ({pct:+.1f}%)</div>')
+                    parts.append('</div>')
+            parts.append('</div>')
+
+            # Tier 2 before/after bias table
+            parts.append('<h4>Tier 2 Rate Bias by Severity: Before vs After Mitigation</h4>')
+            parts.append('<table class="sortable"><thead><tr>')
+            parts.append('<th>Metric</th><th>Model</th><th>Severity</th>'
+                         '<th>Baseline Bias SD</th><th>Neutralized Bias SD</th>'
+                         '<th>Change</th><th>% Change</th>')
+            parts.append('</tr></thead><tbody>')
+            for metric in ["monetary_severity", "issue_severity"]:
+                for model in models:
+                    ms = _safe_get(mit_sev_t2, metric, model, default={})
+                    base_bias = ms.get("baseline", {}).get("bias", {})
+                    neut_bias = ms.get("neutralized", {}).get("bias", {})
+                    sd_changes = ms.get("comparison", {}).get("bias_sd_change_by_level", {})
+                    for level in ["low", "medium", "high"]:
+                        b_sd = base_bias.get(level, {}).get("sd_across_personas", float("nan"))
+                        n_sd = neut_bias.get(level, {}).get("sd_across_personas", float("nan"))
+                        d_sd = sd_changes.get(level, float("nan"))
+                        pct_chg = (d_sd / b_sd * 100) if np.isfinite(b_sd) and b_sd > 0 and np.isfinite(d_sd) else float("nan")
+                        style = ' style="background:#fdedec;"' if np.isfinite(d_sd) and d_sd > 0.001 else ""
+                        parts.append(f'<tr{style}>')
+                        parts.append(f'<td>{metric.replace("_"," ").title()}</td>')
+                        parts.append(f'<td>{html.escape(model)}</td><td>{level.title()}</td>')
+                        parts.append(f'<td>{_fmt(b_sd, 4)}</td><td>{_fmt(n_sd, 4)}</td>')
+                        parts.append(f'<td>{_fmt(d_sd, 4)}</td>')
+                        parts.append(f'<td>{_fmt(pct_chg, 1)}%</td></tr>')
+            parts.append('</tbody></table>')
+
         parts.append('</div></div>')
+
+    # ── Panel 8: Power Analysis ──
+    pa = analysis_results.get("power_analysis", {})
+    if pa:
+        parts.append('<div class="collapsible">')
+        parts.append('<div class="collapsible-header">Panel 8: Statistical Power Analysis</div>')
+        parts.append('<div class="collapsible-body">')
+        parts.append('<p>Post-hoc power analysis showing the minimum effect sizes detectable '
+                     'with the current sample at 80% power, &alpha;=0.05. This documents '
+                     'what effects the study is adequately powered to find.</p>')
+
+        # Sample summary cards
+        ss = pa.get("sample_summary", {})
+        parts.append('<div class="metrics-grid">')
+        for label, key in [("Total Complaints", "total_complaints"),
+                           ("Persona Variants", "n_personas"),
+                           ("Total Decisions", "total_persona_decisions"),
+                           ("Causal Sample", "causal_sample")]:
+            parts.append(f'<div class="metric-card"><div class="value">{ss.get(key, 0):,}</div>'
+                         f'<div class="label">{label}</div></div>')
+        parts.append('</div>')
+
+        # Matched-guise
+        mg = pa.get("matched_guise", {})
+        parts.append('<h3>Matched-Guise (Within-Complaint) Design</h3>')
+        parts.append('<p>Each complaint is evaluated under multiple persona framings, enabling '
+                     'paired within-complaint comparisons.</p>')
+        parts.append('<table><thead><tr><th>Parameter</th><th>Value</th></tr></thead><tbody>')
+        parts.append(f'<tr><td>N complaint pairs</td><td>{mg.get("n_pairs", 0):,}</td></tr>')
+        parts.append(f'<tr><td>Min Detectable Cohen\'s d</td><td>{_fmt(mg.get("min_detectable_d"))} '
+                     f'({html.escape(mg.get("interpretation", ""))})</td></tr>')
+        parts.append(f'<tr><td>Design</td><td>{html.escape(mg.get("design", ""))}</td></tr>')
+        parts.append('</tbody></table>')
+
+        # Between-persona table
+        bp = pa.get("between_persona", {})
+        if bp:
+            parts.append('<h3>Between-Persona Comparisons (per Dimension)</h3>')
+            parts.append('<table><thead><tr><th>Dimension</th><th>Min Cell Size</th>'
+                         '<th>Min Detectable d</th><th>Interpretation</th></tr></thead><tbody>')
+            for dim, info in sorted(bp.items()):
+                parts.append(f'<tr><td>{dim.title()}</td><td>{info["n_per_cell"]:,}</td>'
+                             f'<td>{_fmt(info["min_detectable_d"])}</td>'
+                             f'<td>{info["interpretation"].title()}</td></tr>')
+            parts.append('</tbody></table>')
+
+        # ANOVA power
+        av = pa.get("anova", {})
+        if av:
+            parts.append('<h3>ANOVA Power (k-Group Comparisons)</h3>')
+            parts.append('<table><thead><tr><th>Dimension</th><th>k Groups</th><th>N per Group</th>'
+                         '<th>Min f</th><th>Min &eta;&sup2;</th><th>Interpretation</th></tr></thead><tbody>')
+            for dim, info in sorted(av.items()):
+                parts.append(f'<tr><td>{dim.title()}</td><td>{info["k_groups"]}</td>'
+                             f'<td>{info["n_per_group"]:,}</td>'
+                             f'<td>{_fmt(info["min_detectable_f"])}</td>'
+                             f'<td>{_fmt(info["min_detectable_eta_sq"])}</td>'
+                             f'<td>{info["interpretation"].title()}</td></tr>')
+            parts.append('</tbody></table>')
+
+        parts.append('</div></div>')
+
+    # ── Panel 9: Multiple Comparisons Correction ──
+    mc = analysis_results.get("multiple_comparisons", {})
+    if mc:
+        parts.append('<div class="collapsible">')
+        parts.append('<div class="collapsible-header">Panel 9: Multiple Comparisons Correction (Family-Wise Error Rate)</div>')
+        parts.append('<div class="collapsible-body">')
+        parts.append(f'<p>{html.escape(mc.get("method_description", ""))}</p>')
+
+        # Summary cards
+        parts.append('<div class="metrics-grid">')
+        parts.append(f'<div class="metric-card"><div class="value">{mc.get("total_tests", 0):,}</div>'
+                     f'<div class="label">Total Tests</div></div>')
+        parts.append(f'<div class="metric-card"><div class="value">{mc.get("total_surviving", 0):,}</div>'
+                     f'<div class="label">Surviving FDR</div></div>')
+        rate = mc["total_surviving"] / mc["total_tests"] if mc.get("total_tests", 0) > 0 else 0
+        parts.append(f'<div class="metric-card"><div class="value">{rate:.0%}</div>'
+                     f'<div class="label">Survival Rate</div></div>')
+        parts.append(f'<div class="metric-card"><div class="value">{html.escape(mc.get("method", ""))}</div>'
+                     f'<div class="label">Method</div></div>')
+        parts.append('</div>')
+
+        # Family detail table
+        parts.append('<h3>Test Families</h3>')
+        parts.append('<table class="sortable"><thead><tr>')
+        parts.append('<th>Test Family</th><th>N Tests</th><th>N Surviving</th><th>Survival Rate</th>')
+        parts.append('</tr></thead><tbody>')
+        for fam in mc.get("families", []):
+            sr = fam.get("survival_rate", 0)
+            color = "#e74c3c" if sr > 0.5 else ("#f39c12" if sr > 0.1 else "#27ae60")
+            parts.append(f'<tr><td>{html.escape(fam["family"])}</td>'
+                         f'<td>{fam["n_tests"]}</td><td>{fam["n_surviving"]}</td>'
+                         f'<td style="color:{color};font-weight:bold;">{sr:.0%}</td></tr>')
+        parts.append('</tbody></table>')
+
+        parts.append('</div></div>')
+
+    # ── Panel 10: Dimension-Specific Severity Amplification ──
+    dim_sev = sev.get("dimension_severity", {})
+    if dim_sev:
+        parts.append('<div class="collapsible">')
+        parts.append('<div class="collapsible-header">Panel 10: Dimension-Specific Severity Amplification (One-Way)</div>')
+        parts.append('<div class="collapsible-body">')
+        parts.append('<p>Tests severity amplification for each demographic dimension individually '
+                     '(age, geographic, education, socioeconomic). Each cell has ~200+ observations, '
+                     'providing much better statistical power than the full 36-persona grid. '
+                     'The tradeoff: intersectional effects (e.g. old + rural + low-SES) are not captured, '
+                     'but these tests can definitively establish whether severity amplifies bias at all.</p>')
+
+        # Interaction summary table
+        parts.append('<h3>Severity &times; Dimension Interaction Tests</h3>')
+        parts.append('<table class="sortable"><thead><tr>')
+        parts.append('<th>Metric</th><th>Model</th><th>Dimension</th>')
+        parts.append('<th>Interaction F</th><th>Interaction p</th><th>Partial &eta;&sup2;</th>')
+        parts.append('<th>&eta;&sup2; Size</th><th>Amplification</th><th>95% CI</th><th>Min Cell</th>')
+        parts.append('</tr></thead><tbody>')
+
+        for metric in ["monetary_severity", "issue_severity"]:
+            for model in models:
+                for dim in ["age", "geographic", "education", "socioeconomic"]:
+                    ds = _safe_get(dim_sev, metric, model, dim, default={})
+                    if "error" in ds:
+                        continue
+                    anova = ds.get("anova", {})
+                    inter = anova.get("interaction", {})
+                    amp = ds.get("amplification", {})
+                    p = inter.get("p_value", float("nan"))
+                    row_style = ' style="background:#fdecea;"' if np.isfinite(p) and p < 0.05 else ""
+                    parts.append(f'<tr{row_style}>')
+                    parts.append(f'<td>{metric.replace("_"," ").title()}</td>')
+                    parts.append(f'<td>{html.escape(model)}</td>')
+                    parts.append(f'<td>{dim.title()}</td>')
+                    parts.append(f'<td>{_fmt(inter.get("F"))}</td>')
+                    parts.append(f'<td>{_fmt(p)}</td>')
+                    parts.append(f'<td>{_fmt(inter.get("eta_sq_partial"))}</td>')
+                    parts.append(f'<td>{inter.get("eta_sq_interpretation", "")}</td>')
+                    ratio = amp.get("point", float("nan"))
+                    color, _, label = _traffic_light(ratio)
+                    parts.append(f'<td style="color:{color};font-weight:bold;">{_fmt(ratio, 2)}x</td>')
+                    ci_lo = amp.get("ci_lower", float("nan"))
+                    ci_hi = amp.get("ci_upper", float("nan"))
+                    parts.append(f'<td>[{_fmt(ci_lo, 2)}, {_fmt(ci_hi, 2)}]</td>')
+                    parts.append(f'<td>{ds.get("min_cell_size", 0)}</td>')
+                    parts.append('</tr>')
+        parts.append('</tbody></table>')
+
+        # Amplification ratio cards per dimension
+        parts.append('<h3>Amplification Ratios by Dimension</h3>')
+        parts.append('<div class="metrics-grid">')
+        for dim in ["age", "geographic", "education", "socioeconomic"]:
+            for model in models[:1]:  # Show first model as representative
+                for metric in ["issue_severity"]:
+                    ds = _safe_get(dim_sev, metric, model, dim, default={})
+                    if "error" in ds:
+                        continue
+                    amp = ds.get("amplification", {})
+                    ratio = amp.get("point", float("nan"))
+                    color, bg, label = _traffic_light(ratio)
+                    parts.append(f'<div class="metric-card" style="border-left: 4px solid {color}; background: {bg};">')
+                    parts.append(f'<div class="value" style="color: {color};">{_fmt(ratio, 2)}x</div>')
+                    parts.append(f'<div class="label">{dim.title()} ({model})</div>')
+                    ci_lo = amp.get("ci_lower", float("nan"))
+                    ci_hi = amp.get("ci_upper", float("nan"))
+                    parts.append(f'<div style="font-size:0.8rem;">CI: [{_fmt(ci_lo, 2)}, {_fmt(ci_hi, 2)}] &mdash; {label}</div>')
+                    parts.append('</div>')
+        parts.append('</div>')
+
+        # Detail: mean tier by dimension level at each severity
+        parts.append('<h3>Mean Tier by Dimension Level and Severity</h3>')
+        for dim in ["age", "geographic", "education", "socioeconomic"]:
+            parts.append(f'<h4>{dim.title()}</h4>')
+            # Determine dimension levels from the data
+            ds_sample = _safe_get(dim_sev, "issue_severity", models[0] if models else "", dim, default={})
+            dim_levels = sorted(set(
+                k for sv in ds_sample.get("dimension_means_by_severity", {}).values()
+                for k in sv.keys()
+            )) if ds_sample.get("dimension_means_by_severity") else []
+            if not dim_levels:
+                parts.append('<p>No data available.</p>')
+                continue
+
+            parts.append('<table><thead><tr><th>Metric</th><th>Model</th><th>Severity</th>')
+            for dl in dim_levels:
+                parts.append(f'<th>{html.escape(str(dl))}</th>')
+            parts.append('<th>Gap</th></tr></thead><tbody>')
+
+            for metric in ["monetary_severity", "issue_severity"]:
+                for model in models:
+                    ds = _safe_get(dim_sev, metric, model, dim, default={})
+                    means_by_sev = ds.get("dimension_means_by_severity", {})
+                    for level in ["low", "medium", "high"]:
+                        means = means_by_sev.get(level, {})
+                        parts.append(f'<tr><td>{metric.replace("_"," ").title()}</td>')
+                        parts.append(f'<td>{html.escape(model)}</td><td>{level.title()}</td>')
+                        vals = []
+                        for dl in dim_levels:
+                            v = means.get(dl, float("nan"))
+                            vals.append(v)
+                            parts.append(f'<td>{_fmt(v, 3)}</td>')
+                        gap = max(vals) - min(vals) if vals and all(np.isfinite(v) for v in vals) else float("nan")
+                        style = ' style="font-weight:bold;"' if level == "high" else ""
+                        parts.append(f'<td{style}>{_fmt(gap, 3)}</td></tr>')
+            parts.append('</tbody></table>')
+
+        parts.append('</div></div>')
+
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Tab: Sparsity-Aware Analysis
+# ---------------------------------------------------------------------------
+
+def _build_tab_sparsity(
+    analysis_results: Dict[str, Any],
+    models: List[str],
+) -> str:
+    """Build the Sparsity-Aware Analysis tab content."""
+    parts: List[str] = []
+    sparsity = analysis_results.get("sparsity", {})
+    if not sparsity:
+        parts.append("<p>Sparsity analysis not available.</p>")
+        return "\n".join(parts)
+
+    parts.append("<h2>Sparsity-Aware Fairness Analysis</h2>")
+    parts.append(
+        "<p>This analysis applies a defensible sparsity policy to handle small-cell "
+        "instability in observed/inferred group membership. Rates, AIR values, and "
+        "disparity flags are annotated with support counts, confidence intervals, "
+        "and stability indicators.</p>"
+    )
+    parts.append(
+        '<p><b>Thresholds:</b> '
+        '<span style="color:#e74c3c">n&lt;20 = insufficient support</span> | '
+        '<span style="color:#e67e22">20&le;n&lt;100 = screening only</span> | '
+        '<span style="color:#2ecc71">n&ge;100 = reliable</span></p>'
+    )
+
+    for model in models:
+        mr = sparsity.get(model, {})
+        if not mr:
+            continue
+
+        parts.append(f"<h3>Model: {html.escape(model)}</h3>")
+
+        # ---- Panel 1: Support Summary ----
+        parts.append('<div class="collapsible">')
+        parts.append('<div class="collapsible-header">Support Summary &amp; Stability Flags</div>')
+        parts.append('<div class="collapsible-body">')
+
+        obs = mr.get("observed_persona", {})
+        support = obs.get("support", {})
+        cells = support.get("cells", {})
+        if cells:
+            parts.append(
+                f'<p>Total groups: {support.get("n_groups", 0)} | '
+                f'<span style="color:#e74c3c">Insufficient: {support.get("n_insufficient", 0)}</span> | '
+                f'<span style="color:#e67e22">Screening: {support.get("n_screening", 0)}</span> | '
+                f'<span style="color:#2ecc71">Reliable: {support.get("n_reliable", 0)}</span></p>'
+            )
+            parts.append('<table><thead><tr>'
+                         '<th>Persona</th><th>n</th><th>Stability</th>'
+                         '</tr></thead><tbody>')
+            for persona in sorted(cells, key=lambda p: cells[p]["n"]):
+                cell = cells[persona]
+                stab = cell["stability"]
+                color = {"insufficient_support": "#e74c3c", "screening_only": "#e67e22", "reliable": "#2ecc71"}.get(stab, "#333")
+                parts.append(
+                    f'<tr><td>{html.escape(persona)}</td>'
+                    f'<td>{cell["n"]}</td>'
+                    f'<td style="color:{color};font-weight:bold">{html.escape(stab)}</td></tr>'
+                )
+            parts.append("</tbody></table>")
+        else:
+            parts.append("<p>No observed persona support data available.</p>")
+
+        parts.append("</div></div>")  # collapsible
+
+        # ---- Panel 2: Annotated Rates with Intervals ----
+        parts.append('<div class="collapsible collapsed">')
+        parts.append('<div class="collapsible-header">Annotated Rates with Confidence Intervals</div>')
+        parts.append('<div class="collapsible-body">')
+
+        ann_rates = obs.get("annotated_rates", {})
+        if ann_rates:
+            parts.append(
+                "<p>Each rate is shown with its Wilson score interval and Jeffreys "
+                "credible interval. Groups marked <em>insufficient_support</em> "
+                "should not be used for inferential claims.</p>"
+            )
+            parts.append('<table><thead><tr>'
+                         '<th>Persona</th><th>n</th><th>Rate</th>'
+                         '<th>Wilson 95% CI</th><th>Jeffreys 95% CI</th>'
+                         '<th>Stability</th>'
+                         '</tr></thead><tbody>')
+            for persona in sorted(ann_rates, key=lambda p: ann_rates[p].get("rate", 0)):
+                r = ann_rates[persona]
+                stab = r.get("stability", "")
+                color = {"insufficient_support": "#e74c3c", "screening_only": "#e67e22", "reliable": "#2ecc71"}.get(stab, "#333")
+                w_ci = r.get("wilson_ci", (0, 0))
+                j_ci = r.get("jeffreys_ci", (0, 0))
+                parts.append(
+                    f'<tr><td>{html.escape(persona)}</td>'
+                    f'<td>{r.get("n", 0)}</td>'
+                    f'<td>{_fmt(r.get("rate"), 3)}</td>'
+                    f'<td>[{_fmt(w_ci[0], 3)}, {_fmt(w_ci[1], 3)}]</td>'
+                    f'<td>[{_fmt(j_ci[0], 3)}, {_fmt(j_ci[1], 3)}]</td>'
+                    f'<td style="color:{color}">{html.escape(stab)}</td></tr>'
+                )
+            parts.append("</tbody></table>")
+
+        parts.append("</div></div>")
+
+        # ---- Panel 3: Bayesian Interval AIR ----
+        parts.append('<div class="collapsible collapsed">')
+        parts.append('<div class="collapsible-header">Bayesian Interval AIR (Jeffreys Prior)</div>')
+        parts.append('<div class="collapsible-body">')
+
+        bair = mr.get("bayesian_air_persona", {})
+        if bair:
+            parts.append(
+                "<p>AIR computed on smoothed rates using Jeffreys Beta(0.5, 0.5) prior. "
+                "P(AIR&lt;0.8) gives a graded risk probability instead of binary flagging.</p>"
+            )
+            parts.append('<table><thead><tr>'
+                         '<th>Persona</th><th>n</th><th>Rate</th>'
+                         '<th>Point AIR</th><th>Median AIR</th>'
+                         '<th>95% Credible Interval</th>'
+                         '<th>P(AIR&lt;0.8)</th><th>Stability</th>'
+                         '</tr></thead><tbody>')
+            for persona in sorted(bair, key=lambda p: bair[p].get("bayesian_air", {}).get("median_air", 999)):
+                info = bair[persona]
+                ba = info.get("bayesian_air", {})
+                stab = ba.get("stability_g", "")
+                p_below = ba.get("p_below_threshold", float("nan"))
+                color = {"insufficient_support": "#e74c3c", "screening_only": "#e67e22", "reliable": "#2ecc71"}.get(stab, "#333")
+                # Color-code P(AIR<0.8) risk
+                if isinstance(p_below, float) and not np.isnan(p_below):
+                    if p_below > 0.5:
+                        risk_color = "#e74c3c"
+                    elif p_below > 0.1:
+                        risk_color = "#e67e22"
+                    else:
+                        risk_color = "#2ecc71"
+                    risk_str = f'<span style="color:{risk_color};font-weight:bold">{_pct(p_below)}</span>'
+                else:
+                    risk_str = "N/A"
+                parts.append(
+                    f'<tr><td>{html.escape(persona)}</td>'
+                    f'<td>{info.get("n", 0)}</td>'
+                    f'<td>{_fmt(info.get("rate"), 3)}</td>'
+                    f'<td>{_fmt(info.get("point_air"), 3)}</td>'
+                    f'<td>{_fmt(ba.get("median_air"), 3)}</td>'
+                    f'<td>[{_fmt(ba.get("ci_lower"), 3)}, {_fmt(ba.get("ci_upper"), 3)}]</td>'
+                    f'<td>{risk_str}</td>'
+                    f'<td style="color:{color}">{html.escape(stab)}</td></tr>'
+                )
+            parts.append("</tbody></table>")
+
+            # Risk summary chart
+            try:
+                fig, ax = plt.subplots(figsize=(10, max(4, len(bair) * 0.25)))
+                personas_sorted = sorted(bair, key=lambda p: bair[p].get("bayesian_air", {}).get("median_air", 999))
+                y_pos = range(len(personas_sorted))
+                medians = [bair[p].get("bayesian_air", {}).get("median_air", 0) for p in personas_sorted]
+                ci_lo = [bair[p].get("bayesian_air", {}).get("ci_lower", 0) for p in personas_sorted]
+                ci_hi = [bair[p].get("bayesian_air", {}).get("ci_upper", 0) for p in personas_sorted]
+                errors = [[m - lo for m, lo in zip(medians, ci_lo)],
+                          [hi - m for m, hi in zip(medians, ci_hi)]]
+                colors = []
+                for p in personas_sorted:
+                    pb = bair[p].get("bayesian_air", {}).get("p_below_threshold", 0)
+                    if isinstance(pb, float) and not np.isnan(pb):
+                        colors.append("#e74c3c" if pb > 0.5 else ("#e67e22" if pb > 0.1 else "#2ecc71"))
+                    else:
+                        colors.append("#95a5a6")
+                ax.barh(y_pos, medians, xerr=errors, color=colors, alpha=0.8, height=0.6, capsize=3)
+                ax.axvline(x=0.8, color="#333", linestyle="--", linewidth=1, label="AIR = 0.80 threshold")
+                ax.set_yticks(list(y_pos))
+                ax.set_yticklabels([p.replace("_", " ") for p in personas_sorted], fontsize=7)
+                ax.set_xlabel("Bayesian AIR (median + 95% CI)")
+                ax.set_title(f"Bayesian AIR by Persona ({html.escape(model)})")
+                ax.legend(fontsize=8)
+                fig.tight_layout()
+                img_b64 = _fig_to_base64(fig)
+                parts.append(f'<img src="data:image/png;base64,{img_b64}" style="max-width:100%">')
+            except Exception as e:
+                logger.warning("Bayesian AIR chart failed: %s", e)
+
+        parts.append("</div></div>")
+
+        # ---- Panel 4: Partial Pooling ----
+        parts.append('<div class="collapsible collapsed">')
+        parts.append('<div class="collapsible-header">Partial Pooling (Hierarchical Model)</div>')
+        parts.append('<div class="collapsible-body">')
+
+        pooling = mr.get("partial_pooling", {})
+        if pooling.get("error"):
+            parts.append(f'<p>Partial pooling: {html.escape(str(pooling["error"]))}</p>')
+        elif pooling.get("pooled_rates"):
+            shrinkage = pooling.get("shrinkage_summary", {})
+            parts.append(
+                "<p>Hierarchical model shrinks small-cell estimates toward the grand mean, "
+                "stabilising extreme rates from tiny groups. "
+                f'Grand mean: {_fmt(pooling.get("grand_mean"), 3)} | '
+                f'Random effect variance: {_fmt(pooling.get("random_effect_variance"), 4)}</p>'
+            )
+            if shrinkage:
+                parts.append(
+                    f'<p>Mean |shrinkage|: {_fmt(shrinkage.get("mean_abs_shrinkage"), 4)} | '
+                    f'Max |shrinkage|: {_fmt(shrinkage.get("max_abs_shrinkage"), 4)} | '
+                    f'Cells shrunk &gt;5%: {shrinkage.get("n_cells_shrunk_gt_5pct", 0)}</p>'
+                )
+
+            pr = pooling["pooled_rates"]
+            parts.append('<table><thead><tr>'
+                         '<th>Persona</th><th>n</th><th>Raw Rate</th>'
+                         '<th>Pooled Estimate</th><th>Shrinkage</th><th>Stability</th>'
+                         '</tr></thead><tbody>')
+            for persona in sorted(pr, key=lambda p: abs(pr[p].get("shrinkage", 0)), reverse=True):
+                r = pr[persona]
+                stab = r.get("stability", "")
+                color = {"insufficient_support": "#e74c3c", "screening_only": "#e67e22", "reliable": "#2ecc71"}.get(stab, "#333")
+                shr = r.get("shrinkage", 0)
+                shr_color = "#e74c3c" if abs(shr) > 0.05 else "#333"
+                parts.append(
+                    f'<tr><td>{html.escape(persona)}</td>'
+                    f'<td>{r.get("raw_n", 0)}</td>'
+                    f'<td>{_fmt(r.get("raw_rate"), 3)}</td>'
+                    f'<td>{_fmt(r.get("pooled_estimate"), 3)}</td>'
+                    f'<td style="color:{shr_color}">{_fmt(shr, 4)}</td>'
+                    f'<td style="color:{color}">{html.escape(stab)}</td></tr>'
+                )
+            parts.append("</tbody></table>")
+
+        parts.append("</div></div>")
+
+        # ---- Panel 5: Sensitivity Analysis ----
+        parts.append('<div class="collapsible collapsed">')
+        parts.append('<div class="collapsible-header">Sensitivity Analysis (Robustness Check)</div>')
+        parts.append('<div class="collapsible-body">')
+
+        sens = mr.get("sensitivity_persona", {})
+        verdict = sens.get("verdict", {})
+        if verdict:
+            robust = verdict.get("robust", False)
+            badge_color = "#2ecc71" if robust else "#e74c3c"
+            badge_text = "ROBUST" if robust else "CAUTION"
+            parts.append(
+                f'<p><span style="background:{badge_color};color:#fff;padding:2px 8px;'
+                f'border-radius:4px;font-weight:bold">{badge_text}</span> '
+                f'{html.escape(verdict.get("summary", ""))}</p>'
+            )
+
+        # Baseline vs filtered comparison
+        baseline = sens.get("baseline", {})
+        filtered = sens.get("exclude_small_cells", {})
+        if baseline.get("air_by_group") and filtered.get("air_by_group"):
+            n_excluded = filtered.get("n_groups_excluded", 0)
+            excluded_groups = filtered.get("groups_excluded", [])
+            parts.append(
+                f"<p><b>Rule 1 (Exclude n&lt;20):</b> {n_excluded} group(s) excluded"
+            )
+            if excluded_groups:
+                parts.append(f' ({", ".join(html.escape(g) for g in excluded_groups[:10])})')
+            parts.append("</p>")
+
+            parts.append(
+                f'<p>Material disparities: baseline={baseline.get("n_material", 0)}, '
+                f'after filtering={filtered.get("n_material", 0)}</p>'
+            )
+
+        # Collapse results
+        collapse = sens.get("collapse_sparse", {})
+        if collapse:
+            parts.append("<p><b>Rule 2 (Collapse sparse categories):</b></p>")
+            parts.append("<ul>")
+            for dim, info in sorted(collapse.items()):
+                if isinstance(info, dict) and info.get("collapsed"):
+                    parts.append(
+                        f'<li><b>{html.escape(dim)}:</b> merged '
+                        f'{", ".join(html.escape(str(l)) for l in info.get("sparse_levels", []))} '
+                        f'into {html.escape(str(info.get("merge_target", "N/A")))}</li>'
+                    )
+                elif isinstance(info, dict) and not info.get("collapsed"):
+                    parts.append(f'<li><b>{html.escape(dim)}:</b> no sparse levels</li>')
+            parts.append("</ul>")
+
+        parts.append("</div></div>")
+
+        # ---- Panel 6: Per-Dimension Analysis ----
+        parts.append('<div class="collapsible collapsed">')
+        parts.append('<div class="collapsible-header">Per-Dimension Sparsity Analysis</div>')
+        parts.append('<div class="collapsible-body">')
+
+        per_dim = mr.get("per_dimension_observed", {})
+        for dim in ESTIMATE_DIMS:
+            dim_data = per_dim.get(dim, {})
+            if not dim_data:
+                continue
+            parts.append(f"<h4>{html.escape(dim)}</h4>")
+            bair_dim = dim_data.get("bayesian_air", {})
+            if bair_dim:
+                parts.append('<table><thead><tr>'
+                             '<th>Level</th><th>n</th><th>Rate</th>'
+                             '<th>Median AIR</th><th>P(AIR&lt;0.8)</th><th>Stability</th>'
+                             '</tr></thead><tbody>')
+                for level in sorted(bair_dim):
+                    info = bair_dim[level]
+                    ba = info.get("bayesian_air", {})
+                    stab = ba.get("stability_g", "")
+                    color = {"insufficient_support": "#e74c3c", "screening_only": "#e67e22", "reliable": "#2ecc71"}.get(stab, "#333")
+                    p_below = ba.get("p_below_threshold", float("nan"))
+                    risk_str = _pct(p_below) if isinstance(p_below, float) and not np.isnan(p_below) else "N/A"
+                    parts.append(
+                        f'<tr><td>{html.escape(level)}</td>'
+                        f'<td>{info.get("n", 0)}</td>'
+                        f'<td>{_fmt(info.get("rate"), 3)}</td>'
+                        f'<td>{_fmt(ba.get("median_air"), 3)}</td>'
+                        f'<td>{risk_str}</td>'
+                        f'<td style="color:{color}">{html.escape(stab)}</td></tr>'
+                    )
+                parts.append("</tbody></table>")
+
+        parts.append("</div></div>")
+
+        # ---- Panel 7: Mitigation Comparison (if available) ----
+        mit = mr.get("mitigation_sensitivity", {})
+        if mit:
+            parts.append('<div class="collapsible collapsed">')
+            parts.append('<div class="collapsible-header">Mitigation Sparsity-Aware Comparison</div>')
+            parts.append('<div class="collapsible-body">')
+
+            comparison = mit.get("comparison", {})
+            if comparison:
+                parts.append(
+                    "<p>Compares Bayesian AIR before and after text neutralisation. "
+                    "P(AIR&lt;0.8) gives a graded risk measure.</p>"
+                )
+                parts.append('<table><thead><tr>'
+                             '<th>Persona</th>'
+                             '<th>Pre Median AIR</th><th>Post Median AIR</th>'
+                             '<th>Pre P(AIR&lt;0.8)</th><th>Post P(AIR&lt;0.8)</th>'
+                             '<th>Stability</th>'
+                             '</tr></thead><tbody>')
+                for persona in sorted(comparison):
+                    c = comparison[persona]
+                    stab = c.get("pre_stability", "")
+                    color = {"insufficient_support": "#e74c3c", "screening_only": "#e67e22", "reliable": "#2ecc71"}.get(stab, "#333")
+                    parts.append(
+                        f'<tr><td>{html.escape(persona)}</td>'
+                        f'<td>{_fmt(c.get("pre_median_air"), 3)}</td>'
+                        f'<td>{_fmt(c.get("post_median_air"), 3)}</td>'
+                        f'<td>{_pct(c.get("pre_p_below_08"))}</td>'
+                        f'<td>{_pct(c.get("post_p_below_08"))}</td>'
+                        f'<td style="color:{color}">{html.escape(stab)}</td></tr>'
+                    )
+                parts.append("</tbody></table>")
+
+            parts.append("</div></div>")
+
+    # ---- Process discrimination sparsity ----
+    proc_sparsity = sparsity.get("process_sparsity", {})
+    if proc_sparsity:
+        parts.append('<div class="collapsible collapsed">')
+        parts.append('<div class="collapsible-header">Process Discrimination: Sparsity-Aware Info Request AIR</div>')
+        parts.append('<div class="collapsible-body">')
+
+        for model_name in models:
+            pm = proc_sparsity.get(model_name, {})
+            bair_proc = pm.get("bayesian_air", {})
+            if not bair_proc:
+                continue
+            parts.append(f"<h4>Model: {html.escape(model_name)}</h4>")
+            parts.append('<table><thead><tr>'
+                         '<th>Persona</th><th>n</th><th>Info Request Rate</th>'
+                         '<th>Median AIR</th><th>P(AIR&lt;0.8)</th><th>Stability</th>'
+                         '</tr></thead><tbody>')
+            for persona in sorted(bair_proc, key=lambda p: bair_proc[p].get("bayesian_air", {}).get("median_air", 999)):
+                info = bair_proc[persona]
+                ba = info.get("bayesian_air", {})
+                stab = ba.get("stability_g", "")
+                color = {"insufficient_support": "#e74c3c", "screening_only": "#e67e22", "reliable": "#2ecc71"}.get(stab, "#333")
+                p_below = ba.get("p_below_threshold", float("nan"))
+                risk_str = _pct(p_below) if isinstance(p_below, float) and not np.isnan(p_below) else "N/A"
+                parts.append(
+                    f'<tr><td>{html.escape(persona)}</td>'
+                    f'<td>{info.get("n", 0)}</td>'
+                    f'<td>{_fmt(info.get("rate"), 3)}</td>'
+                    f'<td>{_fmt(ba.get("median_air"), 3)}</td>'
+                    f'<td>{risk_str}</td>'
+                    f'<td style="color:{color}">{html.escape(stab)}</td></tr>'
+                )
+            parts.append("</tbody></table>")
+
+        parts.append("</div></div>")
 
     return "\n".join(parts)
 
@@ -2404,6 +3556,199 @@ def _build_tab_severity(
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
+
+def _build_tab_repeated_measures(
+    analysis_results: Dict[str, Any],
+    models: List[str],
+) -> str:
+    """Build the Repeated-Measures Causal Analysis tab HTML."""
+    parts: List[str] = []
+    rm = analysis_results.get("repeated_measures", {})
+
+    parts.append("<h2>Repeated-Measures Causal Analysis</h2>")
+    parts.append(
+        '<p class="note">This section presents dependence-aware models that explicitly '
+        "account for repeated measures within each complaint. The same underlying complaint "
+        "is observed under multiple persona framings, so <code>complaint_id</code>-level "
+        "clustering is non-negotiable for valid inference. Models include: "
+        "(A)&nbsp;ordinal model with clustered SEs, "
+        "(B)&nbsp;conditional logistic / GEE for binary outcomes, "
+        "(C)&nbsp;GEE for info-request burden, "
+        "(D)&nbsp;linear mixed model (robustness), and "
+        "(E)&nbsp;nonparametric repeated-measures tests (Friedman, Cochran&rsquo;s Q).</p>"
+    )
+
+    if rm.get("skipped"):
+        parts.append(f'<p class="warning">Repeated-measures analysis skipped: {html.escape(str(rm.get("reason", "")))}</p>')
+        return "\n".join(parts)
+
+    # Data summary
+    ds = rm.get("data_summary", {})
+    if ds:
+        parts.append('<div class="metrics-grid">')
+        parts.append(f'<div class="metric-card"><div class="value">{ds.get("n_rows", 0):,}</div><div class="label">Observations</div></div>')
+        parts.append(f'<div class="metric-card"><div class="value">{ds.get("n_complaints", 0):,}</div><div class="label">Complaints (clusters)</div></div>')
+        parts.append(f'<div class="metric-card"><div class="value">{ds.get("n_personas", 0)}</div><div class="label">Persona Variants</div></div>')
+        parts.append(f'<div class="metric-card"><div class="value">{ds.get("n_models", 0)}</div><div class="label">LLM Models</div></div>')
+        parts.append("</div>")
+
+    for model in models:
+        mr = rm.get(model, {})
+        if not mr or mr.get("skipped"):
+            continue
+        parts.append(f"<h3>Model: {html.escape(model)}</h3>")
+
+        # --- A) Ordinal model ---
+        om = mr.get("ordinal_model", {})
+        if om and not om.get("skipped"):
+            parts.append('<div class="collapsible">')
+            parts.append('<div class="collapsible-header">A) Ordinal Model (Outcome Tier)</div>')
+            parts.append('<div class="collapsible-body">')
+            mi = om.get("model_info", {})
+            parts.append(f'<p><strong>Method:</strong> {html.escape(mi.get("method", ""))}</p>')
+            parts.append(f'<p><strong>Clustering:</strong> {html.escape(mi.get("clustering", ""))}</p>')
+            parts.append(f'<p>N = {om.get("n_obs", 0):,}, clusters = {om.get("n_clusters", 0):,}</p>')
+            _render_coefficient_table(parts, om)
+            parts.append("</div></div>")
+
+        # --- B) Conditional logistic ---
+        cl = mr.get("conditional_logistic_favourable", {})
+        if cl and not cl.get("skipped"):
+            parts.append('<div class="collapsible">')
+            parts.append('<div class="collapsible-header">B1) Conditional Logistic (Favourable)</div>')
+            parts.append('<div class="collapsible-body">')
+            mi = cl.get("model_info", {})
+            parts.append(f'<p><strong>Method:</strong> {html.escape(mi.get("method", ""))}</p>')
+            parts.append(f'<p>N = {cl.get("n_obs", 0):,}, strata = {cl.get("n_strata", 0):,}, informative = {cl.get("n_informative_strata", 0):,}</p>')
+            _render_coefficient_table(parts, cl, show_or=True)
+            parts.append("</div></div>")
+
+        # --- B2) GEE favourable ---
+        gee_fav = mr.get("logistic_gee_favourable", {})
+        if gee_fav and not gee_fav.get("skipped"):
+            parts.append('<div class="collapsible">')
+            parts.append('<div class="collapsible-header">B2) Logistic GEE (Favourable)</div>')
+            parts.append('<div class="collapsible-body">')
+            mi = gee_fav.get("model_info", {})
+            parts.append(f'<p><strong>Method:</strong> {html.escape(mi.get("method", ""))}</p>')
+            parts.append(f'<p>N = {gee_fav.get("n_obs", 0):,}, clusters = {gee_fav.get("n_clusters", 0):,}</p>')
+            _render_coefficient_table(parts, gee_fav, show_or=True)
+            parts.append("</div></div>")
+
+        # --- C) GEE info request ---
+        gee_info = mr.get("logistic_gee_info_request", {})
+        if gee_info and not gee_info.get("skipped"):
+            parts.append('<div class="collapsible">')
+            parts.append('<div class="collapsible-header">C) Logistic GEE (Info Request Burden)</div>')
+            parts.append('<div class="collapsible-body">')
+            mi = gee_info.get("model_info", {})
+            parts.append(f'<p><strong>Method:</strong> {html.escape(mi.get("method", ""))}</p>')
+            parts.append(f'<p>N = {gee_info.get("n_obs", 0):,}, clusters = {gee_info.get("n_clusters", 0):,}</p>')
+            _render_coefficient_table(parts, gee_info, show_or=True)
+            parts.append("</div></div>")
+
+        # --- D) Linear mixed model ---
+        lmm = mr.get("linear_mixed_model", {})
+        if lmm and not lmm.get("skipped"):
+            parts.append('<div class="collapsible">')
+            parts.append('<div class="collapsible-header">D) Linear Mixed Model (Robustness)</div>')
+            parts.append('<div class="collapsible-body">')
+            mi = lmm.get("model_info", {})
+            parts.append(f'<p><strong>Method:</strong> {html.escape(mi.get("method", ""))}</p>')
+            icc = lmm.get("icc", 0)
+            parts.append(f'<p><strong>ICC:</strong> {icc:.3f} &mdash; {html.escape(mi.get("icc_interpretation", ""))}</p>')
+            parts.append('<div class="metrics-grid">')
+            parts.append(f'<div class="metric-card"><div class="value">{_fmt(lmm.get("random_effects_variance"))}</div><div class="label">Random Effect Var</div></div>')
+            parts.append(f'<div class="metric-card"><div class="value">{_fmt(lmm.get("residual_variance"))}</div><div class="label">Residual Var</div></div>')
+            parts.append(f'<div class="metric-card"><div class="value">{_fmt(icc)}</div><div class="label">ICC</div></div>')
+            parts.append("</div>")
+            _render_coefficient_table(parts, lmm)
+            parts.append("</div></div>")
+
+        # --- E) Nonparametric ---
+        np_res = mr.get("nonparametric", {})
+        if np_res and not np_res.get("skipped"):
+            parts.append('<div class="collapsible">')
+            parts.append('<div class="collapsible-header">E) Nonparametric Repeated-Measures Tests</div>')
+            parts.append('<div class="collapsible-body">')
+
+            for test_key, test_label in [
+                ("friedman_tier", "Friedman Test (Outcome Tier)"),
+                ("cochran_favourable", "Cochran's Q (Favourable)"),
+                ("cochran_info_request", "Cochran's Q (Info Request)"),
+            ]:
+                t = np_res.get(test_key, {})
+                if t and not t.get("skipped"):
+                    sig = " *" if t.get("p_value", 1) < 0.05 else ""
+                    parts.append(f'<h4>{test_label}</h4>')
+                    parts.append(f'<p>{t.get("test", "")}: statistic = {_fmt(t.get("statistic"))}, '
+                                 f'p = {_fmt(t.get("p_value"))}{sig}, '
+                                 f'n_complaints = {t.get("n_complaints", 0)}, '
+                                 f'n_personas = {t.get("n_personas", 0)}</p>')
+                    posthoc = t.get("posthoc", {})
+                    if posthoc:
+                        parts.append(f'<p>Post-hoc: {posthoc.get("n_significant", 0)}/{posthoc.get("n_pairs_tested", 0)} '
+                                     f'significant pairs (FDR-adjusted p &lt; 0.05)</p>')
+
+            parts.append("</div></div>")
+
+    # Pooled results
+    pooled = rm.get("pooled", {})
+    if pooled and not pooled.get("skipped"):
+        parts.append("<h3>Pooled (All Models)</h3>")
+        lmm = pooled.get("linear_mixed_model", {})
+        if lmm and not lmm.get("skipped"):
+            icc = lmm.get("icc", 0)
+            parts.append(f'<p><strong>Pooled LMM ICC:</strong> {icc:.3f} ({icc*100:.1f}% of tier variance is between complaints)</p>')
+            _render_coefficient_table(parts, lmm)
+
+    return "\n".join(parts)
+
+
+def _render_coefficient_table(
+    parts: List[str],
+    model_results: Dict[str, Any],
+    show_or: bool = False,
+) -> None:
+    """Render a coefficient table for any model result dict."""
+    coeffs = model_results.get("coefficients", {})
+    if not coeffs:
+        return
+    se = model_results.get("std_errors", {})
+    pv = model_results.get("p_values", {})
+    ci = model_results.get("conf_int", {})
+    ors = model_results.get("odds_ratios", {}) if show_or else {}
+
+    parts.append('<div class="table-scroll">')
+    parts.append('<table class="sortable"><thead><tr>')
+    parts.append('<th>Parameter <span class="sort-arrow">&#8597;</span></th>')
+    parts.append('<th>Estimate <span class="sort-arrow">&#8597;</span></th>')
+    parts.append('<th>SE <span class="sort-arrow">&#8597;</span></th>')
+    if show_or:
+        parts.append('<th>OR <span class="sort-arrow">&#8597;</span></th>')
+    parts.append('<th>p-value <span class="sort-arrow">&#8597;</span></th>')
+    parts.append('<th>95% CI <span class="sort-arrow">&#8597;</span></th>')
+    parts.append("</tr></thead><tbody>")
+
+    for name in coeffs:
+        p = pv.get(name, float("nan"))
+        sig_marker = " *" if isinstance(p, (int, float)) and p < 0.05 else ""
+        color = "#e74c3c" if sig_marker else "#2c3e50"
+        ci_vals = ci.get(name, [])
+        ci_str = f"[{_fmt(ci_vals[0])}, {_fmt(ci_vals[1])}]" if len(ci_vals) == 2 else "N/A"
+
+        parts.append("<tr>")
+        parts.append(f"<td>{html.escape(str(name))}{sig_marker}</td>")
+        parts.append(f'<td data-sort-value="{coeffs[name]}">{_fmt(coeffs[name])}</td>')
+        parts.append(f'<td data-sort-value="{se.get(name, 0)}">{_fmt(se.get(name))}</td>')
+        if show_or:
+            parts.append(f'<td data-sort-value="{ors.get(name, 0)}">{_fmt(ors.get(name))}</td>')
+        parts.append(f'<td data-sort-value="{p}" style="color:{color}; font-weight:bold;">{_fmt(p)}</td>')
+        parts.append(f"<td>{ci_str}</td>")
+        parts.append("</tr>")
+
+    parts.append("</tbody></table></div>")
+
 
 def generate_report(
     analysis_results: Dict[str, Any],
@@ -2462,6 +3807,8 @@ def generate_report(
             num_complaints, seed, materiality_threshold, timestamp,
         )
         tab_severity = _build_tab_severity(analysis_results, complaints, models)
+        tab_repeated = _build_tab_repeated_measures(analysis_results, models)
+        tab_sparsity = _build_tab_sparsity(analysis_results, models)
 
     # Assemble the body
     body_parts: List[str] = []
@@ -2484,6 +3831,8 @@ def generate_report(
         ("tab-text", "Text Features"),
         ("tab-model", "Model Comparison"),
         ("tab-severity", "Severity Analysis"),
+        ("tab-repeated", "Repeated Measures"),
+        ("tab-sparsity", "Sparsity Analysis"),
         ("tab-detailed", "Detailed Results"),
     ]
     for i, (tid, label) in enumerate(tabs):
@@ -2500,6 +3849,8 @@ def generate_report(
         ("tab-text", tab_text),
         ("tab-model", tab_model),
         ("tab-severity", tab_severity),
+        ("tab-repeated", tab_repeated),
+        ("tab-sparsity", tab_sparsity),
         ("tab-detailed", tab_detailed),
     ]
     for i, (tid, content) in enumerate(tab_contents):

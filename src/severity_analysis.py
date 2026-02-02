@@ -19,7 +19,10 @@ import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
 
-from src.statistics import bootstrap_ci, chi_squared_test, fdr_correction, one_way_anova
+from src.statistics import (
+    bootstrap_ci, chi_squared_test, fdr_correction, one_way_anova,
+    interpret_cohens_d, interpret_eta_sq,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +162,19 @@ def severity_descriptives(
         # Ensure consistent ordering
         ct = ct.reindex(index=SEVERITY_LEVELS, columns=SEVERITY_LEVELS, fill_value=0)
 
+        # Full cross-tab including "unknown" monetary severity
+        ct_full = pd.crosstab(
+            complaints_df["monetary_severity"],
+            complaints_df["issue_severity"],
+            dropna=False,
+        )
+        full_rows = SEVERITY_LEVELS + ["unknown"]
+        ct_full = ct_full.reindex(
+            index=[r for r in full_rows if r in ct_full.index],
+            columns=SEVERITY_LEVELS,
+            fill_value=0,
+        )
+
         result["agreement"] = {
             "spearman_r": float(spearman_r),
             "spearman_p": float(spearman_p),
@@ -166,6 +182,7 @@ def severity_descriptives(
             "agreement_rate": agreement_rate,
             "cross_tab": ct.to_dict(),
             "cross_tab_pct": (ct / ct.sum().sum() * 100).round(1).to_dict(),
+            "cross_tab_full": ct_full.to_dict(),
         }
     else:
         result["agreement"] = {
@@ -175,6 +192,7 @@ def severity_descriptives(
             "agreement_rate": float("nan"),
             "cross_tab": {},
             "cross_tab_pct": {},
+            "cross_tab_full": {},
         }
 
     return result
@@ -331,16 +349,22 @@ def bias_by_severity(
     severity_metric: str,
     model: str,
     persona_col: str = "persona_label",
+    outcome_col: str = "tier",
 ) -> Dict[str, Any]:
     """Compute bias metrics at each severity level.
 
     Bias = spread in mean outcome across personas.
+
+    Parameters
+    ----------
+    outcome_col : Column to aggregate (default ``"tier"``).  Use ``"tier2"``
+        for Tier-2 rate analysis after adding a binary indicator column.
     """
     df = decisions_df[
         (decisions_df["model"] == model)
         & (decisions_df[severity_metric].isin(SEVERITY_LEVELS))
     ]
-    if persona_col not in df.columns or len(df) < 10:
+    if persona_col not in df.columns or outcome_col not in df.columns or len(df) < 10:
         return {}
 
     result: Dict[str, Any] = {}
@@ -352,7 +376,7 @@ def bias_by_severity(
                              "cv": float("nan")}
             continue
 
-        persona_means = sub.groupby(persona_col)["tier"].mean()
+        persona_means = sub.groupby(persona_col)[outcome_col].mean()
         if len(persona_means) < 2:
             result[level] = {"n": len(sub), "mean_bias": 0.0,
                              "sd_across_personas": 0.0, "range": 0.0, "cv": 0.0}
@@ -380,8 +404,9 @@ def two_way_anova_persona_severity(
     severity_metric: str,
     model: str,
     persona_col: str = "persona_label",
+    outcome_col: str = "tier",
 ) -> Dict[str, Any]:
-    """Two-way ANOVA: tier ~ persona + severity + persona×severity.
+    """Two-way ANOVA: outcome ~ persona + severity + persona×severity.
 
     Uses statsmodels Type II SS.
     """
@@ -389,10 +414,11 @@ def two_way_anova_persona_severity(
         (decisions_df["model"] == model)
         & (decisions_df[severity_metric].isin(SEVERITY_LEVELS))
     ].copy()
-    if persona_col not in df.columns or len(df) < 30:
+    if persona_col not in df.columns or outcome_col not in df.columns or len(df) < 30:
         return {"error": "insufficient data"}
 
-    df = df.rename(columns={severity_metric: "severity", persona_col: "persona"})
+    df = df.rename(columns={severity_metric: "severity", persona_col: "persona",
+                            outcome_col: "outcome"})
 
     # Need at least 2 levels in each factor
     if df["persona"].nunique() < 2 or df["severity"].nunique() < 2:
@@ -404,7 +430,7 @@ def two_way_anova_persona_severity(
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            fit = smf.ols("tier ~ C(persona) + C(severity) + C(persona):C(severity)", data=df).fit()
+            fit = smf.ols("outcome ~ C(persona) + C(severity) + C(persona):C(severity)", data=df).fit()
             table = anova_lm(fit, typ=2)
 
         total_ss = table["sum_sq"].sum()
@@ -416,12 +442,17 @@ def two_way_anova_persona_severity(
             ("residual", "Residual"),
         ]:
             if row_label in table.index:
-                ss = float(table.loc[row_label, "sum_sq"])
+                ss = max(0.0, float(table.loc[row_label, "sum_sq"]))
                 df_val = float(table.loc[row_label, "df"])
                 f_val = float(table.loc[row_label, "F"]) if "F" in table.columns else float("nan")
                 p_val = float(table.loc[row_label, "PR(>F)"]) if "PR(>F)" in table.columns else float("nan")
+                # Type II SS can produce tiny negative values from floating-point
+                # cancellation; clamp F to zero in that case.
+                if np.isfinite(f_val) and f_val < 0:
+                    f_val = 0.0
+                    p_val = 1.0
                 # Partial eta-squared = SS_effect / (SS_effect + SS_residual)
-                ss_resid = float(table.loc["Residual", "sum_sq"]) if "Residual" in table.index else 0
+                ss_resid = max(0.0, float(table.loc["Residual", "sum_sq"])) if "Residual" in table.index else 0
                 eta_sq = ss / (ss + ss_resid) if (ss + ss_resid) > 0 else 0.0
                 result[source] = {
                     "SS": ss, "df": df_val, "F": f_val,
@@ -444,13 +475,14 @@ def simple_effects_by_severity(
     severity_metric: str,
     model: str,
     persona_col: str = "persona_label",
+    outcome_col: str = "tier",
 ) -> Dict[str, Any]:
     """One-way ANOVA of persona effect at each severity level."""
     df = decisions_df[
         (decisions_df["model"] == model)
         & (decisions_df[severity_metric].isin(SEVERITY_LEVELS))
     ]
-    if persona_col not in df.columns:
+    if persona_col not in df.columns or outcome_col not in df.columns:
         return {}
 
     result: Dict[str, Any] = {}
@@ -464,7 +496,7 @@ def simple_effects_by_severity(
             continue
 
         # One-way ANOVA
-        groups = [sub.loc[sub[persona_col] == p, "tier"].values for p in personas]
+        groups = [sub.loc[sub[persona_col] == p, outcome_col].values for p in personas]
         groups = [g for g in groups if len(g) > 0]
         labels = [str(p) for p in personas if len(sub[sub[persona_col] == p]) > 0]
         anova_res = one_way_anova(groups, labels)
@@ -506,9 +538,11 @@ def simple_effects_by_severity(
 
         result[level] = {
             "eta_sq_partial": anova_res.get("eta_sq_partial", float("nan")),
+            "eta_sq_interpretation": anova_res.get("eta_sq_interpretation", interpret_eta_sq(anova_res.get("eta_sq_partial", float("nan")))),
             "F": anova_res.get("F", float("nan")),
             "p_value": anova_res.get("p_value", float("nan")),
             "largest_pairwise_d": max_d,
+            "largest_pairwise_d_interpretation": interpret_cohens_d(max_d),
             "n_significant": n_sig,
             "n": len(sub),
         }
@@ -523,23 +557,24 @@ def amplification_ratio(
     persona_col: str = "persona_label",
     n_boot: int = 1000,
     seed: int = 42,
+    outcome_col: str = "tier",
 ) -> Dict[str, Any]:
     """Amplification ratio = bias_high / bias_low with bootstrap CI.
 
-    Bias is measured as SD of mean tier across personas.
+    Bias is measured as SD of mean outcome across personas.
     """
     df = decisions_df[
         (decisions_df["model"] == model)
         & (decisions_df[severity_metric].isin(SEVERITY_LEVELS))
     ].copy()
-    if persona_col not in df.columns or len(df) < 30:
+    if persona_col not in df.columns or outcome_col not in df.columns or len(df) < 30:
         return {"point": float("nan"), "ci_lower": float("nan"), "ci_upper": float("nan")}
 
     def _bias_at_level(data: pd.DataFrame, level: str) -> float:
         sub = data[data[severity_metric] == level]
         if len(sub) < 5:
             return float("nan")
-        pm = sub.groupby(persona_col)["tier"].mean()
+        pm = sub.groupby(persona_col)[outcome_col].mean()
         return float(pm.std(ddof=1)) if len(pm) >= 2 else 0.0
 
     bias_low = _bias_at_level(df, "low")
@@ -575,6 +610,177 @@ def amplification_ratio(
 
 
 # ---------------------------------------------------------------------------
+# Section 3b: Dimension-Specific Severity Interaction (One-Way)
+# ---------------------------------------------------------------------------
+
+def dimension_severity_interaction(
+    decisions_df: pd.DataFrame,
+    severity_metric: str,
+    model: str,
+    dimension: str,
+    n_boot: int = 1000,
+    seed: int = 42,
+) -> Dict[str, Any]:
+    """Two-way ANOVA: tier ~ dimension + severity + dimension:severity.
+
+    Tests severity amplification for a SINGLE demographic dimension,
+    yielding much better-powered tests (~200+ obs per cell vs ~15-20 for
+    the full 36-persona grid).
+
+    Parameters
+    ----------
+    decisions_df : DataFrame with [case_id, model, tier, {severity_metric}, {dimension}]
+    severity_metric : ``"monetary_severity"`` or ``"issue_severity"``
+    model : Model identifier.
+    dimension : One of the causal dimensions (age, geographic, education, socioeconomic).
+    n_boot : Number of bootstrap iterations.
+    seed : Random seed.
+
+    Returns
+    -------
+    Dict with keys: anova, amplification, dimension_means_by_severity,
+    cell_sizes, min_cell_size, dimension, severity_metric.
+    """
+    df = decisions_df[
+        (decisions_df["model"] == model)
+        & (decisions_df[severity_metric].isin(SEVERITY_LEVELS))
+    ].copy()
+
+    if dimension not in df.columns or len(df) < 30:
+        return {"error": "insufficient data", "dimension": dimension}
+
+    df = df.dropna(subset=[dimension])
+    if df[dimension].nunique() < 2 or df[severity_metric].nunique() < 2:
+        return {"error": "insufficient factor levels", "dimension": dimension}
+
+    result: Dict[str, Any] = {"dimension": dimension, "severity_metric": severity_metric}
+
+    # Cell sizes
+    cell_sizes = df.groupby([dimension, severity_metric]).size().to_dict()
+    result["cell_sizes"] = {f"{d}_{s}": int(n) for (d, s), n in cell_sizes.items()}
+    result["min_cell_size"] = min(cell_sizes.values()) if cell_sizes else 0
+
+    # Two-way ANOVA: tier ~ dimension + severity + dimension:severity
+    try:
+        import statsmodels.formula.api as smf
+        from statsmodels.stats.anova import anova_lm
+
+        df_anova = df.rename(columns={severity_metric: "severity", dimension: "dim_level"})
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            fit = smf.ols("tier ~ C(dim_level) + C(severity) + C(dim_level):C(severity)",
+                          data=df_anova).fit()
+            table = anova_lm(fit, typ=2)
+
+        ss_resid = max(0.0, float(table.loc["Residual", "sum_sq"])) if "Residual" in table.index else 0
+        anova_result: Dict[str, Any] = {}
+        for source, row_label in [
+            ("dimension_main", "C(dim_level)"),
+            ("severity_main", "C(severity)"),
+            ("interaction", "C(dim_level):C(severity)"),
+        ]:
+            if row_label in table.index:
+                ss = max(0.0, float(table.loc[row_label, "sum_sq"]))
+                f_val = float(table.loc[row_label, "F"]) if "F" in table.columns else float("nan")
+                p_val = float(table.loc[row_label, "PR(>F)"]) if "PR(>F)" in table.columns else float("nan")
+                if np.isfinite(f_val) and f_val < 0:
+                    f_val, p_val = 0.0, 1.0
+                eta_sq = ss / (ss + ss_resid) if (ss + ss_resid) > 0 else 0.0
+                anova_result[source] = {
+                    "F": f_val if np.isfinite(f_val) else float("nan"),
+                    "p_value": p_val if np.isfinite(p_val) else float("nan"),
+                    "eta_sq_partial": eta_sq,
+                    "eta_sq_interpretation": interpret_eta_sq(eta_sq),
+                }
+            else:
+                anova_result[source] = {"F": float("nan"), "p_value": float("nan"),
+                                        "eta_sq_partial": 0.0, "eta_sq_interpretation": "N/A"}
+        result["anova"] = anova_result
+
+    except Exception as e:
+        logger.warning("Dimension severity ANOVA failed for %s: %s", dimension, e)
+        result["anova"] = {"error": str(e)}
+
+    # Means by dimension level at each severity
+    means_table: Dict[str, Dict[str, float]] = {}
+    for level in SEVERITY_LEVELS:
+        sub = df[df[severity_metric] == level]
+        if len(sub) > 0:
+            means_table[level] = {str(k): float(v) for k, v in sub.groupby(dimension)["tier"].mean().items()}
+    result["dimension_means_by_severity"] = means_table
+
+    # Amplification ratio: bias_high / bias_low
+    # where bias = max(dim_mean) - min(dim_mean) at a severity level
+    def _dim_bias(level: str) -> float:
+        means = means_table.get(level, {})
+        if len(means) < 2:
+            return float("nan")
+        vals = list(means.values())
+        return max(vals) - min(vals)
+
+    bias_low = _dim_bias("low")
+    bias_high = _dim_bias("high")
+    amp_point = _safe_div(bias_high, bias_low)
+
+    # Bootstrap CI on amplification ratio
+    rng = np.random.RandomState(seed)
+    case_ids = df["case_id"].unique()
+    boot_ratios: list = []
+    for _ in range(n_boot):
+        sample_ids = rng.choice(case_ids, size=len(case_ids), replace=True)
+        boot_df = df[df["case_id"].isin(sample_ids)]
+        b_low_means = boot_df[boot_df[severity_metric] == "low"].groupby(dimension)["tier"].mean()
+        b_high_means = boot_df[boot_df[severity_metric] == "high"].groupby(dimension)["tier"].mean()
+        if len(b_low_means) >= 2 and len(b_high_means) >= 2:
+            b_low = max(b_low_means) - min(b_low_means)
+            b_high = max(b_high_means) - min(b_high_means)
+            if b_low > 0:
+                boot_ratios.append(b_high / b_low)
+
+    if len(boot_ratios) >= 10:
+        ci_lo = float(np.percentile(boot_ratios, 2.5))
+        ci_hi = float(np.percentile(boot_ratios, 97.5))
+    else:
+        ci_lo = ci_hi = float("nan")
+
+    result["amplification"] = {
+        "bias_low": bias_low,
+        "bias_high": bias_high,
+        "point": float(amp_point) if np.isfinite(amp_point) else float("nan"),
+        "ci_lower": ci_lo,
+        "ci_upper": ci_hi,
+    }
+
+    return result
+
+
+def dimension_severity_all(
+    decisions_df: pd.DataFrame,
+    models: List[str],
+    dimensions: List[str],
+    n_boot: int = 1000,
+    seed: int = 42,
+) -> Dict[str, Any]:
+    """Run dimension-specific severity interaction for all dims x metrics x models.
+
+    Returns
+    -------
+    Dict[metric][model][dimension] -> dimension_severity_interaction result.
+    """
+    result: Dict[str, Any] = {}
+    for metric in SEVERITY_METRICS:
+        result[metric] = {}
+        for model in models:
+            result[metric][model] = {}
+            for dim in dimensions:
+                result[metric][model][dim] = dimension_severity_interaction(
+                    decisions_df, metric, model, dim,
+                    n_boot=n_boot, seed=seed,
+                )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Section 4: Three-Way Analysis
 # ---------------------------------------------------------------------------
 
@@ -603,7 +809,7 @@ def three_way_anova(
             ).fit()
             table = anova_lm(fit, typ=2)
 
-        ss_resid = float(table.loc["Residual", "sum_sq"]) if "Residual" in table.index else 0
+        ss_resid = max(0.0, float(table.loc["Residual", "sum_sq"])) if "Residual" in table.index else 0
         result: Dict[str, Any] = {}
         label_map = {
             "model": "C(model)",
@@ -617,10 +823,15 @@ def three_way_anova(
         }
         for key, row_label in label_map.items():
             if row_label in table.index:
-                ss = float(table.loc[row_label, "sum_sq"])
+                ss = max(0.0, float(table.loc[row_label, "sum_sq"]))
                 df_val = float(table.loc[row_label, "df"])
                 f_val = float(table.loc[row_label, "F"]) if "F" in table.columns else float("nan")
                 p_val = float(table.loc[row_label, "PR(>F)"]) if "PR(>F)" in table.columns else float("nan")
+                # Type II SS can produce tiny negative values from floating-point
+                # cancellation; clamp F to zero in that case.
+                if np.isfinite(f_val) and f_val < 0:
+                    f_val = 0.0
+                    p_val = 1.0
                 eta_sq = ss / (ss + ss_resid) if (ss + ss_resid) > 0 else 0.0
                 result[key] = {
                     "F": f_val if np.isfinite(f_val) else float("nan"),
@@ -701,6 +912,7 @@ def worst_case_analysis(
                         "most_disadvantaged": worst_persona,
                         "most_advantaged": best_persona,
                         "effect_size_d": d,
+                        "effect_size_interpretation": interpret_cohens_d(d),
                     }
 
     return best
@@ -867,6 +1079,7 @@ def mitigation_severity_comparison(
     persona_col: str = "persona_label",
     n_boot: int = 1000,
     seed: int = 42,
+    outcome_col: str = "tier",
 ) -> Dict[str, Any]:
     """Compare severity amplification before and after bias mitigation.
 
@@ -878,19 +1091,26 @@ def mitigation_severity_comparison(
     Dict with keys: baseline, neutralized, comparison.
     """
     # --- Baseline metrics (recompute locally for self-contained comparison) ---
-    bias_base = bias_by_severity(baseline_df, severity_metric, model, persona_col)
+    bias_base = bias_by_severity(baseline_df, severity_metric, model, persona_col,
+                                 outcome_col=outcome_col)
     amp_base = amplification_ratio(
         baseline_df, severity_metric, model, persona_col, n_boot, seed,
+        outcome_col=outcome_col,
     )
-    tw_base = two_way_anova_persona_severity(baseline_df, severity_metric, model, persona_col)
+    tw_base = two_way_anova_persona_severity(baseline_df, severity_metric, model, persona_col,
+                                             outcome_col=outcome_col)
 
     # --- Neutralized metrics ---
-    bias_neut = bias_by_severity(neutralized_df, severity_metric, model, persona_col)
+    bias_neut = bias_by_severity(neutralized_df, severity_metric, model, persona_col,
+                                 outcome_col=outcome_col)
     amp_neut = amplification_ratio(
         neutralized_df, severity_metric, model, persona_col, n_boot, seed,
+        outcome_col=outcome_col,
     )
-    tw_neut = two_way_anova_persona_severity(neutralized_df, severity_metric, model, persona_col)
-    se_neut = simple_effects_by_severity(neutralized_df, severity_metric, model, persona_col)
+    tw_neut = two_way_anova_persona_severity(neutralized_df, severity_metric, model, persona_col,
+                                             outcome_col=outcome_col)
+    se_neut = simple_effects_by_severity(neutralized_df, severity_metric, model, persona_col,
+                                         outcome_col=outcome_col)
 
     # --- Compute deltas ---
     base_ratio = amp_base.get("point", float("nan"))
@@ -968,6 +1188,321 @@ def mitigation_severity_comparison(
 
 
 # ---------------------------------------------------------------------------
+# Monetary missingness diagnostic
+# ---------------------------------------------------------------------------
+
+
+def monetary_missingness_diagnostic(
+    baseline_df: pd.DataFrame,
+    complaints_df: pd.DataFrame,
+    models: List[str],
+    persona_col: str = "persona_label",
+    personas_df: Optional[pd.DataFrame] = None,
+) -> Dict[str, Any]:
+    """Compare complaints with vs without extractable dollar amounts.
+
+    Tests whether the ~66% of complaints with ``monetary_severity == "unknown"``
+    differ systematically from those with known amounts.  If the missingness is
+    non-random (MAR), the monetary severity amplification findings may not
+    generalise to the full complaint set.
+
+    Parameters
+    ----------
+    baseline_df : Baseline decisions with columns [case_id, model, tier,
+        confidence, monetary_severity, persona_label].
+    complaints_df : Complaint metadata with columns [case_id, monetary_severity,
+        issue_category, product_category, word_count].
+    models : Model identifiers.
+    persona_col : Column name for persona labels.
+    personas_df : Persona estimates with demographic columns (gender, esl, etc.).
+
+    Returns
+    -------
+    Dict with keys: n_present, n_missing, pct_missing,
+    complaint_characteristics, fairness_comparison, overall_conclusion,
+    distributions.
+    """
+    present_mask = complaints_df["monetary_severity"].isin(SEVERITY_LEVELS)
+    n_present = int(present_mask.sum())
+    n_missing = int((~present_mask).sum())
+    n_total = n_present + n_missing
+
+    if n_present < 10 or n_missing < 10:
+        return {"skipped": True, "reason": "too few complaints in one group"}
+
+    pct_missing = n_missing / n_total if n_total > 0 else 0.0
+
+    df_present = complaints_df[present_mask]
+    df_missing = complaints_df[~present_mask]
+
+    present_ids = set(df_present["case_id"])
+    missing_ids = set(df_missing["case_id"])
+
+    # ── Complaint characteristic tests ──
+    characteristics: Dict[str, Any] = {}
+    significant_tests: List[str] = []
+
+    # 1. Issue category distribution
+    try:
+        ct_issue = pd.crosstab(
+            complaints_df["monetary_severity"].apply(lambda x: "present" if x in SEVERITY_LEVELS else "missing"),
+            complaints_df["issue_category"],
+        )
+        if ct_issue.shape[0] >= 2 and ct_issue.shape[1] >= 2:
+            result = chi_squared_test(ct_issue)
+            characteristics["issue_category"] = result
+            if result["p_value"] < 0.05:
+                significant_tests.append("issue_category")
+    except Exception:
+        characteristics["issue_category"] = {"error": True}
+
+    # 2. Product category distribution
+    try:
+        ct_prod = pd.crosstab(
+            complaints_df["monetary_severity"].apply(lambda x: "present" if x in SEVERITY_LEVELS else "missing"),
+            complaints_df["product_category"],
+        )
+        if ct_prod.shape[0] >= 2 and ct_prod.shape[1] >= 2:
+            result = chi_squared_test(ct_prod)
+            characteristics["product_category"] = result
+            if result["p_value"] < 0.05:
+                significant_tests.append("product_category")
+    except Exception:
+        characteristics["product_category"] = {"error": True}
+
+    # 3. Word count
+    if "word_count" in complaints_df.columns:
+        wc_present = df_present["word_count"].dropna()
+        wc_missing = df_missing["word_count"].dropna()
+        if len(wc_present) >= 5 and len(wc_missing) >= 5:
+            u_stat, u_p = sp_stats.mannwhitneyu(wc_present, wc_missing, alternative="two-sided")
+            n1, n2 = len(wc_present), len(wc_missing)
+            rank_biserial = 1 - 2 * u_stat / (n1 * n2) if n1 * n2 > 0 else 0.0
+            characteristics["word_count"] = {
+                "mean_present": float(wc_present.mean()),
+                "mean_missing": float(wc_missing.mean()),
+                "U_statistic": float(u_stat),
+                "p_value": float(u_p),
+                "rank_biserial": float(rank_biserial),
+            }
+            if u_p < 0.05:
+                significant_tests.append("word_count")
+
+    # 4. Mean remedy tier (using first model's baseline decisions)
+    # Welch's t-test rather than Mann-Whitney U because tier is a coarse
+    # ordinal variable (0/1/2) producing massive ties.  The normal
+    # approximation inside mannwhitneyu suffers catastrophic cancellation
+    # when computing moments of the U distribution on near-constant data.
+    try:
+        bl_present = baseline_df[baseline_df["case_id"].isin(present_ids)]
+        bl_missing = baseline_df[baseline_df["case_id"].isin(missing_ids)]
+        # Use first model to avoid double-counting
+        first_model = models[0] if models else None
+        if first_model:
+            t_pres = bl_present.loc[bl_present["model"] == first_model, "tier"].dropna()
+            t_miss = bl_missing.loc[bl_missing["model"] == first_model, "tier"].dropna()
+            if len(t_pres) >= 5 and len(t_miss) >= 5:
+                t_stat, t_p = sp_stats.ttest_ind(t_pres, t_miss, equal_var=False)
+                # Cohen's d as effect size
+                n1, n2 = len(t_pres), len(t_miss)
+                pooled_std = np.sqrt(
+                    ((n1 - 1) * t_pres.var(ddof=1) + (n2 - 1) * t_miss.var(ddof=1))
+                    / (n1 + n2 - 2)
+                )
+                cohens_d = float((t_pres.mean() - t_miss.mean()) / pooled_std) if pooled_std > 0 else 0.0
+                characteristics["mean_tier"] = {
+                    "mean_present": float(t_pres.mean()),
+                    "mean_missing": float(t_miss.mean()),
+                    "t_statistic": float(t_stat),
+                    "p_value": float(t_p),
+                    "cohens_d": float(cohens_d),
+                }
+                if t_p < 0.05:
+                    significant_tests.append("mean_tier")
+    except Exception:
+        characteristics["mean_tier"] = {"error": True}
+
+    # 5. Tier distribution
+    try:
+        if first_model:
+            bl_fm = baseline_df[baseline_df["model"] == first_model].copy()
+            bl_fm["group"] = bl_fm["case_id"].apply(
+                lambda x: "present" if x in present_ids else "missing"
+            )
+            ct_tier = pd.crosstab(bl_fm["group"], bl_fm["tier"])
+            if ct_tier.shape[0] >= 2 and ct_tier.shape[1] >= 2:
+                result = chi_squared_test(ct_tier)
+                characteristics["tier_distribution"] = result
+                if result["p_value"] < 0.05:
+                    significant_tests.append("tier_distribution")
+    except Exception:
+        characteristics["tier_distribution"] = {"error": True}
+
+    n_sig = len(significant_tests)
+    missingness_type = "MCAR" if n_sig == 0 else "MAR"
+
+    characteristics["missingness_type"] = missingness_type
+    characteristics["n_significant_tests"] = n_sig
+    characteristics["significant_tests"] = significant_tests
+
+    # ── Fairness comparison per model ──
+    fairness: Dict[str, Any] = {}
+    for model in models:
+        bl_m = baseline_df[baseline_df["model"] == model]
+        bl_pres = bl_m[bl_m["case_id"].isin(present_ids)]
+        bl_miss = bl_m[bl_m["case_id"].isin(missing_ids)]
+
+        def _bias_stats(df: pd.DataFrame) -> Dict[str, Any]:
+            if persona_col not in df.columns or len(df) == 0:
+                return {"n": 0, "bias_sd": float("nan"), "bias_range": float("nan"), "n_significant_pairs": 0}
+            pm = df.groupby(persona_col)["tier"].mean()
+            bias_sd = float(pm.std()) if len(pm) > 1 else 0.0
+            bias_range = float(pm.max() - pm.min()) if len(pm) > 1 else 0.0
+
+            # Pairwise t-tests with FDR
+            personas = sorted(pm.index)
+            p_values = []
+            for i in range(len(personas)):
+                for j in range(i + 1, len(personas)):
+                    g1 = df.loc[df[persona_col] == personas[i], "tier"]
+                    g2 = df.loc[df[persona_col] == personas[j], "tier"]
+                    if len(g1) >= 2 and len(g2) >= 2 and g1.std() + g2.std() > 0:
+                        pooled_std = np.sqrt((g1.var(ddof=1) + g2.var(ddof=1)) / 2)
+                        # Skip when variance is too low for a meaningful test
+                        if pooled_std < 1e-8:
+                            continue
+                        _, p = sp_stats.ttest_ind(g1, g2, equal_var=False)
+                        if np.isfinite(p):
+                            p_values.append(p)
+            n_sig_pairs = 0
+            if p_values:
+                corrected = fdr_correction(p_values)
+                n_sig_pairs = int(sum(1 for p in corrected if p < 0.05))
+
+            return {
+                "n": int(len(df)),
+                "bias_sd": bias_sd,
+                "bias_range": bias_range,
+                "n_significant_pairs": n_sig_pairs,
+            }
+
+        stats_pres = _bias_stats(bl_pres)
+        stats_miss = _bias_stats(bl_miss)
+
+        sd_pres = stats_pres["bias_sd"]
+        sd_miss = stats_miss["bias_sd"]
+        ratio = sd_miss / sd_pres if sd_pres > 0 else float("nan")
+
+        # Conclusion
+        if np.isfinite(ratio):
+            if ratio > 1.2:
+                conclusion = (
+                    f"Bias is higher in the missing-amount subset (ratio={ratio:.2f}). "
+                    "The analyzed monetary severity subset may understate overall bias."
+                )
+            elif ratio < 0.8:
+                conclusion = (
+                    f"Bias is lower in the missing-amount subset (ratio={ratio:.2f}). "
+                    "The analyzed monetary severity subset may overstate overall bias."
+                )
+            else:
+                conclusion = (
+                    f"Bias is similar in both subsets (ratio={ratio:.2f}). "
+                    "Missingness does not substantially affect fairness conclusions."
+                )
+        else:
+            conclusion = "Unable to compare bias — insufficient data in one subset."
+
+        fairness[model] = {
+            "present": stats_pres,
+            "missing": stats_miss,
+            "bias_sd_ratio": ratio,
+            "conclusion": conclusion,
+        }
+
+    # ── Overall conclusion ──
+    if missingness_type == "MCAR":
+        overall = (
+            f"Missingness appears random (MCAR): none of the 5 characteristic tests "
+            f"were significant. Monetary severity findings likely generalise to the full set."
+        )
+    else:
+        sig_str = ", ".join(significant_tests)
+        overall = (
+            f"Missingness is systematic (MAR): {n_sig}/5 tests significant ({sig_str}). "
+            f"Complaints with extractable dollar amounts differ from those without."
+        )
+        # Append fairness summary
+        bias_notes = []
+        for model in models:
+            r = fairness.get(model, {}).get("bias_sd_ratio", float("nan"))
+            if np.isfinite(r):
+                if r > 1.2:
+                    bias_notes.append(f"{model}: missingness may deflate apparent bias (ratio={r:.2f})")
+                elif r < 0.8:
+                    bias_notes.append(f"{model}: missingness may inflate apparent bias (ratio={r:.2f})")
+                else:
+                    bias_notes.append(f"{model}: bias similar in both subsets (ratio={r:.2f})")
+        if bias_notes:
+            overall += " " + "; ".join(bias_notes) + "."
+
+    # ── Distribution profiles by missingness group ──
+    distributions: Dict[str, Dict[str, Dict[str, int]]] = {}
+
+    def _value_counts(series: pd.Series) -> Dict[str, int]:
+        return {str(k): int(v) for k, v in series.value_counts().items()}
+
+    # Variables from complaints_df (one row per complaint)
+    for col in ["product_category", "issue_category", "issue_severity"]:
+        if col in complaints_df.columns:
+            distributions[col] = {
+                "present": _value_counts(df_present[col].dropna()),
+                "missing": _value_counts(df_missing[col].dropna()),
+            }
+
+    # Tier distribution from baseline_df (use first model to avoid duplication)
+    first_model = models[0] if models else None
+    if first_model:
+        bl_fm = baseline_df[baseline_df["model"] == first_model]
+        bl_pres = bl_fm[bl_fm["case_id"].isin(present_ids)]
+        bl_miss = bl_fm[bl_fm["case_id"].isin(missing_ids)]
+        distributions["tier"] = {
+            "present": _value_counts(bl_pres["tier"].dropna()),
+            "missing": _value_counts(bl_miss["tier"].dropna()),
+        }
+
+        # Demographic dimensions from baseline_df (causal dims)
+        for dim in ["age", "geographic", "education", "socioeconomic"]:
+            if dim in bl_fm.columns:
+                distributions[dim] = {
+                    "present": _value_counts(bl_pres[dim].dropna()),
+                    "missing": _value_counts(bl_miss[dim].dropna()),
+                }
+
+        # Gender and ESL from personas_df (not on baseline_df)
+        if personas_df is not None:
+            p_fm = personas_df[personas_df["model"] == first_model]
+            p_pres = p_fm[p_fm["case_id"].isin(present_ids)]
+            p_miss = p_fm[p_fm["case_id"].isin(missing_ids)]
+            for dim in ["gender", "esl"]:
+                if dim in p_fm.columns:
+                    distributions[dim] = {
+                        "present": _value_counts(p_pres[dim].dropna()),
+                        "missing": _value_counts(p_miss[dim].dropna()),
+                    }
+
+    return {
+        "n_present": n_present,
+        "n_missing": n_missing,
+        "pct_missing": pct_missing,
+        "complaint_characteristics": characteristics,
+        "fairness_comparison": fairness,
+        "overall_conclusion": overall,
+        "distributions": distributions,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -1004,7 +1539,8 @@ def run_severity_analysis(
     Returns
     -------
     Dict with keys: descriptives, coverage, main_effects, interactions,
-    three_way, model_comparison, process, consistency, mitigation_severity.
+    three_way, model_comparison, process, consistency, mitigation_severity,
+    missingness_diagnostic.
     """
     logger.info("Running severity amplification analysis...")
 
@@ -1016,6 +1552,12 @@ def run_severity_analysis(
         personas_df,
     )
     descriptives["coverage"] = coverage
+
+    # 1b. Monetary missingness diagnostic
+    logger.info("  Section 1b: Monetary missingness diagnostic")
+    missingness = monetary_missingness_diagnostic(
+        baseline_df, complaints_df, models, personas_df=personas_df,
+    )
 
     # 2. Main effects (uses baseline decisions)
     logger.info("  Section 2: Severity main effects")
@@ -1043,6 +1585,44 @@ def run_severity_analysis(
             )
             metric_res[model] = model_int
         interactions[metric] = metric_res
+
+    # 3-t2. Tier 2 rate interaction analysis
+    logger.info("  Section 3-t2: Tier 2 rate severity × persona interaction")
+    baseline_df["tier2"] = (baseline_df["tier"] >= 2).astype(int)
+    interactions_tier2: Dict[str, Any] = {}
+    for metric in SEVERITY_METRICS:
+        metric_res_t2: Dict[str, Any] = {}
+        for model in models:
+            m_t2: Dict[str, Any] = {}
+            m_t2["bias"] = bias_by_severity(
+                baseline_df, metric, model, persona_col="persona_label",
+                outcome_col="tier2",
+            )
+            m_t2["two_way"] = two_way_anova_persona_severity(
+                baseline_df, metric, model, persona_col="persona_label",
+                outcome_col="tier2",
+            )
+            m_t2["simple_effects"] = simple_effects_by_severity(
+                baseline_df, metric, model, persona_col="persona_label",
+                outcome_col="tier2",
+            )
+            m_t2["amplification"] = amplification_ratio(
+                baseline_df, metric, model,
+                persona_col="persona_label", n_boot=n_boot, seed=seed,
+                outcome_col="tier2",
+            )
+            metric_res_t2[model] = m_t2
+        interactions_tier2[metric] = metric_res_t2
+
+    # 3b. Dimension-specific severity interaction (one-way)
+    logger.info("  Section 3b: Dimension-specific severity interaction")
+    # Determine which causal dimensions are available in baseline_df
+    _causal_dims = [d for d in ["age", "geographic", "education", "socioeconomic"]
+                    if d in baseline_df.columns]
+    dim_severity = dimension_severity_all(
+        baseline_df, models, _causal_dims,
+        n_boot=n_boot, seed=seed,
+    )
 
     # 4. Three-way analysis
     logger.info("  Section 4: Three-way analysis")
@@ -1088,12 +1668,32 @@ def run_severity_analysis(
                     logger.warning("  Mitigation severity failed for %s/%s: %s", metric, model, exc)
                     mitigation_severity[metric][model] = {"comparison": {"verdict": "insufficient_data"}}
 
+    # 7-t2. Mitigation × severity for Tier 2 rate (optional)
+    mitigation_severity_tier2: Dict[str, Any] = {}
+    if neutralized_df is not None and len(neutralized_df) > 0:
+        logger.info("  Section 7-t2: Mitigation × severity comparison (Tier 2 rate)")
+        neutralized_df["tier2"] = (neutralized_df["tier"] >= 2).astype(int)
+        for metric in SEVERITY_METRICS:
+            mitigation_severity_tier2[metric] = {}
+            for model in models:
+                try:
+                    mitigation_severity_tier2[metric][model] = mitigation_severity_comparison(
+                        baseline_df, neutralized_df, metric, model,
+                        persona_col="persona_label", n_boot=n_boot, seed=seed,
+                        outcome_col="tier2",
+                    )
+                except Exception as exc:
+                    logger.warning("  Mitigation severity (tier2) failed for %s/%s: %s", metric, model, exc)
+                    mitigation_severity_tier2[metric][model] = {"comparison": {"verdict": "insufficient_data"}}
+
     logger.info("Severity amplification analysis complete.")
 
     return {
         "descriptives": descriptives,
         "main_effects": main_effects,
         "interactions": interactions,
+        "interactions_tier2": interactions_tier2,
+        "dimension_severity": dim_severity,
         "three_way": {
             "anova": three_way,
             "model_amplification": model_amp,
@@ -1103,4 +1703,6 @@ def run_severity_analysis(
         "process": process,
         "consistency": consist,
         "mitigation_severity": mitigation_severity,
+        "mitigation_severity_tier2": mitigation_severity_tier2,
+        "missingness_diagnostic": missingness,
     }

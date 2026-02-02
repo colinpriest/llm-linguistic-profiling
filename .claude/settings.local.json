@@ -4,7 +4,23 @@
       "Bash(python:*)",
       "Bash(git branch:*)",
       "Bash(git remote add:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(pip install:*)",
+      "Bash(\"d:\\\\dev\\\\LLM-linguistic-profiling\\\\.conda\\\\python.exe\" -m pip install pyarrow)",
+      "Bash(\"d:\\\\dev\\\\LLM-linguistic-profiling\\\\.conda\\\\python.exe\" -c \"import pyarrow; print\\(''pyarrow'', pyarrow.__version__\\)\")",
+      "WebFetch(domain:platform.openai.com)",
+      "WebFetch(domain:python.useinstructor.com)",
+      "Bash(.conda\\\\python.exe:*)",
+      "Bash(d:\\\\dev\\\\LLM-linguistic-profiling\\\\.conda\\\\python.exe -m pip:*)",
+      "Bash(pip show:*)",
+      "Bash(git stash:*)",
+      "Bash(git pull:*)",
+      "Bash(cd:*)",
+      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" log --oneline --all -20)",
+      "Bash(python3:*)",
+      "Bash(wc:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)"
     ]
   }
 }

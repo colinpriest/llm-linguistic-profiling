@@ -43,6 +43,73 @@ def fdr_correction(p_values: List[float]) -> np.ndarray:
     return false_discovery_control(arr, method="bh")
 
 
+def fdr_correction_with_tracking(
+    p_values: List[float],
+    family_label: str = "",
+) -> Dict[str, Any]:
+    """BH FDR correction with metadata for reporting.
+
+    Returns dict with: p_adjusted, n_tests, n_surviving, family_label, method.
+    """
+    arr = np.array(p_values, dtype=float)
+    if len(arr) == 0:
+        return {"p_adjusted": arr, "n_tests": 0, "n_surviving": 0,
+                "family_label": family_label, "method": "Benjamini-Hochberg"}
+    adjusted = fdr_correction(list(arr))
+    return {
+        "p_adjusted": adjusted,
+        "n_tests": len(arr),
+        "n_surviving": int((adjusted < 0.05).sum()),
+        "family_label": family_label,
+        "method": "Benjamini-Hochberg",
+        "alpha": 0.05,
+    }
+
+
+def multiple_comparisons_summary(
+    correction_records: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Summarize all FDR correction families for the dashboard.
+
+    Parameters
+    ----------
+    correction_records : List of dicts with keys n_tests, n_surviving, family_label.
+
+    Returns
+    -------
+    Dict with keys: families, total_tests, total_surviving, method, method_description.
+    """
+    families = []
+    total_tests = 0
+    total_surviving = 0
+    for rec in correction_records:
+        n = rec.get("n_tests", 0)
+        s = rec.get("n_surviving", 0)
+        total_tests += n
+        total_surviving += s
+        families.append({
+            "family": rec.get("family_label", "Unknown"),
+            "n_tests": n,
+            "n_surviving": s,
+            "survival_rate": s / n if n > 0 else 0.0,
+        })
+    return {
+        "families": families,
+        "total_tests": total_tests,
+        "total_surviving": total_surviving,
+        "method": "Benjamini-Hochberg (BH)",
+        "method_description": (
+            "The Benjamini-Hochberg procedure controls the False Discovery Rate (FDR) "
+            "at 5%. Unlike Bonferroni, which controls the family-wise error rate "
+            "(probability of any false positive), BH controls the expected proportion "
+            "of false positives among rejected hypotheses. Each test family is "
+            "corrected independently. With 630 pairwise persona comparisons, "
+            "uncorrected testing at alpha=0.05 would yield ~31 false positives by "
+            "chance; BH correction accounts for this."
+        ),
+    }
+
+
 def interpretation_flag(p_adj: float, air: float, threshold: float = 0.80) -> str:
     sig = p_adj < 0.05
     mat = air < threshold
@@ -53,6 +120,174 @@ def interpretation_flag(p_adj: float, air: float, threshold: float = 0.80) -> st
     if mat:
         return "MAT_ONLY"
     return "NONE"
+
+
+# ---------------------------------------------------------------------------
+# Effect size interpretation (Cohen 1988)
+# ---------------------------------------------------------------------------
+
+def interpret_cohens_d(d: float) -> str:
+    """Cohen's d interpretation (Cohen 1988): <0.2 negligible, 0.2 small, 0.5 medium, 0.8 large."""
+    d = abs(d)
+    if not np.isfinite(d):
+        return "N/A"
+    if d < 0.2:
+        return "negligible"
+    if d < 0.5:
+        return "small"
+    if d < 0.8:
+        return "medium"
+    return "large"
+
+
+def interpret_eta_sq(eta_sq: float) -> str:
+    """Partial eta-squared interpretation (Cohen 1988): <0.01 negligible, 0.01 small, 0.06 medium, 0.14 large."""
+    if not np.isfinite(eta_sq):
+        return "N/A"
+    if eta_sq < 0.01:
+        return "negligible"
+    if eta_sq < 0.06:
+        return "small"
+    if eta_sq < 0.14:
+        return "medium"
+    return "large"
+
+
+def interpret_cramers_v(v: float, df_min: int = 1) -> str:
+    """Cramer's V interpretation (Cohen 1988, adjusted for df)."""
+    if not np.isfinite(v):
+        return "N/A"
+    if df_min == 1:
+        thresholds = (0.1, 0.3, 0.5)
+    elif df_min == 2:
+        thresholds = (0.07, 0.21, 0.35)
+    else:
+        thresholds = (0.06, 0.17, 0.29)
+    if v < thresholds[0]:
+        return "negligible"
+    if v < thresholds[1]:
+        return "small"
+    if v < thresholds[2]:
+        return "medium"
+    return "large"
+
+
+def interpret_effect_size(value: float, metric: str, **kwargs: Any) -> str:
+    """Unified effect size interpreter.
+
+    Parameters
+    ----------
+    value : The effect size value.
+    metric : One of ``"cohens_d"``, ``"eta_sq"``, ``"cramers_v"``.
+    """
+    if not np.isfinite(value):
+        return "N/A"
+    dispatch = {
+        "cohens_d": lambda v: interpret_cohens_d(v),
+        "eta_sq": lambda v: interpret_eta_sq(v),
+        "cramers_v": lambda v: interpret_cramers_v(v, kwargs.get("df_min", 1)),
+    }
+    fn = dispatch.get(metric)
+    return fn(value) if fn else "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Power analysis
+# ---------------------------------------------------------------------------
+
+def power_analysis(
+    n_complaints: int,
+    n_personas: int,
+    n_per_cell: Dict[str, int],
+    causal_sample: int,
+    alpha: float = 0.05,
+    power: float = 0.80,
+) -> Dict[str, Any]:
+    """Post-hoc power analysis: minimum detectable effect sizes.
+
+    Parameters
+    ----------
+    n_complaints : Total complaints (e.g. 5000).
+    n_personas : Total persona variants (e.g. 36).
+    n_per_cell : Dict mapping dimension name -> minimum cell size.
+    causal_sample : Number of complaints in the matched-guise sample.
+    alpha : Significance level.
+    power : Desired power.
+
+    Returns
+    -------
+    Dict with keys: matched_guise, between_persona, anova, sample_summary.
+    """
+    from statsmodels.stats.power import TTestPower, FTestAnovaPower
+
+    result: Dict[str, Any] = {"alpha": alpha, "power": power}
+
+    # 1. Matched-guise (within-complaint paired design)
+    tt = TTestPower()
+    try:
+        min_d_paired = tt.solve_power(
+            nobs=causal_sample, alpha=alpha, power=power, alternative="two-sided",
+        )
+    except Exception:
+        min_d_paired = float("nan")
+    result["matched_guise"] = {
+        "n_pairs": causal_sample,
+        "min_detectable_d": float(min_d_paired),
+        "interpretation": interpret_cohens_d(min_d_paired),
+        "design": "paired within-complaint",
+    }
+
+    # 2. Between-persona (independent groups, per dimension)
+    between_results: Dict[str, Any] = {}
+    for dim, n_cell in n_per_cell.items():
+        if n_cell < 2:
+            continue
+        try:
+            min_d = tt.solve_power(
+                nobs=n_cell, alpha=alpha, power=power, alternative="two-sided",
+            )
+        except Exception:
+            min_d = float("nan")
+        between_results[dim] = {
+            "n_per_cell": n_cell,
+            "min_detectable_d": float(min_d),
+            "interpretation": interpret_cohens_d(min_d),
+        }
+    result["between_persona"] = between_results
+
+    # 3. ANOVA power (for k-group comparisons)
+    k_map = {"age": 2, "geographic": 3, "education": 2, "socioeconomic": 3}
+    anova_results: Dict[str, Any] = {}
+    ft = FTestAnovaPower()
+    for dim, n_cell in n_per_cell.items():
+        k = k_map.get(dim, 2)
+        if k < 2:
+            continue
+        try:
+            min_f = ft.solve_power(
+                nobs=n_cell, k_groups=k, alpha=alpha, power=power,
+            )
+            eta_sq = float(min_f ** 2 / (1 + min_f ** 2))
+            anova_results[dim] = {
+                "k_groups": k,
+                "n_per_group": n_cell,
+                "min_detectable_f": float(min_f),
+                "min_detectable_eta_sq": eta_sq,
+                "interpretation": interpret_eta_sq(eta_sq),
+            }
+        except Exception:
+            pass
+    result["anova"] = anova_results
+
+    # 4. Sample summary
+    result["sample_summary"] = {
+        "total_complaints": n_complaints,
+        "n_personas": n_personas,
+        "total_persona_decisions": causal_sample * n_personas,
+        "causal_sample": causal_sample,
+    }
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +302,8 @@ def chi_squared_test(
     n = contingency.values.sum()
     k = min(contingency.shape) - 1
     cramers_v = np.sqrt(chi2 / (n * k)) if n * k > 0 else 0.0
-    return {"chi2": chi2, "p_value": p, "dof": dof, "cramers_v": cramers_v}
+    return {"chi2": chi2, "p_value": p, "dof": dof, "cramers_v": cramers_v,
+            "cramers_v_interpretation": interpret_cramers_v(cramers_v, k)}
 
 
 def fisher_exact_test(table_2x2: np.ndarray) -> Dict[str, Any]:
@@ -139,6 +375,7 @@ def one_way_anova(
         "F": float(f_stat),
         "p_value": float(p_val),
         "eta_sq_partial": float(eta_sq),
+        "eta_sq_interpretation": interpret_eta_sq(eta_sq),
         "group_means": {l: float(g.mean()) for l, g in zip(labels, groups)},
         "group_ns": {l: len(g) for l, g in zip(labels, groups)},
     }
@@ -335,10 +572,24 @@ def causal_analysis(
 ) -> Dict[str, Any]:
     """Analyze causal effects of persona rewrites on remedy decisions.
 
+    This function provides the marginal (non-parametric) layer of the
+    matched-guise causal analysis.  For the dependence-aware parametric
+    models (ordinal CLMM, conditional logistic, GEE) that explicitly
+    account for repeated measures within ``complaint_id``, see
+    :mod:`src.repeated_measures`.
+
     Parameters
     ----------
     baseline_decisions : DataFrame [case_id, model, tier]  (original decisions)
     persona_decisions  : DataFrame [case_id, model, variant, tier]  (persona-rewritten decisions)
+
+    Notes
+    -----
+    The Friedman test and pairwise McNemar tests below already use
+    complaint-level blocking (each row of the pivot table is one
+    complaint), so they are valid repeated-measures tests.  The
+    ``repeated_measures`` module extends this with model-based
+    approaches that yield fixed-effect estimates and CIs.
     """
     results: Dict[str, Any] = {}
 
