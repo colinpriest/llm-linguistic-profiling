@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import os
+import threading
+import uuid
 import warnings
 from collections import Counter
+from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -14,6 +21,95 @@ from tqdm import tqdm
 from src.schemas import TextFeatures
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Text feature cache
+# ---------------------------------------------------------------------------
+
+_CACHE_VERSION = "1"  # bump to invalidate all cached entries
+
+
+class _TextFeatureCache:
+    """File-based cache for extracted text features, keyed on text content."""
+
+    def __init__(self) -> None:
+        self._dir: Optional[Path] = None
+        self._lock = threading.Lock()
+        self._hits = 0
+        self._misses = 0
+
+    def configure(self, cache_dir: str) -> None:
+        """Set the cache directory (called once during experiment init)."""
+        self._dir = Path(cache_dir) / "text_features"
+        self._dir.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def enabled(self) -> bool:
+        return self._dir is not None
+
+    # -- public API --
+
+    def get(self, text: str, variant: str) -> Optional[Dict[str, Any]]:
+        if not self.enabled:
+            return None
+        path = self._path(text, variant)
+        if path.exists():
+            try:
+                with self._lock:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    self._hits += 1
+                return data
+            except (json.JSONDecodeError, KeyError):
+                self._delete(path)
+        with self._lock:
+            self._misses += 1
+        return None
+
+    def put(self, text: str, variant: str, features: Dict[str, Any]) -> None:
+        if not self.enabled:
+            return
+        path = self._path(text, variant)
+        payload = json.dumps(features, ensure_ascii=False)
+        with self._lock:
+            tmp = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+            tmp.write_text(payload, encoding="utf-8")
+            os.replace(tmp, path)
+
+    def clear(self) -> int:
+        if not self.enabled:
+            return 0
+        count = 0
+        for f in self._dir.iterdir():
+            if f.is_file():
+                f.unlink()
+                count += 1
+        return count
+
+    def stats_summary(self) -> str:
+        total = self._hits + self._misses
+        if total == 0:
+            return ""
+        return (
+            f"Text-feature cache: {self._hits} hits, {self._misses} misses "
+            f"({self._hits / total:.0%} hit rate)"
+        )
+
+    # -- internals --
+
+    def _key(self, text: str, variant: str) -> str:
+        content = f"{_CACHE_VERSION}|{variant}|{text}"
+        return hashlib.blake2b(content.encode(), digest_size=16).hexdigest()
+
+    def _path(self, text: str, variant: str) -> Path:
+        return self._dir / f"{self._key(text, variant)}.json"  # type: ignore[union-attr]
+
+    def _delete(self, path: Path) -> None:
+        with self._lock:
+            if path.exists():
+                path.unlink()
+
+
+text_feature_cache = _TextFeatureCache()
 
 # Lazy-loaded heavy modules
 _nltk_ready = False
@@ -206,21 +302,27 @@ def get_topic_top_words(n_words: int = 10) -> List[List[str]]:
 # ---------------------------------------------------------------------------
 
 def extract_features(text: str, case_id: str, variant: str) -> TextFeatures:
-    """Extract all text features for a single document."""
+    """Extract all text features for a single document (cached)."""
+    # Check cache (topic features excluded — they depend on the fitted model)
+    cached = text_feature_cache.get(text, variant)
+    if cached is not None:
+        return TextFeatures(case_id=case_id, variant=variant, **cached)
+
     length = _length_features(text)
     complexity = _complexity_features(text)
     vocab = _vocabulary_features(text)
     sentiment = _sentiment_features(text)
     topics = _topic_features(text)
 
+    all_features = {**length, **complexity, **vocab, **sentiment, **topics}
+
+    # Cache everything except case_id/variant (those vary per call site)
+    text_feature_cache.put(text, variant, all_features)
+
     return TextFeatures(
         case_id=case_id,
         variant=variant,
-        **length,
-        **complexity,
-        **vocab,
-        **sentiment,
-        **topics,
+        **all_features,
     )
 
 

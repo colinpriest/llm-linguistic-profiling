@@ -70,6 +70,7 @@ from src.text_features import (
     extract_features_batch,
     features_to_dataframe,
     fit_topic_model,
+    text_feature_cache,
 )
 
 logger = logging.getLogger(__name__)
@@ -152,8 +153,12 @@ class Experiment:
 
         # Cache
         self.cache = ResponseCache(cache_dir)
+        text_feature_cache.configure(cache_dir)
         if clear_cache:
             self.cache.clear()
+            cleared_tf = text_feature_cache.clear()
+            if cleared_tf:
+                logger.info("Text-feature cache cleared: %d files removed", cleared_tf)
             # Also clear the data pipeline cache
             pipeline_dir = Path(data_path).parent / ".pipeline"
             if pipeline_dir.exists():
@@ -241,6 +246,9 @@ class Experiment:
         logger.info("=" * 60)
         logger.info("Experiment complete. Output: %s", self.output_dir)
         logger.info(self.cache.stats_summary())
+        tf_stats = text_feature_cache.stats_summary()
+        if tf_stats:
+            logger.info(tf_stats)
         return self.analysis_results
 
     # ------------------------------------------------------------------
