@@ -160,7 +160,11 @@ def main() -> None:
         api_key=api_key,
     )
 
-    analysis_results = experiment.run()
+    try:
+        analysis_results = experiment.run()
+    except RuntimeError as e:
+        logger.error("FATAL: %s", e)
+        sys.exit(1)
 
     # Generate HTML report
     from src.reporter import generate_report

@@ -164,8 +164,10 @@ class LLMClient:
             except BadRequestError as e:
                 # 400 errors (unsupported params, invalid model, etc.)
                 # are non-retryable — raise immediately to stop the run.
+                # Extract first line only — Instructor wraps errors verbosely.
+                short_err = str(e).split("\n", 1)[0][:200]
                 raise RuntimeError(
-                    f"Fatal API error for model {request.model!r}: {e}"
+                    f"Fatal API error for model {request.model!r}: {short_err}"
                 ) from e
 
             except Exception as e:
@@ -176,10 +178,9 @@ class LLMClient:
                 # never succeed until billing is resolved.
                 if "insufficient_quota" in err_str:
                     raise RuntimeError(
-                        f"Fatal: OpenAI API quota exceeded. Check your plan "
-                        f"and billing details at "
-                        f"https://platform.openai.com/account/billing . "
-                        f"Original error: {e}"
+                        "OpenAI API quota exceeded. "
+                        "Check your plan and billing at "
+                        "https://platform.openai.com/account/billing"
                     ) from e
 
                 # Token-limit truncation is non-retryable — the same
@@ -201,9 +202,10 @@ class LLMClient:
                     }
                     if is_reasoning and request.task not in _variable_input_tasks:
                         # Systematic budget problem — abort the batch.
+                        short_err = str(e).split("\n", 1)[0][:200]
                         raise RuntimeError(
-                            f"Fatal: output truncated by token limit for model "
-                            f"{request.model!r} on {request.task}: {e}"
+                            f"Output truncated by token limit for model "
+                            f"{request.model!r} on {request.task}: {short_err}"
                         ) from e
                     # Outlier input — log a warning and fail just this request.
                     prompt_chars = len(request.prompt_system) + len(request.prompt_user)
