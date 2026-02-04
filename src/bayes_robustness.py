@@ -949,7 +949,7 @@ def run_bayes_robustness(
                 "use_random_intercept": use_random_intercept,
             }
 
-            # ── Fit B1 + B2 (with fallback chain for monetary_severity) ──
+            # ── Fit B1 + B2 (with 5-step fallback chain for monetary_severity) ──
             y_logistic = (df["tier"].values == 2).astype(int).tolist()
             y_ordinal = np.clip((df["tier"].values + 1).astype(int), 1, 3).tolist()
 
@@ -1004,16 +1004,17 @@ def run_bayes_robustness(
                     )
                 metric_result.update(result)
 
-            # For monetary_severity, use 4-step fallback chain.
+            # For monetary_severity, use 5-step fallback chain.
             else:
                 attempted: List[str] = []
                 result: Optional[Dict[str, Any]] = None
+                fallback_used: Optional[str] = None
 
-                # ── Step 0: standard fit ──
+                # ── Step 1: standard fit ──
                 step_label = "standard"
                 method_lbl = "hierarchical" if use_random_intercept else "fixed-effect"
                 logger.info("monetary_severity fallback chain: "
-                            "step 0 — %s fit (K=%d)", method_lbl, X.shape[1])
+                            "step 1 — %s fit (K=%d)", method_lbl, X.shape[1])
                 b1_stan, b2_stan = _pick_stan_files(use_random_intercept, flex=False)
                 sd_b1, sd_b2 = _make_stan_data(X, use_random_intercept)
                 result = _try_b1_b2(
@@ -1025,12 +1026,13 @@ def run_bayes_robustness(
                     method_label=method_lbl,
                 )
                 if result is not None:
-                    logger.info("monetary_severity: step 0 (%s) succeeded", method_lbl)
+                    fallback_used = step_label
+                    logger.info("monetary_severity: step 1 (%s) succeeded", method_lbl)
                 else:
-                    attempted.append(f"step 0: {method_lbl} (K={X.shape[1]})")
-                    logger.warning("monetary_severity: step 0 (%s) FAILED", method_lbl)
+                    attempted.append(f"step 1: {method_lbl} (K={X.shape[1]})")
+                    logger.warning("monetary_severity: step 1 (%s) FAILED", method_lbl)
 
-                # ── Fallback 1: category-level random intercept ──
+                # ── Fallback 2: category-level random intercept ──
                 if result is None:
                     # Use product_category as grouping variable (coarser
                     # than complaint ID, so random intercepts are
@@ -1045,7 +1047,7 @@ def run_bayes_robustness(
 
                         logger.info(
                             "monetary_severity fallback chain: "
-                            "step 1 — category-level RE (%s, J=%d categories)",
+                            "step 2 — category-level RE (%s, J=%d categories)",
                             cat_col, J_cat,
                         )
                         b1_stan_cat, b2_stan_cat = _LOGIT_STAN, _ORDINAL_STAN
@@ -1064,22 +1066,23 @@ def run_bayes_robustness(
                             method_label=f"category-RE({cat_col})",
                         )
                         if result is not None:
-                            logger.info("monetary_severity: step 1 (category RE) succeeded")
+                            fallback_used = "category-RE"
+                            logger.info("monetary_severity: step 2 (category RE) succeeded")
                         else:
-                            attempted.append(f"step 1: category-RE({cat_col}, J={J_cat})")
-                            logger.warning("monetary_severity: step 1 (category RE) FAILED")
+                            attempted.append(f"step 2: category-RE({cat_col}, J={J_cat})")
+                            logger.warning("monetary_severity: step 2 (category RE) FAILED")
                     else:
-                        attempted.append(f"step 1: category-RE skipped ({cat_col} not available)")
+                        attempted.append(f"step 2: category-RE skipped ({cat_col} not available)")
                         logger.warning(
                             "monetary_severity fallback chain: "
-                            "step 1 skipped — %s column not available", cat_col,
+                            "step 2 skipped — %s column not available", cat_col,
                         )
 
-                # ── Fallback 2: per-dimension models ──
+                # ── Fallback 3: per-dimension models ──
                 if result is None:
                     logger.info(
                         "monetary_severity fallback chain: "
-                        "step 2 — per-dimension models (one dim at a time)"
+                        "step 3 — per-dimension models (one dim at a time)"
                     )
                     result = _try_per_dimension(
                         df=df,
@@ -1091,16 +1094,17 @@ def run_bayes_robustness(
                         output_dir=output_dir,
                     )
                     if result is not None:
-                        logger.info("monetary_severity: step 2 (per-dimension) succeeded")
+                        fallback_used = "per-dimension"
+                        logger.info("monetary_severity: step 3 (per-dimension) succeeded")
                     else:
-                        attempted.append("step 2: per-dimension models")
-                        logger.warning("monetary_severity: step 2 (per-dimension) FAILED")
+                        attempted.append("step 3: per-dimension models")
+                        logger.warning("monetary_severity: step 3 (per-dimension) FAILED")
 
-                # ── Fallback 3: stronger priors (main=1.0, interaction=0.5) ──
+                # ── Fallback 4: stronger priors (main=1.0, interaction=0.5) ──
                 if result is None:
                     logger.info(
                         "monetary_severity fallback chain: "
-                        "step 3 — stronger priors (main=1.0, interaction=0.5)"
+                        "step 4 — stronger priors (main=1.0, interaction=0.5)"
                     )
                     # Build per-column prior_sd: 1.0 for main effects, 0.5
                     # for interaction terms (columns containing ':').
@@ -1121,16 +1125,17 @@ def run_bayes_robustness(
                         method_label="flex-prior",
                     )
                     if result is not None:
-                        logger.info("monetary_severity: step 3 (stronger priors) succeeded")
+                        fallback_used = "flex-prior"
+                        logger.info("monetary_severity: step 4 (stronger priors) succeeded")
                     else:
-                        attempted.append("step 3: flex priors (main=1.0, interaction=0.5)")
-                        logger.warning("monetary_severity: step 3 (stronger priors) FAILED")
+                        attempted.append("step 4: flex priors (main=1.0, interaction=0.5)")
+                        logger.warning("monetary_severity: step 4 (stronger priors) FAILED")
 
-                # ── Fallback 4: aggressive sampler (adapt_delta=0.99, max_treedepth=15) ──
+                # ── Fallback 5: aggressive sampler (adapt_delta=0.99, max_treedepth=15) ──
                 if result is None:
                     logger.info(
                         "monetary_severity fallback chain: "
-                        "step 4 — aggressive sampler (adapt_delta=0.99, max_treedepth=15)"
+                        "step 5 — aggressive sampler (adapt_delta=0.99, max_treedepth=15)"
                     )
                     # Re-use stronger priors from step 3 combined with
                     # aggressive sampler tuning.
@@ -1153,10 +1158,11 @@ def run_bayes_robustness(
                         method_label="aggressive-sampler",
                     )
                     if result is not None:
-                        logger.info("monetary_severity: step 4 (aggressive sampler) succeeded")
+                        fallback_used = "aggressive-sampler"
+                        logger.info("monetary_severity: step 5 (aggressive sampler) succeeded")
                     else:
-                        attempted.append("step 4: aggressive sampler (adapt_delta=0.99, max_treedepth=15)")
-                        logger.warning("monetary_severity: step 4 (aggressive sampler) FAILED")
+                        attempted.append("step 5: aggressive sampler (adapt_delta=0.99, max_treedepth=15)")
+                        logger.warning("monetary_severity: step 5 (aggressive sampler) FAILED")
 
                 # ── All fallbacks exhausted → fatal ──
                 if result is None:
@@ -1171,6 +1177,8 @@ def run_bayes_robustness(
                     logger.critical(full_msg)
                     raise RuntimeError(full_msg)
 
+                if fallback_used is not None:
+                    metric_result["fallback_step"] = fallback_used
                 metric_result.update(result)
 
             model_results[severity_metric] = metric_result
