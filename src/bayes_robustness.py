@@ -179,6 +179,18 @@ def _build_prediction_templates(
     return templates
 
 
+def _validate_case_ids(df: pd.DataFrame, context: str) -> None:
+    """Ensure case_id exists and is complete before mapping to integers."""
+    if "case_id" not in df.columns:
+        raise RuntimeError(f"Missing case_id column for Bayesian robustness ({context}).")
+    n_missing = int(df["case_id"].isna().sum())
+    if n_missing > 0:
+        raise RuntimeError(
+            f"{n_missing} rows missing case_id after filtering ({context}); "
+            "cannot build complaint-level random effects."
+        )
+
+
 # ------------------------------------------------------------------
 # Stan fitting
 # ------------------------------------------------------------------
@@ -296,20 +308,24 @@ def _check_diagnostics(fit: Any) -> Dict[str, Any]:
 
 
 def _gate_fit(diagnostics: Dict[str, Any]) -> str:
-    """Apply acceptance gate. Returns 'OK', 'WARN', or 'FAIL'."""
+    """Apply acceptance gate. Returns 'OK', 'WARN', or 'FAIL'.
+
+    Logic:
+        FAIL — severe non-convergence or many divergences.
+        WARN — mild/medium issues (slightly high Rhat, modest ESS, any divergences).
+        OK   — clean diagnostics.
+    """
     rhat = diagnostics.get("max_rhat", float("nan"))
     ess = diagnostics.get("min_ess_bulk", 0)
     div = diagnostics.get("divergences", 0)
     td = diagnostics.get("treedepth_hits", 0)
 
-    if not np.isfinite(rhat) or rhat > 1.05 or ess < 100:
-        return "FAIL"
-    if rhat > 1.01 or ess < 400:
-        return "FAIL"
-    if div > 5:
+    # Hard fail: clearly non-converged or unstable chains
+    if (not np.isfinite(rhat)) or rhat > 1.05 or ess < 100 or div > 5:
         return "FAIL"
 
-    if div > 0 or td > 0:
+    # Warning band: marginal convergence or any sampler pathologies
+    if rhat > 1.01 or ess < 400 or div > 0 or td > 0:
         return "WARN"
 
     return "OK"
@@ -558,6 +574,16 @@ def _save_artifacts(
     stan_dest = bayes_dir / f"stats__bayes__model_code__{fit_id}__v1.stan"
     shutil.copy2(stan_file, stan_dest)
 
+    # Persist diagnostics (including diagnose_text) for post-mortem debugging
+    diag_path = bayes_dir / f"stats__bayes__diagnostics__{fit_id}__v1.json"
+    diag_payload = {
+        "fit_id": fit_id,
+        "model_type": model_type,
+        "status": status,
+        "diagnostics": diagnostics,
+    }
+    diag_path.write_text(json.dumps(diag_payload, indent=2))
+
 
 # ------------------------------------------------------------------
 # Main public API
@@ -609,18 +635,49 @@ def run_bayes_robustness(
                 df = model_df[model_df[severity_metric].isin(SEVERITY_LEVELS)].copy()
                 subset = "all"
 
-            if len(df) < 30:
-                logger.warning("Skipping %s/%s: insufficient data (n=%d)",
-                               model, severity_metric, len(df))
+            initial_n = len(df)
+            if initial_n == 0:
+                logger.warning("Skipping %s/%s: no valid rows after severity filter",
+                               model, severity_metric)
+                model_results[severity_metric] = {
+                    "skipped": True, "reason": "no data",
+                }
+                continue
+
+            # Drop rows with missing dimensions (track losses per dimension)
+            for dim in DIMENSIONS:
+                if dim in df.columns:
+                    before_dim = len(df)
+                    df = df[df[dim].notna()]
+                    removed = before_dim - len(df)
+                    if before_dim > 0 and removed / before_dim > 0.2:
+                        logger.warning(
+                            "%s/%s: dropped %.1f%% (%d/%d) rows due to missing %s",
+                            model, severity_metric, 100 * removed / before_dim,
+                            removed, before_dim, dim,
+                        )
+                    elif removed > 0:
+                        logger.info("%s/%s: dropped %d rows with missing %s",
+                                    model, severity_metric, removed, dim)
+
+            post_drop_n = len(df)
+            total_removed = initial_n - post_drop_n
+            if initial_n > 0 and total_removed / initial_n > 0.2:
+                logger.warning(
+                    "%s/%s: total row loss %.1f%% (%d→%d) after NA drops",
+                    model, severity_metric, 100 * total_removed / initial_n,
+                    initial_n, post_drop_n,
+                )
+
+            if post_drop_n < 30:
+                logger.warning("Skipping %s/%s: insufficient data after NA drop (n=%d from %d)",
+                               model, severity_metric, post_drop_n, initial_n)
                 model_results[severity_metric] = {
                     "skipped": True, "reason": "insufficient data",
                 }
                 continue
 
-            # Drop rows with missing dimensions
-            for dim in DIMENSIONS:
-                if dim in df.columns:
-                    df = df[df[dim].notna()]
+            _validate_case_ids(df, f"{model}/{severity_metric}")
 
             # Build design matrix (shared by B1 and B2)
             X, col_names = _build_design_matrix(df, severity_metric)
@@ -632,6 +689,14 @@ def run_bayes_robustness(
             complaint_map = {cid: i + 1 for i, cid in enumerate(unique_complaints)}
             jj = np.array([complaint_map[cid] for cid in complaint_ids])
             J = len(unique_complaints)
+
+            if J < 5:
+                logger.warning("Skipping %s/%s: insufficient unique complaints (J=%d)",
+                               model, severity_metric, J)
+                model_results[severity_metric] = {
+                    "skipped": True, "reason": "insufficient complaints",
+                }
+                continue
 
             metric_result: Dict[str, Any] = {
                 "n_obs": len(df),
@@ -663,9 +728,13 @@ def run_bayes_robustness(
             for dim, dd in amp_b1.items():
                 amp_b1_summary[dim] = {k: v for k, v in dd.items() if k != "A_draws"}
 
+            diag_b1_payload = {k: v for k, v in diag_b1.items() if k != "diagnose_text"}
+            if status_b1 != "OK":
+                diag_b1_payload["diagnose_text"] = diag_b1.get("diagnose_text", "")
+
             metric_result["logistic"] = {
                 "fit_id": fit_id_b1,
-                "diagnostics": {k: v for k, v in diag_b1.items() if k != "diagnose_text"},
+                "diagnostics": diag_b1_payload,
                 "status": status_b1,
                 "amplification": amp_b1_summary,
             }
@@ -709,9 +778,13 @@ def run_bayes_robustness(
             for dim, dd in amp_b2.items():
                 amp_b2_summary[dim] = {k: v for k, v in dd.items() if k != "A_draws"}
 
+            diag_b2_payload = {k: v for k, v in diag_b2.items() if k != "diagnose_text"}
+            if status_b2 != "OK":
+                diag_b2_payload["diagnose_text"] = diag_b2.get("diagnose_text", "")
+
             metric_result["ordinal"] = {
                 "fit_id": fit_id_b2,
-                "diagnostics": {k: v for k, v in diag_b2.items() if k != "diagnose_text"},
+                "diagnostics": diag_b2_payload,
                 "status": status_b2,
                 "amplification": amp_b2_summary,
                 "tier_probs": tier_probs,
