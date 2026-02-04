@@ -469,13 +469,21 @@ def logistic_regression_analysis(
 
         # rank_deficient or no_variance_x → sanitise design matrix
         if types & {"rank_deficient", "no_variance_x"}:
+            logger.info(
+                "%s: attempting to fix by removing problematic columns",
+                model_label,
+            )
             X, dropped = sanitise_design_matrix(X, model_label=model_label)
             if X.shape[1] < 2:  # only const remains
                 fatal_regression_error(
                     model_label, diag,
                     response_var=target_col, predictor_vars=predictor_cols,
                 )
-            # Re-validate after sanitisation
+            if dropped:
+                logger.info(
+                    "%s: removed %d column(s); re-validating with %d remaining predictor(s)",
+                    model_label, len(dropped), X.shape[1] - 1,  # -1 for const
+                )
             diag = validate_regression_inputs(
                 X, y, model_label=model_label, is_binary=True,
             )
@@ -517,7 +525,10 @@ def logistic_regression_analysis(
 
     # ---- Attempt 3: convergence_failure → standardise + ridge ---------------
     if primary in ("convergence_failure", "sparse_cells", "rank_deficient", "separation_detected"):
-        logger.info("%s: attempting ridge (L2) regularised logit", model_label)
+        logger.info(
+            "%s: standard MLE not viable (%s) → falling back to ridge (L2) regularised logit",
+            model_label, primary,
+        )
         return _ridge_logit(X, y, model_label=model_label, reason=primary)
 
     # ---- Should not reach here; fatal if we do ------------------------------
@@ -627,7 +638,7 @@ def _ridge_logit(
 
     try:
         lr = LogisticRegression(
-            penalty="l2", C=1.0 / alpha, solver="lbfgs",
+            l1_ratio=0, C=1.0 / alpha, solver="lbfgs",
             max_iter=500, fit_intercept=False,  # const already in X
         )
         lr.fit(X_std.values, y.values)
@@ -640,6 +651,10 @@ def _ridge_logit(
                 mean, sd = std_stats[col]
                 coef_orig[i] = coef[i] / sd
 
+        logger.info(
+            "%s: ridge (L2) logit converged successfully (%d predictor(s))",
+            model_label, len(param_names) - 1,  # -1 for const
+        )
         return {
             "coefficients": dict(zip(param_names, coef_orig.tolist())),
             "odds_ratios": dict(zip(param_names, np.exp(coef_orig).tolist())),

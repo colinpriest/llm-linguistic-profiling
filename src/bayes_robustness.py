@@ -48,9 +48,13 @@ _REFERENCE_LEVELS: Dict[str, str] = {
 _SEVERITY_REF = "low"
 
 # Sampling defaults
+# 1000 warmup needed for mass matrix adaptation: the design matrix has
+# ~30-40 columns (persona dummies + severity dummies + interactions)
+# plus J complaint-level random effects.  750 warmup was insufficient —
+# chains failed to converge (rhat>1.2, ess<15) on issue_severity runs.
 _CHAINS = 4
-_ITER_SAMPLING = 750
-_ITER_WARMUP = 750
+_ITER_SAMPLING = 1000
+_ITER_WARMUP = 1000
 _ADAPT_DELTA = 0.95
 _MAX_TREEDEPTH = 12
 
@@ -202,7 +206,10 @@ def _fit_stan_model(
             f"Ensure the models/stan/ directory contains the required .stan files."
         )
 
-    logger.info("Compiling Stan model: %s", stan_file.name)
+    logger.info(
+        "Compiling Stan model: %s (this may take 1-2 minutes)...",
+        stan_file.name,
+    )
     try:
         model = CmdStanModel(stan_file=str(stan_file))
     except Exception as e:
@@ -212,9 +219,14 @@ def _fit_stan_model(
             f"Ensure CmdStan is installed (run install-stan.py).\n"
             f"Original error: {e}"
         ) from e
+    logger.info("Compilation complete: %s", stan_file.name)
 
-    logger.info("Sampling %s (chains=%d, iter=%d+%d, adapt_delta=%.2f)...",
-                fit_id, _CHAINS, _ITER_WARMUP, _ITER_SAMPLING, _ADAPT_DELTA)
+    n_params = stan_data.get("K", 0) + stan_data.get("J", 0)
+    logger.info(
+        "Sampling %s (chains=%d, iter=%d+%d, adapt_delta=%.2f, ~%d parameters) "
+        "— this will take a while...",
+        fit_id, _CHAINS, _ITER_WARMUP, _ITER_SAMPLING, _ADAPT_DELTA, n_params,
+    )
     try:
         fit = model.sample(
             data=stan_data,
@@ -390,11 +402,13 @@ def _compute_amplification_ordinal(
     """Compute amplification from ordinal model.
 
     P(Tier2) = P(y=3) = 1 - logistic(c[2] - eta)
+
+    Note: the ordinal model has no separate alpha; the intercept is
+    absorbed into the ordered cutpoints ``c``.
     """
-    alpha_draws = fit.stan_variable("alpha")         # (n_draws,)
     beta_draws = fit.stan_variable("beta")           # (n_draws, K)
     c_draws = fit.stan_variable("c")                 # (n_draws, 2)
-    n_draws = len(alpha_draws)
+    n_draws = len(beta_draws)
 
     sev_dummy_names = [c for c in col_names if c.startswith("sev__")]
     persona_dummy_names = [c for c in col_names if not c.startswith("sev__") and "__x__" not in c]
@@ -419,7 +433,7 @@ def _compute_amplification_ordinal(
                 if key not in band_templates:
                     continue
                 x = band_templates[key]
-                eta = alpha_draws + beta_draws @ x
+                eta = beta_draws @ x
                 # P(y=3) = 1 - logistic(c[2] - eta)
                 p_tier2 = 1.0 - _expit(c_draws[:, 1] - eta)
                 probs.append(p_tier2)
@@ -457,10 +471,9 @@ def _compute_ordinal_tier_probs(
 
     Returns: {severity_band: {P_tier0: {mean, ci_low, ci_high}, ...}}
     """
-    alpha_draws = fit.stan_variable("alpha")
     beta_draws = fit.stan_variable("beta")
     c_draws = fit.stan_variable("c")
-    n_draws = len(alpha_draws)
+    n_draws = len(beta_draws)
 
     sev_dummy_names = [c for c in col_names if c.startswith("sev__")]
     persona_dummy_names = [c for c in col_names if not c.startswith("sev__") and "__x__" not in c]
@@ -478,7 +491,7 @@ def _compute_ordinal_tier_probs(
         # Average predicted probabilities across all persona templates
         all_p0, all_p1, all_p2 = [], [], []
         for key, x in band_templates.items():
-            eta = alpha_draws + beta_draws @ x
+            eta = beta_draws @ x
             p_le1 = _expit(c_draws[:, 0] - eta)  # P(y <= 1)
             p_le2 = _expit(c_draws[:, 1] - eta)  # P(y <= 2)
             p0 = p_le1
@@ -662,6 +675,14 @@ def run_bayes_robustness(
             logger.info("B1 status: %s (rhat=%.4f, ess=%.0f, div=%d)",
                         status_b1, diag_b1["max_rhat"],
                         diag_b1["min_ess_bulk"], diag_b1["divergences"])
+            if status_b1 == "FAIL":
+                raise RuntimeError(
+                    f"B1 hierarchical logistic FAILED for {fit_id_b1}: "
+                    f"rhat={diag_b1['max_rhat']:.4f}, "
+                    f"ess={diag_b1['min_ess_bulk']:.0f}, "
+                    f"div={diag_b1['divergences']}. "
+                    f"Posterior draws are unreliable."
+                )
 
             # ── B2: Hierarchical ordinal (Tier 0/1/2) ──
             logger.info("Fitting B2 (hierarchical ordinal, Tier 0/1/2)...")
@@ -701,6 +722,14 @@ def run_bayes_robustness(
             logger.info("B2 status: %s (rhat=%.4f, ess=%.0f, div=%d)",
                         status_b2, diag_b2["max_rhat"],
                         diag_b2["min_ess_bulk"], diag_b2["divergences"])
+            if status_b2 == "FAIL":
+                raise RuntimeError(
+                    f"B2 hierarchical ordinal FAILED for {fit_id_b2}: "
+                    f"rhat={diag_b2['max_rhat']:.4f}, "
+                    f"ess={diag_b2['min_ess_bulk']:.0f}, "
+                    f"div={diag_b2['divergences']}. "
+                    f"Posterior draws are unreliable."
+                )
 
             model_results[severity_metric] = metric_result
 

@@ -115,9 +115,10 @@ def validate_regression_inputs(
 
     if issues:
         primary_type = issues[0]["type"]
+        summaries = [i["detail"] for i in issues]
         logger.warning(
-            "%s: pre-regression validation found %d issue(s), primary: %s",
-            model_label, len(issues), primary_type,
+            "%s: pre-flight check found %d issue(s): %s",
+            model_label, len(issues), "; ".join(summaries),
         )
         return {"ok": False, "issues": issues, "primary_type": primary_type}
 
@@ -221,7 +222,10 @@ def sanitise_design_matrix(
     if drop_constant:
         constant = [c for c in X.columns if X[c].nunique() < 2 and c != "const"]
         if constant:
-            logger.info("%s: dropping %d constant column(s): %s", model_label, len(constant), constant)
+            logger.info(
+                "%s: fix → dropping %d zero-variance column(s): %s",
+                model_label, len(constant), constant,
+            )
             dropped.extend(constant)
             X = X.drop(columns=constant)
 
@@ -248,7 +252,7 @@ def sanitise_design_matrix(
                     to_drop = [numeric.columns[i] for i in range(numeric.shape[1]) if i not in keep_idx and numeric.columns[i] != "const"]
                     if to_drop:
                         logger.info(
-                            "%s: dropping %d aliased column(s) to restore full rank: %s",
+                            "%s: fix → dropping %d aliased column(s) to restore full rank: %s",
                             model_label, len(to_drop), to_drop,
                         )
                         dropped.extend(to_drop)
@@ -263,7 +267,7 @@ def sanitise_design_matrix(
                     to_drop = [numeric.columns[piv[i]] for i in to_drop_idx if numeric.columns[piv[i]] != "const"]
                     if to_drop:
                         logger.info(
-                            "%s: dropping %d aliased column(s) to restore full rank: %s",
+                            "%s: fix → dropping %d aliased column(s) to restore full rank: %s",
                             model_label, len(to_drop), to_drop,
                         )
                         dropped.extend(to_drop)

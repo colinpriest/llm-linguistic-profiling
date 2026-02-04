@@ -64,7 +64,7 @@ def fit_propensity_model(
     df["M"] = df["monetary_severity"].isin(SEVERITY_LEVELS).astype(int)
 
     # Separate categorical and numeric predictors
-    cat_cols = [c for c in predictors if df[c].dtype == object or df[c].dtype.name == "category"]
+    cat_cols = [c for c in predictors if not pd.api.types.is_numeric_dtype(df[c])]
     num_cols = [c for c in predictors if c not in cat_cols]
 
     # Build feature matrix

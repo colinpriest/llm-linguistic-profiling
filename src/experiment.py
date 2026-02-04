@@ -1672,8 +1672,11 @@ class Experiment:
                 self.analysis_results["severity"]["ipw_robustness"] = ipw_result
                 logger.info("IPW robustness analysis complete")
             except Exception as e:
-                logger.warning("IPW robustness analysis failed: %s", e)
-                self.analysis_results["severity"]["ipw_robustness"] = {"error": str(e)}
+                logger.critical("IPW robustness analysis failed: %s", e)
+                raise RuntimeError(
+                    f"IPW robustness analysis failed (pre-registered analysis "
+                    f"cannot be skipped): {e}"
+                ) from e
 
         # Logistic GEE interaction tests (pre-registered confirmatory)
         try:
