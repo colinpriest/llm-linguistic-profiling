@@ -1616,7 +1616,8 @@ class Experiment:
             }
             for c in self.complaints
         ])
-        sev_cols = severity_df[["case_id", "monetary_severity", "issue_severity"]]
+        sev_cols = severity_df[["case_id", "monetary_severity", "issue_severity",
+                                "product_category", "issue_category"]]
 
         # Merge severity + persona labels + causal dimensions onto baseline decisions
         persona_merge_cols = ["case_id", "model", "persona_label"]
@@ -1837,10 +1838,13 @@ class Experiment:
                 "case_id": c.case_id,
                 "monetary_severity": c.monetary_severity,
                 "issue_severity": c.issue_severity,
+                "product_category": c.product_category,
+                "issue_category": c.issue_category,
             }
             for c in self.complaints
         ])
-        sev_cols = severity_df[["case_id", "monetary_severity", "issue_severity"]]
+        sev_cols = severity_df[["case_id", "monetary_severity", "issue_severity",
+                                "product_category", "issue_category"]]
 
         persona_merge_cols = ["case_id", "model", "persona_label"]
         for dim in CAUSAL_DIMS:

@@ -469,10 +469,6 @@ def logistic_regression_analysis(
 
         # rank_deficient or no_variance_x → sanitise design matrix
         if types & {"rank_deficient", "no_variance_x"}:
-            logger.info(
-                "%s: attempting to fix by removing problematic columns",
-                model_label,
-            )
             X, dropped = sanitise_design_matrix(X, model_label=model_label)
             if X.shape[1] < 2:  # only const remains
                 fatal_regression_error(
@@ -481,8 +477,13 @@ def logistic_regression_analysis(
                 )
             if dropped:
                 logger.info(
-                    "%s: removed %d column(s); re-validating with %d remaining predictor(s)",
-                    model_label, len(dropped), X.shape[1] - 1,  # -1 for const
+                    "%s: fix → removed %s; re-validating with %d remaining predictor(s)",
+                    model_label, dropped, X.shape[1] - 1,  # -1 for const
+                )
+            else:
+                logger.info(
+                    "%s: design matrix already full-rank after inspection (no columns removed)",
+                    model_label,
                 )
             diag = validate_regression_inputs(
                 X, y, model_label=model_label, is_binary=True,
