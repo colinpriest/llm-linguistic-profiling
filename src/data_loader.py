@@ -70,6 +70,8 @@ def _download_fasttext_model(model_path: Path) -> None:
 
 def _detect_lang_batch(texts: List[str]) -> List[str]:
     """Detect language for a batch of texts using fasttext."""
+    if not texts:
+        return []
     model = _get_fasttext_model()
     cleaned = [t.replace("\n", " ") for t in texts]
     predictions = model.predict(cleaned)
@@ -78,6 +80,8 @@ def _detect_lang_batch(texts: List[str]) -> List[str]:
 
 def _detect_lang_fallback(texts: List[str]) -> List[str]:
     """Fallback: langid (slow, pure Python)."""
+    if not texts:
+        return []
     import langid
     return [langid.classify(t)[0] for t in texts]
 
