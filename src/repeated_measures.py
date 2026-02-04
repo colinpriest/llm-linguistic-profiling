@@ -169,6 +169,12 @@ def ordinal_mixed_model(
     Fixed effects: persona dimension dummies, severity_bin, model, condition,
     persona_id × severity_bin interaction (via pre-computed column).
 
+    Fallback chain (exploratory model):
+    1. OrderedModel (logit link) + clustered SEs
+    2. rank_deficient → sanitise design matrix, re-fit
+    3. convergence_failure → standardise predictors, increase iterations
+    4. Any remaining failure → skip with diagnostic (exploratory only)
+
     Parameters
     ----------
     long_df : Long-format DataFrame from :func:`build_long_format`.
@@ -180,7 +186,14 @@ def ordinal_mixed_model(
     thresholds, n_obs, n_clusters, model_info.
     """
     from statsmodels.miscmodels.ordinal_model import OrderedModel
+    from src.regression_diagnostics import (
+        diagnose_fit_failure,
+        sanitise_design_matrix,
+        standardise_predictors,
+        validate_regression_inputs,
+    )
 
+    model_label = "OrdinalMixed(outcome_tier)"
     df = long_df.copy()
     if model_filter:
         df = df[df["model"] == model_filter]
@@ -211,18 +224,29 @@ def ordinal_mixed_model(
     else:
         exog_cols = ["sev_ord", "condition_code", "persona_score", "persona_x_severity"]
 
-    exog = _drop_constant_columns(df[exog_cols].astype(float))
+    exog = df[exog_cols].astype(float)
     endog = df["outcome_tier"].astype(float)
 
-    # Fit ordinal model with clustered sandwich SEs on complaint_id
-    try:
+    # ---- Pre-flight diagnostics ---------------------------------------------
+    diag = validate_regression_inputs(exog, endog, model_label=model_label)
+    if not diag["ok"]:
+        types = {i["type"] for i in diag["issues"]}
+        if types & {"no_variance_y", "insufficient_data"}:
+            return {"skipped": True, "reason": diag["issues"][0]["detail"],
+                    "estimand_status": "not_estimable"}
+        if types & {"rank_deficient", "no_variance_x"}:
+            exog, dropped = sanitise_design_matrix(exog, model_label=model_label)
+            if exog.shape[1] < 1:
+                return {"skipped": True, "reason": "all predictors dropped after sanitisation",
+                        "estimand_status": "not_estimable"}
+
+    # ---- Fit ordinal model --------------------------------------------------
+    def _fit_ordinal(exog_mat, standardised=False):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            om = OrderedModel(endog, exog, distr="logit")
-            # First pass: unclustered fit to get point estimates
-            fit_plain = om.fit(method="bfgs", disp=False, maxiter=200)
+            om = OrderedModel(endog, exog_mat, distr="logit")
+            fit_plain = om.fit(method="bfgs", disp=False, maxiter=300 if standardised else 200)
 
-        # Re-fit with clustered covariance (sandwich estimator on complaint_id)
         used_cluster = False
         try:
             with warnings.catch_warnings():
@@ -246,7 +270,11 @@ def ordinal_mixed_model(
             ci_lo_base = fit.params - 1.96 * se_base
             ci_hi_base = fit.params + 1.96 * se_base
 
-        param_names = list(exog.columns) + [f"threshold_{i}" for i in range(len(fit.params) - len(exog.columns))]
+        param_names = list(exog_mat.columns) + [f"threshold_{i}" for i in range(len(fit.params) - len(exog_mat.columns))]
+
+        method_note = "repeated-measures ordinal with clustered SEs"
+        if standardised:
+            method_note += " (standardised predictors, convergence fallback)"
 
         return {
             "coefficients": dict(zip(param_names, fit.params.tolist())),
@@ -264,13 +292,26 @@ def ordinal_mixed_model(
             "model_info": {
                 "type": "OrderedModel (logit link)",
                 "clustering": "complaint_id" if used_cluster else "none (model-based SEs)",
-                "method": "repeated-measures ordinal with clustered SEs",
+                "method": method_note,
+                "status": "exploratory",
             },
         }
 
+    # Attempt 1: standard fit
+    try:
+        return _fit_ordinal(exog)
     except Exception as e:
-        logger.warning("Ordinal mixed model failed: %s", e)
-        return {"skipped": True, "reason": str(e)}
+        fit_diag = diagnose_fit_failure(e, model_label=model_label, X=exog, y=endog)
+        logger.warning("%s attempt 1 failed (%s): %s", model_label, fit_diag["type"], e)
+
+    # Attempt 2: standardise predictors and retry
+    try:
+        exog_std, _ = standardise_predictors(exog)
+        return _fit_ordinal(exog_std, standardised=True)
+    except Exception as e2:
+        logger.warning("%s attempt 2 (standardised) failed: %s", model_label, e2)
+
+    return {"skipped": True, "reason": str(e), "estimand_status": "not_estimable"}
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +327,12 @@ def conditional_logistic_favourable(
     Pure within-complaint comparison — the gold standard for matched-guise.
     Uses ``statsmodels.discrete.conditional_models.ConditionalLogit``.
 
+    Fallback chain (confirmatory model):
+    1. ConditionalLogit with complaint_id strata.
+    2. rank_deficient → sanitise design matrix, re-fit.
+    3. convergence_failure → standardise predictors, re-fit.
+    4. Remaining failure → fatal error (confirmatory estimand).
+
     Parameters
     ----------
     long_df : Long-format DataFrame.
@@ -296,7 +343,15 @@ def conditional_logistic_favourable(
     Dict with coefficients, SEs, p-values, CIs, n_obs, n_strata.
     """
     from statsmodels.discrete.conditional_models import ConditionalLogit
+    from src.regression_diagnostics import (
+        diagnose_fit_failure,
+        fatal_regression_error,
+        sanitise_design_matrix,
+        standardise_predictors,
+        validate_regression_inputs,
+    )
 
+    model_label = "ConditionalLogit(favourable)"
     df = long_df.copy()
     if model_filter:
         df = df[df["model"] == model_filter]
@@ -307,7 +362,8 @@ def conditional_logistic_favourable(
     df = df[df["complaint_id"].isin(informative)]
 
     if len(df) < 20 or len(informative) < 5:
-        return {"skipped": True, "reason": "insufficient within-complaint variation"}
+        return {"skipped": True, "reason": "insufficient within-complaint variation",
+                "estimand_status": "not_estimable"}
 
     _add_persona_dims(df)
 
@@ -322,8 +378,26 @@ def conditional_logistic_favourable(
         df = pd.concat([df, model_dummies], axis=1)
         exog_cols += list(model_dummies.columns)
 
-    exog = _drop_constant_columns(df[exog_cols].astype(float))
+    exog = df[exog_cols].astype(float)
     endog = df["favourable"].astype(float)
+
+    # ---- Pre-flight diagnostics ---------------------------------------------
+    diag = validate_regression_inputs(
+        exog, endog, model_label=model_label, is_binary=True,
+    )
+    if not diag["ok"]:
+        types = {i["type"] for i in diag["issues"]}
+        if types & {"no_variance_y", "insufficient_data"}:
+            return {"skipped": True, "reason": diag["issues"][0]["detail"],
+                    "estimand_status": "not_estimable"}
+        if types & {"rank_deficient", "no_variance_x"}:
+            exog, dropped = sanitise_design_matrix(exog, model_label=model_label)
+            if exog.shape[1] < 1:
+                fatal_regression_error(
+                    model_label, diag,
+                    response_var="favourable",
+                    predictor_vars=exog_cols,
+                )
 
     # Sort by complaint_id for grouping
     sort_idx = df["complaint_id"].argsort()
@@ -331,29 +405,33 @@ def conditional_logistic_favourable(
     endog = endog.iloc[sort_idx].reset_index(drop=True)
     groups = df["complaint_id"].iloc[sort_idx].reset_index(drop=True)
 
-    try:
+    def _fit_clogit(exog_mat, method_note=""):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            clogit = ConditionalLogit(endog, exog, groups=groups)
+            clogit = ConditionalLogit(endog, exog_mat, groups=groups)
             fit = clogit.fit(disp=False, maxiter=200)
 
         ci_dict = {}
         try:
             ci_df = fit.conf_int()
-            for name in exog.columns:
+            for name in exog_mat.columns:
                 if name in ci_df.index:
                     ci_dict[name] = [float(ci_df.loc[name].iloc[0]), float(ci_df.loc[name].iloc[1])]
         except Exception:
-            for name, se in zip(exog.columns, fit.bse):
-                coef = fit.params[exog.columns.get_loc(name)]
+            for name, se in zip(exog_mat.columns, fit.bse):
+                coef = fit.params[exog_mat.columns.get_loc(name)]
                 ci_dict[name] = [float(coef - 1.96 * se), float(coef + 1.96 * se)]
 
+        method_str = "within-complaint conditional logistic regression"
+        if method_note:
+            method_str += f" ({method_note})"
+
         return {
-            "coefficients": dict(zip(exog.columns, fit.params.tolist())),
-            "std_errors": dict(zip(exog.columns, fit.bse.tolist())),
-            "p_values": dict(zip(exog.columns, fit.pvalues.tolist())),
+            "coefficients": dict(zip(exog_mat.columns, fit.params.tolist())),
+            "std_errors": dict(zip(exog_mat.columns, fit.bse.tolist())),
+            "p_values": dict(zip(exog_mat.columns, fit.pvalues.tolist())),
             "conf_int": ci_dict,
-            "odds_ratios": dict(zip(exog.columns, np.exp(fit.params).tolist())),
+            "odds_ratios": dict(zip(exog_mat.columns, np.exp(fit.params).tolist())),
             "n_obs": len(df),
             "n_strata": int(groups.nunique()),
             "n_informative_strata": len(informative),
@@ -361,12 +439,31 @@ def conditional_logistic_favourable(
             "model_info": {
                 "type": "ConditionalLogit",
                 "clustering": "complaint_id (stratum)",
-                "method": "within-complaint conditional logistic regression",
+                "method": method_str,
             },
         }
+
+    # Attempt 1: standard fit
+    try:
+        return _fit_clogit(exog)
     except Exception as e:
-        logger.warning("Conditional logistic failed: %s", e)
-        return {"skipped": True, "reason": str(e)}
+        fit_diag = diagnose_fit_failure(e, model_label=model_label, X=exog, y=endog)
+        logger.warning("%s attempt 1 failed (%s): %s", model_label, fit_diag["type"], e)
+
+    # Attempt 2: standardise predictors
+    try:
+        exog_std, _ = standardise_predictors(exog)
+        return _fit_clogit(exog_std, method_note="standardised predictors")
+    except Exception as e2:
+        fit_diag2 = diagnose_fit_failure(e2, model_label=model_label, X=exog, y=endog)
+        logger.warning("%s attempt 2 failed (%s): %s", model_label, fit_diag2["type"], e2)
+
+    # Confirmatory model — fatal if not estimable
+    fatal_regression_error(
+        model_label, fit_diag2,
+        response_var="favourable", predictor_vars=exog_cols,
+    )
+    return {"error": "unreachable"}
 
 
 def logistic_mixed_model_favourable(
@@ -379,25 +476,33 @@ def logistic_mixed_model_favourable(
     interactions plus complaint-level covariates.
 
     Uses GEE (Generalized Estimating Equations) with exchangeable
-    correlation as a robust approximation to a full GLMM, since
-    statsmodels does not expose a direct binomial GLMM.
+    correlation as a robust approximation to a full GLMM.
 
-    Parameters
-    ----------
-    long_df : Long-format DataFrame.
-    model_filter : Restrict to this LLM model.
+    Fallback chain (confirmatory model):
+    1. GEE Binomial + Exchangeable correlation.
+    2. rank_deficient → sanitise design matrix, re-fit.
+    3. convergence_failure → Independence correlation structure.
+    4. Remaining failure → fatal error (confirmatory estimand).
     """
     import statsmodels.api as sm
     from statsmodels.genmod.generalized_estimating_equations import GEE
     from statsmodels.genmod.families import Binomial
-    from statsmodels.genmod.cov_struct import Exchangeable
+    from statsmodels.genmod.cov_struct import Exchangeable, Independence
+    from src.regression_diagnostics import (
+        diagnose_fit_failure,
+        fatal_regression_error,
+        sanitise_design_matrix,
+        validate_regression_inputs,
+    )
 
+    model_label = "GEE_Logistic(favourable)"
     df = long_df.copy()
     if model_filter:
         df = df[df["model"] == model_filter]
 
     if len(df) < 30 or df["favourable"].nunique() < 2:
-        return {"skipped": True, "reason": "insufficient data or outcome variation"}
+        return {"skipped": True, "reason": "insufficient data or outcome variation",
+                "estimand_status": "not_estimable"}
 
     _add_persona_dims(df)
     df["sev_ord"] = df["severity_bin"].map({"low": 0, "medium": 1, "high": 2}).fillna(1).astype(int)
@@ -413,19 +518,42 @@ def logistic_mixed_model_favourable(
 
     # Sort by complaint_id for GEE grouping
     df = df.sort_values("complaint_id").reset_index(drop=True)
-    exog = sm.add_constant(_drop_constant_columns(df[exog_cols].astype(float)))
+    exog = df[exog_cols].astype(float)
     endog = df["favourable"].astype(float)
     groups = df["complaint_id"]
 
-    try:
+    # ---- Pre-flight diagnostics ---------------------------------------------
+    diag = validate_regression_inputs(
+        exog, endog, model_label=model_label, is_binary=True,
+    )
+    if not diag["ok"]:
+        types = {i["type"] for i in diag["issues"]}
+        if types & {"no_variance_y", "insufficient_data"}:
+            return {"skipped": True, "reason": diag["issues"][0]["detail"],
+                    "estimand_status": "not_estimable"}
+        if types & {"rank_deficient", "no_variance_x"}:
+            exog, dropped = sanitise_design_matrix(exog, model_label=model_label)
+            if exog.shape[1] < 1:
+                fatal_regression_error(
+                    model_label, diag,
+                    response_var="favourable", predictor_vars=exog_cols,
+                )
+
+    exog = sm.add_constant(exog)
+
+    def _fit_gee(cov_struct, method_note=""):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             gee_model = GEE(
                 endog, exog, groups=groups,
                 family=Binomial(),
-                cov_struct=Exchangeable(),
+                cov_struct=cov_struct,
             )
             fit = gee_model.fit(maxiter=200)
+
+        method_str = "logistic GEE with complaint_id clustering (GLMM approximation)"
+        if method_note:
+            method_str += f" ({method_note})"
 
         return {
             "coefficients": fit.params.to_dict(),
@@ -440,14 +568,32 @@ def logistic_mixed_model_favourable(
             "n_clusters": int(groups.nunique()),
             "scale": float(fit.scale) if hasattr(fit, "scale") else None,
             "model_info": {
-                "type": "GEE (Binomial, exchangeable correlation)",
+                "type": f"GEE (Binomial, {cov_struct.__class__.__name__})",
                 "clustering": "complaint_id",
-                "method": "logistic GEE with complaint_id clustering (GLMM approximation)",
+                "method": method_str,
             },
         }
+
+    # Attempt 1: Exchangeable correlation
+    try:
+        return _fit_gee(Exchangeable())
     except Exception as e:
-        logger.warning("Logistic GEE (favourable) failed: %s", e)
-        return {"skipped": True, "reason": str(e)}
+        fit_diag = diagnose_fit_failure(e, model_label=model_label, X=exog, y=endog)
+        logger.warning("%s Exchangeable failed (%s): %s", model_label, fit_diag["type"], e)
+
+    # Attempt 2: Independence correlation (more robust)
+    try:
+        return _fit_gee(Independence(), method_note="Independence fallback")
+    except Exception as e2:
+        fit_diag2 = diagnose_fit_failure(e2, model_label=model_label, X=exog, y=endog)
+        logger.warning("%s Independence failed (%s): %s", model_label, fit_diag2["type"], e2)
+
+    # Confirmatory model — fatal if not estimable
+    fatal_regression_error(
+        model_label, fit_diag2,
+        response_var="favourable", predictor_vars=exog_cols,
+    )
+    return {"error": "unreachable"}
 
 
 # ---------------------------------------------------------------------------
@@ -460,19 +606,27 @@ def logistic_mixed_model_info_request(
 ) -> Dict[str, Any]:
     """Logistic mixed model for ``info_request`` with ``complaint_id`` random intercept.
 
-    Same GEE approach as the favourable model.
+    Same GEE approach and fallback chain as the favourable model.
     """
     import statsmodels.api as sm
     from statsmodels.genmod.generalized_estimating_equations import GEE
     from statsmodels.genmod.families import Binomial
-    from statsmodels.genmod.cov_struct import Exchangeable
+    from statsmodels.genmod.cov_struct import Exchangeable, Independence
+    from src.regression_diagnostics import (
+        diagnose_fit_failure,
+        fatal_regression_error,
+        sanitise_design_matrix,
+        validate_regression_inputs,
+    )
 
+    model_label = "GEE_Logistic(info_request)"
     df = long_df.copy()
     if model_filter:
         df = df[df["model"] == model_filter]
 
     if len(df) < 30 or df["info_request"].nunique() < 2:
-        return {"skipped": True, "reason": "insufficient data or outcome variation"}
+        return {"skipped": True, "reason": "insufficient data or outcome variation",
+                "estimand_status": "not_estimable"}
 
     _add_persona_dims(df)
     df["sev_ord"] = df["severity_bin"].map({"low": 0, "medium": 1, "high": 2}).fillna(1).astype(int)
@@ -487,19 +641,42 @@ def logistic_mixed_model_info_request(
         exog_cols += list(model_dummies.columns)
 
     df = df.sort_values("complaint_id").reset_index(drop=True)
-    exog = sm.add_constant(_drop_constant_columns(df[exog_cols].astype(float)))
+    exog = df[exog_cols].astype(float)
     endog = df["info_request"].astype(float)
     groups = df["complaint_id"]
 
-    try:
+    # ---- Pre-flight diagnostics ---------------------------------------------
+    diag = validate_regression_inputs(
+        exog, endog, model_label=model_label, is_binary=True,
+    )
+    if not diag["ok"]:
+        types = {i["type"] for i in diag["issues"]}
+        if types & {"no_variance_y", "insufficient_data"}:
+            return {"skipped": True, "reason": diag["issues"][0]["detail"],
+                    "estimand_status": "not_estimable"}
+        if types & {"rank_deficient", "no_variance_x"}:
+            exog, dropped = sanitise_design_matrix(exog, model_label=model_label)
+            if exog.shape[1] < 1:
+                fatal_regression_error(
+                    model_label, diag,
+                    response_var="info_request", predictor_vars=exog_cols,
+                )
+
+    exog = sm.add_constant(exog)
+
+    def _fit_gee(cov_struct, method_note=""):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             gee_model = GEE(
                 endog, exog, groups=groups,
                 family=Binomial(),
-                cov_struct=Exchangeable(),
+                cov_struct=cov_struct,
             )
             fit = gee_model.fit(maxiter=200)
+
+        method_str = "logistic GEE with complaint_id clustering (GLMM approximation)"
+        if method_note:
+            method_str += f" ({method_note})"
 
         return {
             "coefficients": fit.params.to_dict(),
@@ -514,14 +691,32 @@ def logistic_mixed_model_info_request(
             "n_clusters": int(groups.nunique()),
             "scale": float(fit.scale) if hasattr(fit, "scale") else None,
             "model_info": {
-                "type": "GEE (Binomial, exchangeable correlation)",
+                "type": f"GEE (Binomial, {cov_struct.__class__.__name__})",
                 "clustering": "complaint_id",
-                "method": "logistic GEE with complaint_id clustering (GLMM approximation)",
+                "method": method_str,
             },
         }
+
+    # Attempt 1: Exchangeable correlation
+    try:
+        return _fit_gee(Exchangeable())
     except Exception as e:
-        logger.warning("Logistic GEE (info_request) failed: %s", e)
-        return {"skipped": True, "reason": str(e)}
+        fit_diag = diagnose_fit_failure(e, model_label=model_label, X=exog, y=endog)
+        logger.warning("%s Exchangeable failed (%s): %s", model_label, fit_diag["type"], e)
+
+    # Attempt 2: Independence correlation (more robust)
+    try:
+        return _fit_gee(Independence(), method_note="Independence fallback")
+    except Exception as e2:
+        fit_diag2 = diagnose_fit_failure(e2, model_label=model_label, X=exog, y=endog)
+        logger.warning("%s Independence failed (%s): %s", model_label, fit_diag2["type"], e2)
+
+    # Confirmatory model — fatal if not estimable
+    fatal_regression_error(
+        model_label, fit_diag2,
+        response_var="info_request", predictor_vars=exog_cols,
+    )
+    return {"error": "unreachable"}
 
 
 # ---------------------------------------------------------------------------
@@ -536,15 +731,29 @@ def linear_mixed_model_tier(
 
     Robustness check: treats ordinal tier as continuous.
     Uses ``statsmodels.regression.mixed_linear_model.MixedLM``.
+
+    Fallback chain:
+    1. REML estimation.
+    2. ML estimation (if REML singular).
+    3. Powell optimiser with zero start params.
+    4. Fatal error with diagnostics.
     """
     from statsmodels.regression.mixed_linear_model import MixedLM
+    from src.regression_diagnostics import (
+        diagnose_fit_failure,
+        fatal_regression_error,
+        sanitise_design_matrix,
+        validate_regression_inputs,
+    )
 
+    model_label = "LMM(outcome_tier)"
     df = long_df.copy()
     if model_filter:
         df = df[df["model"] == model_filter]
 
     if len(df) < 30 or df["outcome_tier"].nunique() < 2:
-        return {"skipped": True, "reason": "insufficient data or tier variation"}
+        return {"skipped": True, "reason": "insufficient data or tier variation",
+                "estimand_status": "not_estimable"}
 
     _add_persona_dims(df)
     df["sev_ord"] = df["severity_bin"].map({"low": 0, "medium": 1, "high": 2}).fillna(1).astype(int)
@@ -559,9 +768,26 @@ def linear_mixed_model_tier(
         exog_cols += list(model_dummies.columns)
 
     import statsmodels.api as sm
-    exog = sm.add_constant(_drop_constant_columns(df[exog_cols].astype(float)))
+    exog = df[exog_cols].astype(float)
     endog = df["outcome_tier"].astype(float)
     groups = df["complaint_id"]
+
+    # ---- Pre-flight diagnostics ---------------------------------------------
+    diag = validate_regression_inputs(exog, endog, model_label=model_label)
+    if not diag["ok"]:
+        types = {i["type"] for i in diag["issues"]}
+        if types & {"no_variance_y", "insufficient_data"}:
+            return {"skipped": True, "reason": diag["issues"][0]["detail"],
+                    "estimand_status": "not_estimable"}
+        if types & {"rank_deficient", "no_variance_x"}:
+            exog, dropped = sanitise_design_matrix(exog, model_label=model_label)
+            if exog.shape[1] < 1:
+                fatal_regression_error(
+                    model_label, diag,
+                    response_var="outcome_tier", predictor_vars=exog_cols,
+                )
+
+    exog = sm.add_constant(exog)
 
     try:
         with warnings.catch_warnings():
@@ -609,8 +835,13 @@ def linear_mixed_model_tier(
             },
         }
     except Exception as e:
-        logger.warning("Linear mixed model failed: %s", e)
-        return {"skipped": True, "reason": str(e)}
+        fit_diag = diagnose_fit_failure(e, model_label=model_label, X=exog, y=endog)
+        logger.warning("Linear mixed model failed (%s): %s", fit_diag["type"], e)
+        fatal_regression_error(
+            model_label, fit_diag,
+            response_var="outcome_tier", predictor_vars=exog_cols,
+        )
+        return {"error": "unreachable"}
 
 
 # ---------------------------------------------------------------------------

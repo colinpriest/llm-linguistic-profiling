@@ -245,15 +245,21 @@ def partial_pooling_model(
     group_col: str = "persona_label",
     severity_col: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Fit a hierarchical (mixed-effects) logistic regression.
+    """Fit a hierarchical (mixed-effects) model with partial pooling.
 
     Model: outcome ~ 1 + (1 | persona)
     Optionally: outcome ~ severity + (1 | persona)
 
-    Uses statsmodels BinomialBayesMixedGLM with a Laplace approximation,
-    falling back to a standard MixedLM on the linear probability model
-    if the binomial version fails.
+    Uses MixedLM on the linear probability model.
+
+    Fallback chain:
+    1. MixedLM with REML.
+    2. rank_deficient / convergence → simpler random-intercept-only model.
+    3. Remaining failure → skip with diagnostic.
     """
+    from src.regression_diagnostics import diagnose_fit_failure
+
+    model_label = f"PartialPooling({outcome_col})"
     if len(df) < 30:
         return {"error": "insufficient data", "n": len(df)}
     if df[group_col].nunique() < 3:
@@ -262,6 +268,11 @@ def partial_pooling_model(
     # Ensure binary outcome
     df = df.copy()
     df[outcome_col] = df[outcome_col].astype(int)
+
+    # Pre-flight: check response variance
+    if df[outcome_col].nunique() < 2:
+        return {"error": f"response variable '{outcome_col}' is constant (value={df[outcome_col].iloc[0]})",
+                "diagnosis": "no_variance_y", "converged": False}
 
     # Raw (unpooled) group rates
     raw_rates = df.groupby(group_col)[outcome_col].agg(["mean", "count"]).rename(
@@ -274,18 +285,15 @@ def partial_pooling_model(
         "n_total": len(df),
     }
 
-    try:
+    def _fit_pooling(use_severity: bool):
         import statsmodels.formula.api as smf
 
-        # Build formula
         fixed = "1"
-        if severity_col and severity_col in df.columns and df[severity_col].nunique() >= 2:
+        if use_severity and severity_col and severity_col in df.columns and df[severity_col].nunique() >= 2:
             fixed = f"C({severity_col})"
 
         formula = f"{outcome_col} ~ {fixed}"
-        random_formula = {"persona": f"0 + C({group_col})"}
 
-        # Use MixedLM on the linear probability model (robust, fast)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             model = smf.mixedlm(
@@ -293,43 +301,57 @@ def partial_pooling_model(
                 data=df,
                 groups=df[group_col],
             ).fit(reml=True)
+        return model
 
-        # Extract random effects (shrinkage estimates)
-        re = model.random_effects
-        grand_mean = float(model.fe_params.get("Intercept", model.fe_params.iloc[0]))
-        pooled_rates: Dict[str, Dict[str, Any]] = {}
-
-        for group_name, effects in re.items():
-            re_val = float(effects.iloc[0]) if hasattr(effects, "iloc") else float(effects)
-            pooled_rate = grand_mean + re_val
-            raw = raw_rates.loc[group_name] if group_name in raw_rates.index else None
-            pooled_rates[str(group_name)] = {
-                "pooled_estimate": float(np.clip(pooled_rate, 0, 1)),
-                "raw_rate": float(raw["rate"]) if raw is not None else float("nan"),
-                "raw_n": int(raw["n"]) if raw is not None else 0,
-                "shrinkage": float(raw["rate"] - np.clip(pooled_rate, 0, 1)) if raw is not None else float("nan"),
-                "stability": _stability_flag(int(raw["n"])) if raw is not None else "insufficient_support",
-            }
-
-        result["pooled_rates"] = pooled_rates
-        result["grand_mean"] = grand_mean
-        result["random_effect_variance"] = float(model.cov_re.iloc[0, 0]) if hasattr(model.cov_re, "iloc") else float("nan")
-        result["converged"] = True
-
-        # Shrinkage summary: how much did small cells move?
-        shrinkage_vals = [v["shrinkage"] for v in pooled_rates.values()
-                          if np.isfinite(v["shrinkage"])]
-        if shrinkage_vals:
-            result["shrinkage_summary"] = {
-                "mean_abs_shrinkage": float(np.mean(np.abs(shrinkage_vals))),
-                "max_abs_shrinkage": float(np.max(np.abs(shrinkage_vals))),
-                "n_cells_shrunk_gt_5pct": int(sum(1 for s in shrinkage_vals if abs(s) > 0.05)),
-            }
-
+    model = None
+    # Attempt 1: with severity if available
+    try:
+        model = _fit_pooling(use_severity=True)
     except Exception as e:
-        logger.warning("Partial pooling model failed: %s", e)
-        result["error"] = str(e)
-        result["converged"] = False
+        fit_diag = diagnose_fit_failure(e, model_label=model_label)
+        logger.warning("%s attempt 1 failed (%s): %s", model_label, fit_diag["type"], e)
+        # Attempt 2: intercept-only (simpler)
+        try:
+            model = _fit_pooling(use_severity=False)
+        except Exception as e2:
+            fit_diag2 = diagnose_fit_failure(e2, model_label=model_label)
+            logger.warning("%s attempt 2 failed (%s): %s", model_label, fit_diag2["type"], e2)
+            result["error"] = str(e2)
+            result["diagnosis"] = fit_diag2["type"]
+            result["converged"] = False
+            return result
+
+    # Extract random effects (shrinkage estimates)
+    re = model.random_effects
+    grand_mean = float(model.fe_params.get("Intercept", model.fe_params.iloc[0]))
+    pooled_rates: Dict[str, Dict[str, Any]] = {}
+
+    for group_name, effects in re.items():
+        re_val = float(effects.iloc[0]) if hasattr(effects, "iloc") else float(effects)
+        pooled_rate = grand_mean + re_val
+        raw = raw_rates.loc[group_name] if group_name in raw_rates.index else None
+        pooled_rates[str(group_name)] = {
+            "pooled_estimate": float(np.clip(pooled_rate, 0, 1)),
+            "raw_rate": float(raw["rate"]) if raw is not None else float("nan"),
+            "raw_n": int(raw["n"]) if raw is not None else 0,
+            "shrinkage": float(raw["rate"] - np.clip(pooled_rate, 0, 1)) if raw is not None else float("nan"),
+            "stability": _stability_flag(int(raw["n"])) if raw is not None else "insufficient_support",
+        }
+
+    result["pooled_rates"] = pooled_rates
+    result["grand_mean"] = grand_mean
+    result["random_effect_variance"] = float(model.cov_re.iloc[0, 0]) if hasattr(model.cov_re, "iloc") else float("nan")
+    result["converged"] = True
+
+    # Shrinkage summary: how much did small cells move?
+    shrinkage_vals = [v["shrinkage"] for v in pooled_rates.values()
+                      if np.isfinite(v["shrinkage"])]
+    if shrinkage_vals:
+        result["shrinkage_summary"] = {
+            "mean_abs_shrinkage": float(np.mean(np.abs(shrinkage_vals))),
+            "max_abs_shrinkage": float(np.max(np.abs(shrinkage_vals))),
+            "n_cells_shrunk_gt_5pct": int(sum(1 for s in shrinkage_vals if abs(s) > 0.05)),
+        }
 
     return result
 

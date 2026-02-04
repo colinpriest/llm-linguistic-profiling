@@ -209,6 +209,9 @@ def main() -> None:
     logger.info("Report: %s", report_path)
     if examples_html:
         logger.info("Worked examples: %s", examples_html)
+    bundle_info = analysis_results.get("paper_bundle", {})
+    if bundle_info and not bundle_info.get("error"):
+        logger.info("Paper bundle: %s", bundle_info.get("output_root", ""))
     logger.info("=" * 60)
 
 

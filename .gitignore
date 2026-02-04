@@ -31,6 +31,21 @@ output/
 *.swp
 *.swo
 
+# Stan / CmdStan compiled artifacts
+**/*.exe
+**/*.dll
+**/*.o
+**/*.obj
+**/cmdstanpy_cache/
+**/.cmdstanpy/
+
+# Run artifacts (regenerable)
+artifacts/runs/
+
+# Bayesian posterior outputs (regenerable)
+analysis/stats/bayes/*.nc
+analysis/stats/bayes/*.parquet
+
 # OS
 .DS_Store
 Thumbs.db

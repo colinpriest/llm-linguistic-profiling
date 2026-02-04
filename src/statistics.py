@@ -408,15 +408,33 @@ def logistic_regression_analysis(
     target_col: str,
     predictor_cols: List[str],
 ) -> Dict[str, Any]:
-    """Run logistic regression and return coefficients, p-values, odds ratios."""
+    """Run logistic regression with pre-flight diagnostics and targeted fallbacks.
+
+    Fallback chain
+    --------------
+    1. Standard MLE logit (statsmodels ``Logit.fit``).
+    2. **rank_deficient** → drop aliased columns, re-fit.
+    3. **separation_detected** → Firth penalised logistic regression
+       (``firthlogist``-style bias-reduced logit via iterative adjustment),
+       falling back to ridge (L2) regularised logit.
+    4. **convergence_failure** → standardise predictors, increase iterations,
+       then ridge logit.
+    5. **sparse_cells** → ridge logit.
+    """
     import statsmodels.api as sm
     from statsmodels.tools import add_constant
+    from src.regression_diagnostics import (
+        diagnose_fit_failure,
+        fatal_regression_error,
+        sanitise_design_matrix,
+        standardise_predictors,
+        validate_regression_inputs,
+    )
+
+    model_label = f"Logistic({target_col})"
 
     if df.empty:
-        logger.info(
-            "Logistic regression skipped: empty dataset for target '%s'",
-            target_col,
-        )
+        logger.info("%s skipped: empty dataset", model_label)
         return {"skipped": True, "reason": "empty dataset"}
 
     y = df[target_col].astype(int)
@@ -426,49 +444,52 @@ def logistic_regression_analysis(
         if y.empty:
             return {"skipped": True, "reason": "empty target"}
         logger.info(
-            "Logistic regression skipped: target '%s' has only value(s) %s",
-            target_col, [int(v) for v in sorted(y.unique())],
+            "%s skipped: target has only value(s) %s",
+            model_label, [int(v) for v in sorted(y.unique())],
         )
         return {"skipped": True, "reason": f"target has no variation (all {y.iloc[0]})"}
 
     X = pd.get_dummies(df[predictor_cols], drop_first=True, dtype=float)
     X = add_constant(X)
 
-    # Pre-check: detect quasi-complete separation
-    # If any predictor level perfectly predicts the outcome, flag it
-    separation_cols = []
-    for col in X.columns:
-        if col == "const":
-            continue
-        for level in X[col].unique():
-            subset_y = y[X[col] == level]
-            if len(subset_y) > 0 and subset_y.nunique() < 2:
-                separation_cols.append(col)
-                break
-    if separation_cols:
-        logger.info(
-            "Logistic regression: quasi-complete separation detected in %d predictor(s): %s. "
-            "Fitting with increased regularisation.",
-            len(separation_cols), separation_cols[:5],
-        )
+    # ---- Pre-flight diagnostics ---------------------------------------------
+    diag = validate_regression_inputs(
+        X, y, model_label=model_label, is_binary=True,
+    )
 
-    try:
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message=".*Perfect separation.*")
-            warnings.filterwarnings("ignore", message=".*complete separation.*")
-            warnings.filterwarnings("ignore", message=".*Maximum Likelihood optimization failed to converge.*")
-            if separation_cols:
-                # Use regularised (penalised) fit to handle separation
-                model = sm.Logit(y, X).fit_regularized(
-                    method="l1", alpha=0.1, disp=0, maxiter=100,
+    # Handle no_variance_x up front: drop constant columns
+    if not diag["ok"]:
+        types = {i["type"] for i in diag["issues"]}
+
+        if "no_variance_y" in types or "insufficient_data" in types:
+            fatal_regression_error(
+                model_label, diag,
+                response_var=target_col, predictor_vars=predictor_cols,
+            )
+
+        # rank_deficient or no_variance_x → sanitise design matrix
+        if types & {"rank_deficient", "no_variance_x"}:
+            X, dropped = sanitise_design_matrix(X, model_label=model_label)
+            if X.shape[1] < 2:  # only const remains
+                fatal_regression_error(
+                    model_label, diag,
+                    response_var=target_col, predictor_vars=predictor_cols,
                 )
-                return {
-                    "coefficients": model.params.to_dict(),
-                    "odds_ratios": np.exp(model.params).to_dict(),
-                    "regularized": True,
-                    "separation_columns": separation_cols[:10],
-                }
-            else:
+            # Re-validate after sanitisation
+            diag = validate_regression_inputs(
+                X, y, model_label=model_label, is_binary=True,
+            )
+
+    # Classify primary issue for fallback selection
+    primary = diag.get("primary_type") if not diag["ok"] else None
+
+    # ---- Attempt 1: standard MLE logit --------------------------------------
+    if primary is None:
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*Perfect separation.*")
+                warnings.filterwarnings("ignore", message=".*complete separation.*")
+                warnings.filterwarnings("ignore", message=".*Maximum Likelihood.*")
                 model = sm.Logit(y, X).fit(disp=0, maxiter=100)
                 return {
                     "coefficients": model.params.to_dict(),
@@ -477,10 +498,158 @@ def logistic_regression_analysis(
                     "pseudo_r2": model.prsquared,
                     "aic": model.aic,
                     "converged": model.mle_retvals["converged"],
+                    "method": "MLE logit",
                 }
+        except Exception as e:
+            diag = diagnose_fit_failure(e, model_label=model_label, X=X, y=y)
+            primary = diag["type"]
+            logger.warning("%s MLE failed (%s): %s", model_label, primary, e)
+
+    # ---- Attempt 2: separation → Firth penalised logit ----------------------
+    if primary == "separation_detected":
+        logger.info("%s: separation detected, attempting Firth penalised logit", model_label)
+        firth_result = _firth_logit(X, y, model_label=model_label)
+        if firth_result is not None:
+            return firth_result
+        # Firth failed; fall through to ridge
+        logger.info("%s: Firth failed, falling back to ridge logit", model_label)
+        primary = "convergence_failure"
+
+    # ---- Attempt 3: convergence_failure → standardise + ridge ---------------
+    if primary in ("convergence_failure", "sparse_cells", "rank_deficient", "separation_detected"):
+        logger.info("%s: attempting ridge (L2) regularised logit", model_label)
+        return _ridge_logit(X, y, model_label=model_label, reason=primary)
+
+    # ---- Should not reach here; fatal if we do ------------------------------
+    fatal_regression_error(
+        model_label, diag if isinstance(diag, dict) else {"type": "unknown", "detail": str(diag)},
+        response_var=target_col, predictor_vars=predictor_cols,
+    )
+    return {"error": "unreachable"}  # for type checker
+
+
+def _firth_logit(
+    X: pd.DataFrame,
+    y: pd.Series,
+    *,
+    model_label: str,
+    maxiter: int = 200,
+    tol: float = 1e-6,
+) -> Optional[Dict[str, Any]]:
+    """Firth bias-reduced logistic regression (Jeffreys-prior penalisation).
+
+    Implements the iteratively re-weighted least squares adjustment from
+    Firth (1993) / Heinze & Schemper (2002).  This is the gold-standard
+    correction for separation in logistic regression.
+    """
+    try:
+        import statsmodels.api as sm
+
+        vals_X = X.values.astype(float)
+        vals_y = y.values.astype(float)
+        n, p = vals_X.shape
+        beta = np.zeros(p)
+
+        for iteration in range(maxiter):
+            eta = vals_X @ beta
+            mu = 1.0 / (1.0 + np.exp(-eta))
+            mu = np.clip(mu, 1e-10, 1 - 1e-10)
+            W = np.diag(mu * (1 - mu))
+            # Fisher information
+            XtWX = vals_X.T @ W @ vals_X
+            try:
+                XtWX_inv = np.linalg.inv(XtWX)
+            except np.linalg.LinAlgError:
+                return None  # truly singular, can't do Firth
+
+            # Hat matrix diagonal (leverage)
+            H = vals_X @ XtWX_inv @ vals_X.T @ W
+            h = np.diag(H)
+
+            # Firth-adjusted working response
+            y_adj = vals_y + h * (0.5 - mu)
+            score = vals_X.T @ (y_adj - mu)
+            delta = XtWX_inv @ score
+
+            beta += delta
+            if np.max(np.abs(delta)) < tol:
+                break
+
+        # Compute standard errors from the final Fisher information
+        eta = vals_X @ beta
+        mu = 1.0 / (1.0 + np.exp(-eta))
+        mu = np.clip(mu, 1e-10, 1 - 1e-10)
+        W = np.diag(mu * (1 - mu))
+        XtWX = vals_X.T @ W @ vals_X
+        try:
+            cov = np.linalg.inv(XtWX)
+        except np.linalg.LinAlgError:
+            return None
+        se = np.sqrt(np.diag(cov))
+
+        # p-values from Wald test
+        z = beta / se
+        p_vals = 2 * (1 - sp_stats.norm.cdf(np.abs(z)))
+
+        param_names = list(X.columns)
+        return {
+            "coefficients": dict(zip(param_names, beta.tolist())),
+            "std_errors": dict(zip(param_names, se.tolist())),
+            "p_values": dict(zip(param_names, p_vals.tolist())),
+            "odds_ratios": dict(zip(param_names, np.exp(beta).tolist())),
+            "method": "Firth penalised logit (bias-reduced)",
+            "converged": True,
+        }
     except Exception as e:
-        logger.warning("Logistic regression failed: %s", e)
-        return {"error": str(e)}
+        logger.warning("%s: Firth logit failed: %s", model_label, e)
+        return None
+
+
+def _ridge_logit(
+    X: pd.DataFrame,
+    y: pd.Series,
+    *,
+    model_label: str,
+    reason: str,
+    alpha: float = 1.0,
+) -> Dict[str, Any]:
+    """Ridge (L2) regularised logistic regression via scikit-learn.
+
+    Ridge is preferred over L1 (lasso) for confirmatory analysis because
+    it shrinks but does not zero-out coefficients, preserving interpretability
+    of all pre-registered predictors.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from src.regression_diagnostics import standardise_predictors
+
+    X_std, std_stats = standardise_predictors(X)
+    param_names = list(X.columns)
+
+    try:
+        lr = LogisticRegression(
+            penalty="l2", C=1.0 / alpha, solver="lbfgs",
+            max_iter=500, fit_intercept=False,  # const already in X
+        )
+        lr.fit(X_std.values, y.values)
+        coef = lr.coef_.flatten()
+
+        # Back-transform coefficients from standardised to original scale
+        coef_orig = np.copy(coef)
+        for i, col in enumerate(param_names):
+            if col in std_stats:
+                mean, sd = std_stats[col]
+                coef_orig[i] = coef[i] / sd
+
+        return {
+            "coefficients": dict(zip(param_names, coef_orig.tolist())),
+            "odds_ratios": dict(zip(param_names, np.exp(coef_orig).tolist())),
+            "method": f"Ridge (L2) logit (fallback for {reason})",
+            "regularized": True,
+            "alpha": alpha,
+        }
+    except Exception as e:
+        logger.warning("%s: ridge logit failed: %s", model_label, e)
+        return {"error": str(e), "method": "ridge_logit_failed"}
 
 
 # ---------------------------------------------------------------------------

@@ -411,29 +411,40 @@ def two_way_anova_persona_severity(
     """Two-way ANOVA: outcome ~ persona + severity + persona×severity.
 
     Uses statsmodels Type II SS.
+
+    **Status: exploratory / sanity-check only.**  Not used for confirmatory
+    claims (see GEE and conditional logistic models instead).
     """
+    from src.regression_diagnostics import diagnose_fit_failure
+
+    model_label = f"TwoWayANOVA({severity_metric},{model})"
     df = decisions_df[
         (decisions_df["model"] == model)
         & (decisions_df[severity_metric].isin(SEVERITY_LEVELS))
     ].copy()
     if persona_col not in df.columns or outcome_col not in df.columns or len(df) < 30:
-        return {"error": "insufficient data"}
+        return {"error": "insufficient data", "status": "exploratory"}
 
     df = df.rename(columns={severity_metric: "severity", persona_col: "persona",
                             outcome_col: "outcome"})
 
     # Need at least 2 levels in each factor
     if df["persona"].nunique() < 2 or df["severity"].nunique() < 2:
-        return {"error": "insufficient factor levels"}
+        return {"error": "insufficient factor levels", "status": "exploratory"}
 
     # Drop personas that don't appear at every severity level so the
-    # interaction design matrix has full column rank (avoids statsmodels
-    # "covariance of constraints does not have full rank" warning).
+    # interaction design matrix has full column rank.
     cell_counts = df.groupby(["persona", "severity"]).size().unstack(fill_value=0)
     complete_personas = cell_counts.index[cell_counts.min(axis=1) > 0]
     if len(complete_personas) < 2:
-        return {"error": "insufficient complete persona×severity cells"}
+        return {"error": "insufficient complete persona×severity cells", "status": "exploratory"}
     df = df[df["persona"].isin(complete_personas)]
+
+    # Pre-flight: check response variance
+    y = df["outcome"].astype(float)
+    if y.nunique() < 2:
+        return {"error": f"response variable '{outcome_col}' is constant (value={y.iloc[0]})",
+                "status": "exploratory", "diagnosis": "no_variance_y"}
 
     try:
         import statsmodels.formula.api as smf
@@ -444,8 +455,7 @@ def two_way_anova_persona_severity(
             fit = smf.ols("outcome ~ C(persona) + C(severity) + C(persona):C(severity)", data=df).fit()
             table = anova_lm(fit, typ=2)
 
-        total_ss = table["sum_sq"].sum()
-        result: Dict[str, Any] = {}
+        result: Dict[str, Any] = {"status": "exploratory"}
         for source, row_label in [
             ("persona_main", "C(persona)"),
             ("severity_main", "C(severity)"),
@@ -457,12 +467,9 @@ def two_way_anova_persona_severity(
                 df_val = float(table.loc[row_label, "df"])
                 f_val = float(table.loc[row_label, "F"]) if "F" in table.columns else float("nan")
                 p_val = float(table.loc[row_label, "PR(>F)"]) if "PR(>F)" in table.columns else float("nan")
-                # Type II SS can produce tiny negative values from floating-point
-                # cancellation; clamp F to zero in that case.
                 if np.isfinite(f_val) and f_val < 0:
                     f_val = 0.0
                     p_val = 1.0
-                # Partial eta-squared = SS_effect / (SS_effect + SS_residual)
                 ss_resid = max(0.0, float(table.loc["Residual", "sum_sq"])) if "Residual" in table.index else 0
                 eta_sq = ss / (ss + ss_resid) if (ss + ss_resid) > 0 else 0.0
                 result[source] = {
@@ -477,8 +484,9 @@ def two_way_anova_persona_severity(
         return result
 
     except Exception as e:
-        logger.warning("Two-way ANOVA failed: %s", e)
-        return {"error": str(e)}
+        fit_diag = diagnose_fit_failure(e, model_label=model_label)
+        logger.warning("Two-way ANOVA failed (%s): %s", fit_diag["type"], e)
+        return {"error": str(e), "diagnosis": fit_diag["type"], "status": "exploratory"}
 
 
 def simple_effects_by_severity(
@@ -813,6 +821,146 @@ def dimension_severity_all(
 
 
 # ---------------------------------------------------------------------------
+# Section 3c: Logistic GEE Interaction (Pre-registered Tier2 model)
+# ---------------------------------------------------------------------------
+
+def logistic_interaction_tier2(
+    decisions_df: pd.DataFrame,
+    severity_metric: str,
+    model: str,
+    dimension: str,
+    cluster_col: str = "case_id",
+) -> Dict[str, Any]:
+    """Pre-registered complaint-clustered logistic model for Y2.
+
+    Fits: logit P(Y2=1) = persona + severity + persona x severity
+    with GEE exchangeable correlation clustered by complaint.
+
+    This is the confirmatory interaction test specified in the
+    pre-registration plan.
+
+    Parameters
+    ----------
+    decisions_df : DataFrame with [case_id, model, tier, {severity_metric}, {dimension}].
+    severity_metric : ``"monetary_severity"`` or ``"issue_severity"``.
+    model : Model identifier.
+    dimension : Demographic dimension to test.
+    cluster_col : Column for GEE clustering (default ``"case_id"``).
+
+    Returns
+    -------
+    Dict with keys: interaction_p, coefficients, n_obs, n_clusters,
+    method, convergence_warning.
+    """
+    df = decisions_df[
+        (decisions_df["model"] == model)
+        & (decisions_df[severity_metric].isin(SEVERITY_LEVELS))
+    ].copy()
+
+    if dimension not in df.columns or len(df) < 30:
+        return {"skipped": True, "reason": "insufficient data"}
+
+    df = df.dropna(subset=[dimension])
+    df["Y2"] = (df["tier"] >= 2).astype(int)
+
+    # Need variation in outcome
+    if df["Y2"].nunique() < 2:
+        return {"skipped": True, "reason": "degenerate outcome (no Y2 variation)"}
+
+    # Need at least 2 levels per factor
+    if df[dimension].nunique() < 2 or df[severity_metric].nunique() < 2:
+        return {"skipped": True, "reason": "insufficient factor levels"}
+
+    try:
+        import statsmodels.api as sm
+        import statsmodels.formula.api as smf
+        from statsmodels.genmod.generalized_estimating_equations import GEE
+        from statsmodels.genmod.families import Binomial
+        from statsmodels.genmod.cov_struct import Exchangeable
+
+        df_fit = df.rename(columns={severity_metric: "severity", dimension: "dim_level"}).copy()
+        # Ensure cluster column is numeric for GEE
+        df_fit = df_fit.sort_values(cluster_col)
+
+        # Build design — only keep complete persona x severity cells
+        cc = df_fit.groupby(["dim_level", "severity"]).size().unstack(fill_value=0)
+        complete = cc.index[cc.min(axis=1) > 0]
+        if len(complete) < 2:
+            return {"skipped": True, "reason": "insufficient complete cells"}
+        df_fit = df_fit[df_fit["dim_level"].isin(complete)]
+
+        formula = "Y2 ~ C(dim_level) + C(severity) + C(dim_level):C(severity)"
+
+        convergence_warning = False
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                gee_model = smf.gee(
+                    formula,
+                    groups=cluster_col,
+                    data=df_fit,
+                    family=Binomial(),
+                    cov_struct=Exchangeable(),
+                )
+                fit = gee_model.fit(maxiter=100)
+            except Exception as e:
+                return {"skipped": True, "reason": f"GEE fit failed: {e}"}
+            convergence_warning = any("converge" in str(w.message).lower() for w in caught)
+
+        # Extract interaction terms
+        params = fit.params
+        pvalues = fit.pvalues
+        bse = fit.bse
+        conf_int = fit.conf_int()
+
+        interaction_terms = [p for p in params.index if ":" in p and "dim_level" in p and "severity" in p]
+
+        # Joint test for interaction terms
+        if interaction_terms:
+            try:
+                joint_test = fit.wald_test_terms(scalar=True)
+                # Find the interaction row in the joint test
+                interaction_p = float("nan")
+                for term_name in joint_test.table.index:
+                    if ":" in str(term_name):
+                        interaction_p = float(joint_test.table.loc[term_name, "P>chi2"])
+                        break
+                if np.isnan(interaction_p):
+                    # Fallback: use maximum individual p-value
+                    interaction_p = float(max(pvalues[t] for t in interaction_terms))
+            except Exception:
+                interaction_p = float(max(pvalues[t] for t in interaction_terms)) if interaction_terms else float("nan")
+        else:
+            interaction_p = float("nan")
+
+        # Build coefficients dict
+        coefficients = {}
+        for term in params.index:
+            coefficients[term] = {
+                "estimate": float(params[term]),
+                "se": float(bse[term]),
+                "p_value": float(pvalues[term]),
+                "ci_lower": float(conf_int.loc[term, 0]) if term in conf_int.index else float("nan"),
+                "ci_upper": float(conf_int.loc[term, 1]) if term in conf_int.index else float("nan"),
+                "odds_ratio": float(np.exp(params[term])),
+            }
+
+        return {
+            "interaction_p": interaction_p,
+            "n_interaction_terms": len(interaction_terms),
+            "coefficients": coefficients,
+            "n_obs": int(fit.nobs),
+            "n_clusters": int(df_fit[cluster_col].nunique()),
+            "method": "GEE (Binomial, exchangeable, Wald test)",
+            "convergence_warning": convergence_warning,
+        }
+
+    except Exception as e:
+        logger.warning("Logistic GEE interaction failed for %s/%s: %s", dimension, model, e)
+        return {"skipped": True, "reason": str(e)}
+
+
+# ---------------------------------------------------------------------------
 # Section 4: Three-Way Analysis
 # ---------------------------------------------------------------------------
 
@@ -821,25 +969,35 @@ def three_way_anova(
     severity_metric: str,
     persona_col: str = "persona_label",
 ) -> Dict[str, Any]:
-    """Three-way ANOVA: tier ~ model * persona * severity."""
+    """Three-way ANOVA: tier ~ model * persona * severity.
+
+    **Status: exploratory / sanity-check only.**
+    """
+    from src.regression_diagnostics import diagnose_fit_failure
+
+    model_label = f"ThreeWayANOVA({severity_metric})"
     df = decisions_df[decisions_df[severity_metric].isin(SEVERITY_LEVELS)].copy()
     if persona_col not in df.columns or len(df) < 50:
-        return {"error": "insufficient data"}
+        return {"error": "insufficient data", "status": "exploratory"}
     if df["model"].nunique() < 2:
-        return {"error": "need multiple models for three-way ANOVA"}
+        return {"error": "need multiple models for three-way ANOVA", "status": "exploratory"}
 
     df = df.rename(columns={severity_metric: "severity", persona_col: "persona"})
 
-    # Keep only persona×severity×model cells that are fully populated so the
-    # three-way interaction design matrix has full column rank.
+    # Keep only persona×severity×model cells that are fully populated.
     cell_counts = df.groupby(["persona", "severity", "model"]).size().unstack(fill_value=0)
     complete_personas = cell_counts.groupby("persona").apply(
         lambda g: (g.min(axis=1) > 0).all()
     )
     complete_personas = complete_personas[complete_personas].index
     if len(complete_personas) < 2:
-        return {"error": "insufficient complete persona×severity×model cells"}
+        return {"error": "insufficient complete persona×severity×model cells", "status": "exploratory"}
     df = df[df["persona"].isin(complete_personas)]
+
+    # Pre-flight: check response variance
+    if df["tier"].nunique() < 2:
+        return {"error": f"response variable 'tier' is constant (value={df['tier'].iloc[0]})",
+                "status": "exploratory", "diagnosis": "no_variance_y"}
 
     try:
         import statsmodels.formula.api as smf
@@ -853,7 +1011,7 @@ def three_way_anova(
             table = anova_lm(fit, typ=2)
 
         ss_resid = max(0.0, float(table.loc["Residual", "sum_sq"])) if "Residual" in table.index else 0
-        result: Dict[str, Any] = {}
+        result: Dict[str, Any] = {"status": "exploratory"}
         label_map = {
             "model": "C(model)",
             "persona": "C(persona)",
@@ -870,8 +1028,6 @@ def three_way_anova(
                 df_val = float(table.loc[row_label, "df"])
                 f_val = float(table.loc[row_label, "F"]) if "F" in table.columns else float("nan")
                 p_val = float(table.loc[row_label, "PR(>F)"]) if "PR(>F)" in table.columns else float("nan")
-                # Type II SS can produce tiny negative values from floating-point
-                # cancellation; clamp F to zero in that case.
                 if np.isfinite(f_val) and f_val < 0:
                     f_val = 0.0
                     p_val = 1.0
@@ -887,8 +1043,9 @@ def three_way_anova(
         return result
 
     except Exception as e:
-        logger.warning("Three-way ANOVA failed: %s", e)
-        return {"error": str(e)}
+        fit_diag = diagnose_fit_failure(e, model_label=model_label)
+        logger.warning("Three-way ANOVA failed (%s): %s", fit_diag["type"], e)
+        return {"error": str(e), "diagnosis": fit_diag["type"], "status": "exploratory"}
 
 
 def model_specific_amplification(

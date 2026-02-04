@@ -243,6 +243,9 @@ class Experiment:
         # Save artifacts
         self._save_artifacts()
 
+        # Generate paper bundle
+        self._generate_paper_bundle()
+
         logger.info("=" * 60)
         logger.info("Experiment complete. Output: %s", self.output_dir)
         logger.info(self.cache.stats_summary())
@@ -250,6 +253,41 @@ class Experiment:
         if tf_stats:
             logger.info(tf_stats)
         return self.analysis_results
+
+    def _generate_paper_bundle(self) -> None:
+        """Generate the paper-ready output bundle."""
+        try:
+            from src.paper_bundle import PaperBundleGenerator
+
+            run_config = {
+                "seed": self.seed,
+                "num_complaints": self.num_complaints,
+                "models": self.models,
+                "causal_sample_pct": self.causal_sample_pct,
+                "materiality_threshold": self.materiality_threshold,
+                "data_path": str(self.data_path),
+                "threads": self.threads,
+                "skip_steps": list(self.skip_steps),
+                "timestamp": self.timestamp,
+            }
+
+            bundle = PaperBundleGenerator(
+                analysis_results=self.analysis_results,
+                complaints=self.complaints,
+                run_config=run_config,
+                output_root=Path("./artifacts/runs"),
+            )
+            result = bundle.generate()
+            self.analysis_results["paper_bundle"] = result
+
+            if result.get("acceptance_missing"):
+                logger.warning(
+                    "Paper bundle acceptance: %d items missing",
+                    len(result["acceptance_missing"]),
+                )
+        except Exception as e:
+            logger.warning("Paper bundle generation failed: %s", e)
+            self.analysis_results["paper_bundle"] = {"error": str(e)}
 
     # ------------------------------------------------------------------
     # Batch result validation
@@ -1550,6 +1588,7 @@ class Experiment:
         self.analysis_results = results
         self._run_power_analysis()
         self._run_severity_analysis()
+        self._run_bayes_robustness()
         self._collect_multiple_comparisons()
         self._run_repeated_measures_analysis()
         self._run_sparsity_analysis()
@@ -1617,6 +1656,47 @@ class Experiment:
             neutralized_df=neutralized_sev,
         )
         self.analysis_results["severity"] = result
+
+        # IPW robustness for monetary severity (pre-registered)
+        if persona_dec_sev is not None and len(persona_dec_sev) > 0:
+            try:
+                from src.ipw_robustness import ipw_amplification_analysis
+                logger.info("Running IPW robustness analysis for monetary severity...")
+                ipw_result = ipw_amplification_analysis(
+                    decisions_df=persona_dec_sev,
+                    complaints_df=severity_df,
+                    models=self.models,
+                    n_boot=1000,
+                    seed=self.seed,
+                )
+                self.analysis_results["severity"]["ipw_robustness"] = ipw_result
+                logger.info("IPW robustness analysis complete")
+            except Exception as e:
+                logger.warning("IPW robustness analysis failed: %s", e)
+                self.analysis_results["severity"]["ipw_robustness"] = {"error": str(e)}
+
+        # Logistic GEE interaction tests (pre-registered confirmatory)
+        try:
+            from src.severity_analysis import logistic_interaction_tier2
+            logger.info("Running logistic GEE interaction tests (confirmatory)...")
+            gee_interactions: Dict[str, Any] = {}
+            for metric in ["monetary_severity", "issue_severity"]:
+                gee_interactions[metric] = {}
+                for model in self.models:
+                    model_gee: Dict[str, Any] = {}
+                    df_for_gee = baseline_sev if metric == "issue_severity" else (
+                        baseline_sev[baseline_sev["monetary_severity"].isin(["low", "medium", "high"])]
+                    )
+                    for dim in CAUSAL_DIMS:
+                        if dim in df_for_gee.columns:
+                            model_gee[dim] = logistic_interaction_tier2(
+                                df_for_gee, metric, model, dim,
+                            )
+                    gee_interactions[metric][model] = model_gee
+            self.analysis_results["severity"]["gee_interactions_tier2"] = gee_interactions
+            logger.info("Logistic GEE interaction tests complete")
+        except Exception as e:
+            logger.warning("GEE interaction tests failed: %s", e)
 
         # Console summary: missingness diagnostic
         miss_diag = result.get("missingness_diagnostic", {})
@@ -1730,6 +1810,59 @@ class Experiment:
                             "    %s: bias SD %.4f → %.4f (%+.4f)",
                             level, b_sd, n_sd, d_sd,
                         )
+
+    # ------------------------------------------------------------------
+    # Bayesian robustness (non-confirmatory)
+    # ------------------------------------------------------------------
+
+    def _run_bayes_robustness(self) -> None:
+        """Run Bayesian hierarchical robustness analysis (B1 logistic + B2 ordinal).
+
+        Raises on any Stan compilation, sampling, or post-processing failure.
+        """
+        if self.baseline_df is None or self.personas_df is None:
+            logger.info("Skipping Bayesian robustness (no baseline decisions or personas)")
+            return
+
+        from src.bayes_robustness import run_bayes_robustness
+
+        logger.info("Running Bayesian robustness analysis...")
+
+        # Build severity-merged DataFrame (same as _run_severity_analysis)
+        severity_df = pd.DataFrame([
+            {
+                "case_id": c.case_id,
+                "monetary_severity": c.monetary_severity,
+                "issue_severity": c.issue_severity,
+            }
+            for c in self.complaints
+        ])
+        sev_cols = severity_df[["case_id", "monetary_severity", "issue_severity"]]
+
+        persona_merge_cols = ["case_id", "model", "persona_label"]
+        for dim in CAUSAL_DIMS:
+            if dim in self.personas_df.columns:
+                persona_merge_cols.append(dim)
+        baseline_sev = self.baseline_df.merge(sev_cols, on="case_id", how="left")
+        baseline_sev = baseline_sev.merge(
+            self.personas_df[persona_merge_cols].drop_duplicates(),
+            on=["case_id", "model"],
+            how="left",
+        )
+
+        # Determine output dir for artifacts (if paper bundle will be generated)
+        output_dir = None
+        if hasattr(self, "output_dir"):
+            output_dir = Path(self.output_dir)
+
+        bayes_result = run_bayes_robustness(
+            baseline_sev=baseline_sev,
+            models=self.models,
+            seed=self.seed,
+            output_dir=output_dir,
+        )
+        self.analysis_results["severity"]["bayesian_robustness"] = bayes_result
+        logger.info("Bayesian robustness analysis complete")
 
     # ------------------------------------------------------------------
     # Power analysis
@@ -3140,7 +3273,7 @@ class Experiment:
                     lines.append(text)
             lines.append("")
             lines.append("=" * 60)
-            summary_path = self.output_dir / "executive_summary.txt"
+            summary_path = self.output_dir / f"executive_summary_{self.timestamp}.txt"
             summary_path.write_text("\n".join(lines), encoding="utf-8")
             logger.info("Executive summary written to %s", summary_path)
 
