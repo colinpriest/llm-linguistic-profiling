@@ -1,4 +1,11 @@
-"""Disk-based caching system for LLM responses."""
+"""Disk-based caching system for LLM responses.
+
+Lock-free design: each cache entry is an independent file keyed by a
+content hash, so concurrent reads never conflict.  Writes use a unique
+temp file + atomic ``os.replace``, which is safe without a lock.
+Hit/miss counters are advisory stats — a minor race on the increment
+is acceptable and avoids serializing 100+ threads through a single lock.
+"""
 
 from __future__ import annotations
 
@@ -6,8 +13,6 @@ import hashlib
 import json
 import logging
 import os
-import shutil
-import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,27 +33,31 @@ class ResponseCache:
         self._ensure_dirs()
         self._hits = 0
         self._misses = 0
-        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def get(self, model: str, task: str, narrative: str) -> Optional[Dict[str, Any]]:
-        """Look up a cached response. Returns the response dict or None."""
+        """Look up a cached response. Returns the response dict or None.
+
+        Lock-free: each key maps to its own file, so concurrent reads
+        on different keys touch different files — no shared state.
+        Two threads reading the *same* key both get a valid snapshot
+        because writes are atomic (see ``put``).
+        """
         key = self._key(model, task, narrative)
         path = self._path(task, key)
         if path.exists():
             try:
-                with self._lock:
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                    self._hits += 1
+                data = json.loads(path.read_text(encoding="utf-8"))
+                # Counter race is benign — stats only, not correctness.
+                self._hits += 1
                 return data.get("response")
             except (json.JSONDecodeError, KeyError):
                 logger.warning("Corrupt cache entry %s – ignoring", path)
                 self._delete_path(path)
-        with self._lock:
-            self._misses += 1
+        self._misses += 1
         return None
 
     def put(
@@ -58,7 +67,18 @@ class ResponseCache:
         narrative: str,
         response: Dict[str, Any],
     ) -> None:
-        """Store a response in the cache."""
+        """Store a response in the cache.
+
+        Lock-free write strategy:
+        1. Serialize to a temp file with a uuid4 suffix — unique per
+           call, so concurrent writes never collide on the temp name.
+        2. ``os.replace`` atomically swaps the temp file into the final
+           path (atomic on both NTFS/Windows and POSIX).  Readers will
+           see either the old file or the new file, never a partial write.
+        3. If two threads write the *same* key concurrently, both produce
+           identical content (same input → same hash → same response),
+           so last-writer-wins is correct.
+        """
         key = self._key(model, task, narrative)
         path = self._path(task, key)
         entry = {
@@ -71,10 +91,9 @@ class ResponseCache:
             "prompt_version": PROMPT_VERSIONS.get(task, "1.0"),
         }
         payload = json.dumps(entry, ensure_ascii=False, indent=2)
-        with self._lock:
-            tmp_path = path.with_suffix(f"{path.suffix}.{uuid.uuid4().hex}.tmp")
-            tmp_path.write_text(payload, encoding="utf-8")
-            os.replace(tmp_path, path)
+        tmp_path = path.with_suffix(f"{path.suffix}.{uuid.uuid4().hex}.tmp")
+        tmp_path.write_text(payload, encoding="utf-8")
+        os.replace(tmp_path, path)
 
     def delete(self, model: str, task: str, narrative: str) -> None:
         """Remove a cached response if it exists."""
@@ -123,9 +142,12 @@ class ResponseCache:
         return task_dir / f"{key}.json"
 
     def _delete_path(self, path: Path) -> None:
-        with self._lock:
-            if path.exists():
-                path.unlink()
+        # EAFP instead of lock-protected exists()+unlink() — avoids
+        # TOCTOU race and doesn't need a lock.
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
 
     def _ensure_dirs(self) -> None:
         for task_dir in self.TASK_DIRS:
