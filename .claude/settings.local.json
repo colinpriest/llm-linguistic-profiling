@@ -20,7 +20,13 @@
       "Bash(python3:*)",
       "Bash(wc:*)",
       "Bash(grep:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(del:*)",
+      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" diff src/bayes_robustness.py)",
+      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" add src/bayes_robustness.py)",
+      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" commit -m \"$\\(cat <<''EOF''\nAdd validation, diagnostics persistence, and data-loss tracking to Bayesian layer\n\n- Add _validate_case_ids guard before complaint-level mapping\n- Relax _gate_fit: rhat>1.01/ess<400 now WARN instead of FAIL\n- Persist full diagnostics JSON \\(including diagnose_text\\) for post-mortem\n- Track and warn on per-dimension NA row loss during data prep\n- Include diagnose_text in result payload when status is not OK\n- Skip metric if J < 5 unique complaints\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" push)",
+      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" pull)"
     ]
   }
 }

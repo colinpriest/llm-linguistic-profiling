@@ -5,9 +5,14 @@
 // Note: ordered_logistic absorbs the intercept into the cutpoints,
 // so no separate alpha parameter is needed (unlike the logistic model).
 //
+// Uses reparameterization to guarantee ordered cutpoints:
+//   c[1] = c_base
+//   c[2] = c_base + softplus(c_diff_raw) + 0.1  (guaranteed > c[1])
+//
 // Priors (tighter for stability)
 //   beta      ~ Normal(0, 0.8)   [stronger shrinkage on coefficients]
-//   c         ~ Normal(0, 1.5)   [tighter on cutpoints to avoid inf proposals]
+//   c_base    ~ Normal(0, 1.5)   [first cutpoint]
+//   c_diff_raw ~ Normal(0, 1.0)  [controls gap between cutpoints]
 //   sigma_u   ~ Normal(0, 0.5)   [half-normal, lower=0]
 //   z_u       ~ Normal(0, 1)     [non-centred]
 
@@ -22,22 +27,27 @@ data {
 
 parameters {
   vector[K] beta;
-  ordered[2] c;                         // cutpoints (absorb intercept)
+  real c_base;                          // first cutpoint
+  real c_diff_raw;                      // raw difference (unconstrained)
   vector[J] z_u;
   real<lower=0> sigma_u;
 }
 
 transformed parameters {
   vector[J] u = z_u * sigma_u;
+  ordered[2] c;
+  c[1] = c_base;
+  // softplus(x) = log(1 + exp(x)) is always positive; add 0.1 minimum gap
+  c[2] = c_base + log1p_exp(c_diff_raw) + 0.1;
 }
 
 model {
   // Stronger shrinkage than Normal(0,1) to stabilise many interaction terms.
   // OR ~ 2.2 at 1 SD, still allows meaningful effects.
   beta ~ normal(0, 0.8);
-  // Tighter cutpoint prior keeps c in reasonable logit-scale range (±3 at 2 SD),
-  // reducing "Cut-points not valid ordered vector" and "inf" proposal warnings.
-  c ~ normal(0, 1.5);
+  // Priors on reparameterized cutpoints
+  c_base ~ normal(0, 1.5);
+  c_diff_raw ~ normal(0, 1.0);  // softplus(0) ≈ 0.69, so typical gap ≈ 0.8
   z_u ~ std_normal();
   // Half-normal(0, 0.5): 95% of mass below ~1.0 on the logit scale.
   // Exponential(1) (mean=1.0) was too diffuse — singleton complaints

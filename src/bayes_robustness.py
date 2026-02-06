@@ -810,6 +810,8 @@ def run_bayes_robustness(
     models: List[str],
     seed: int = 42,
     output_dir: Optional[Path] = None,
+    use_cache: bool = True,
+    cache_dir: str = "./cache",
 ) -> Dict[str, Any]:
     """Run Bayesian robustness analysis (B1 logistic + B2 ordinal).
 
@@ -821,11 +823,23 @@ def run_bayes_robustness(
     models : List of LLM model identifiers to iterate over.
     seed : Random seed for Stan sampler.
     output_dir : Paper bundle output root (for artifact storage).
+    use_cache : If True (default), check for cached results before computing.
+    cache_dir : Directory for analysis cache files.
 
     Returns
     -------
     Nested dict: {model: {metric: {logistic: {...}, ordinal: {...}}}}
     """
+    # Check cache first
+    if use_cache:
+        from src.analysis_cache import get_analysis_cache
+        cache = get_analysis_cache(cache_dir)
+        dataframes = {"baseline_sev": baseline_sev}
+        params = {"models": models, "seed": seed}
+        cached_result = cache.get("bayes_robustness", dataframes, params)
+        if cached_result is not None:
+            return cached_result
+
     results: Dict[str, Any] = {}
 
     for model in models:
@@ -1171,5 +1185,9 @@ def run_bayes_robustness(
             model_results[severity_metric] = metric_result
 
         results[model] = model_results
+
+    # Cache the results
+    if use_cache:
+        cache.put("bayes_robustness", dataframes, params, results)
 
     return results

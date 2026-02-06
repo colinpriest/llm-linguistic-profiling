@@ -125,6 +125,8 @@ class Experiment:
         seed: int = 42,
         skip_steps: Optional[Set[int]] = None,
         clear_cache: bool = False,
+        clear_analysis_cache: bool = False,
+        clear_bayes_cache: bool = False,
         verbose: bool = False,
         api_key: str = "",
     ) -> None:
@@ -152,6 +154,7 @@ class Experiment:
         self.verbose = verbose
 
         # Cache
+        self.cache_dir = cache_dir
         self.cache = ResponseCache(cache_dir)
         text_feature_cache.configure(cache_dir)
         if clear_cache:
@@ -165,6 +168,30 @@ class Experiment:
                 import shutil
                 shutil.rmtree(pipeline_dir)
                 logger.info("Pipeline cache cleared: %s", pipeline_dir)
+            # Clear analysis cache (severity, Bayesian)
+            from src.analysis_cache import get_analysis_cache
+            analysis_cache = get_analysis_cache(cache_dir)
+            cleared_analysis = analysis_cache.clear()
+            if cleared_analysis:
+                logger.info("Analysis cache cleared: %d files removed", cleared_analysis)
+        elif clear_analysis_cache:
+            # Clear only analysis cache (severity, Bayesian) - not LLM responses
+            from src.analysis_cache import get_analysis_cache
+            analysis_cache = get_analysis_cache(cache_dir)
+            cleared_analysis = analysis_cache.clear()
+            if cleared_analysis:
+                logger.info("Analysis cache cleared: %d files removed", cleared_analysis)
+            else:
+                logger.info("Analysis cache was already empty")
+        elif clear_bayes_cache:
+            # Clear only Bayesian model cache; retain severity amplification cache
+            from src.analysis_cache import get_analysis_cache
+            analysis_cache = get_analysis_cache(cache_dir)
+            cleared = analysis_cache.clear(analysis_type="bayes_robustness")
+            if cleared:
+                logger.info("Bayesian model cache cleared: %d files removed", cleared)
+            else:
+                logger.info("Bayesian model cache was already empty")
 
         # LLM client
         config = LLMConfig(
@@ -1655,6 +1682,7 @@ class Experiment:
             n_boot=1000,
             seed=self.seed,
             neutralized_df=neutralized_sev,
+            cache_dir=self.cache_dir,
         )
         self.analysis_results["severity"] = result
 
@@ -1867,6 +1895,7 @@ class Experiment:
             models=self.models,
             seed=self.seed,
             output_dir=output_dir,
+            cache_dir=self.cache_dir,
         )
         self.analysis_results["severity"]["bayesian_robustness"] = bayes_result
         logger.info("Bayesian robustness analysis complete")

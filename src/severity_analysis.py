@@ -1746,6 +1746,8 @@ def run_severity_analysis(
     n_boot: int = 1000,
     seed: int = 42,
     neutralized_df: Optional[pd.DataFrame] = None,
+    use_cache: bool = True,
+    cache_dir: str = "./cache",
 ) -> Dict[str, Any]:
     """Run the full severity amplification analysis.
 
@@ -1766,6 +1768,8 @@ def run_severity_analysis(
     neutralized_df : Neutralized remedy decisions with severity columns merged.
         Columns: [case_id, model, tier, confidence, monetary_severity, issue_severity, persona_label]
         If provided, a mitigation × severity comparison is computed.
+    use_cache : If True (default), check for cached results before computing.
+    cache_dir : Directory for analysis cache files.
 
     Returns
     -------
@@ -1773,6 +1777,22 @@ def run_severity_analysis(
     three_way, model_comparison, process, consistency, mitigation_severity,
     missingness_diagnostic.
     """
+    # Check cache first
+    if use_cache:
+        from src.analysis_cache import get_analysis_cache
+        cache = get_analysis_cache(cache_dir)
+        dataframes = {
+            "baseline_df": baseline_df,
+            "persona_decisions_df": persona_decisions_df,
+            "personas_df": personas_df,
+            "complaints_df": complaints_df,
+            "neutralized_df": neutralized_df,
+        }
+        params = {"models": models, "n_boot": n_boot, "seed": seed}
+        cached_result = cache.get("severity_analysis", dataframes, params)
+        if cached_result is not None:
+            return cached_result
+
     logger.info("Running severity amplification analysis...")
 
     # Total sections for top-level progress bar
@@ -1805,10 +1825,14 @@ def run_severity_analysis(
     progress = tqdm(total=n_sections, desc="Severity analysis", delay=0.5)
 
     try:
-        return _run_severity_analysis_inner(
+        result = _run_severity_analysis_inner(
             baseline_df, persona_decisions_df, personas_df, complaints_df,
             models, n_boot, seed, neutralized_df, has_neutralized, progress,
         )
+        # Cache the result
+        if use_cache:
+            cache.put("severity_analysis", dataframes, params, result)
+        return result
     finally:
         progress.close()
         _warning_ctx.__exit__(None, None, None)

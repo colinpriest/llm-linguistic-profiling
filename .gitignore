@@ -49,3 +49,4 @@ analysis/stats/bayes/*.parquet
 # OS
 .DS_Store
 Thumbs.db
+nul
