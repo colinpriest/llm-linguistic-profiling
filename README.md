@@ -90,7 +90,9 @@ python llm_fairness_experiment.py --models gpt-4o-mini --verbose
 | `--num-complaints` | 5000 | Number of base complaints to process |
 | `--causal-sample-pct` | 0.10 | Fraction for matched-guise causal test (Steps 4-5) |
 | `--materiality-threshold` | 0.80 | Threshold for adverse impact ratio (80% rule) |
-| `--clear-cache` | false | Clear all cached LLM responses before run |
+| `--clear-cache` | false | Clear everything: LLM response cache, text-feature cache, data pipeline cache, and analysis caches |
+| `--clear-analysis-cache` | false | Clear only severity amplification + Bayesian analysis caches (keeps LLM/text-feature caches) |
+| `--clear-bayes-cache` | false | Clear only the Bayesian model cache (retains severity amplification cache and all LLM caches) |
 | `--models` | gpt-4o-mini gpt-5-mini | Models to test |
 | `--threads` | 100 | Concurrent LLM request threads |
 | `--output-dir` | ./output | Directory for report and artifacts |
