@@ -5,11 +5,11 @@
 // Note: ordered_logistic absorbs the intercept into the cutpoints,
 // so no separate alpha parameter is needed (unlike the logistic model).
 //
-// Priors
-//   beta      ~ Normal(0, 1)
-//   c         ~ Normal(0, 2)          [ordered cutpoints]
-//   sigma_u   ~ Normal(0, 0.5)       [half-normal, lower=0]
-//   z_u       ~ Normal(0, 1)          [non-centred]
+// Priors (tighter for stability)
+//   beta      ~ Normal(0, 0.8)   [stronger shrinkage on coefficients]
+//   c         ~ Normal(0, 1.5)   [tighter on cutpoints to avoid inf proposals]
+//   sigma_u   ~ Normal(0, 0.5)   [half-normal, lower=0]
+//   z_u       ~ Normal(0, 1)     [non-centred]
 
 data {
   int<lower=1> N;                       // observations
@@ -32,13 +32,12 @@ transformed parameters {
 }
 
 model {
-  // Priors — tightened from Normal(0, 1.5) / Normal(0, 3) after
-  // convergence failures (cutpoints overflowing to inf, rhat>1.6, ess<10).
-  // Normal(0, 1) regularises the many interaction dummies while still
-  // allowing OR ≈ 2.7 at 1 SD.  Cutpoint prior Normal(0, 2) keeps c
-  // in a reasonable logit-scale range (±4 at 2 SD).
-  beta ~ normal(0, 1);
-  c ~ normal(0, 2);
+  // Stronger shrinkage than Normal(0,1) to stabilise many interaction terms.
+  // OR ~ 2.2 at 1 SD, still allows meaningful effects.
+  beta ~ normal(0, 0.8);
+  // Tighter cutpoint prior keeps c in reasonable logit-scale range (±3 at 2 SD),
+  // reducing "Cut-points not valid ordered vector" and "inf" proposal warnings.
+  c ~ normal(0, 1.5);
   z_u ~ std_normal();
   // Half-normal(0, 0.5): 95% of mass below ~1.0 on the logit scale.
   // Exponential(1) (mean=1.0) was too diffuse — singleton complaints

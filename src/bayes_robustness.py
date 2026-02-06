@@ -52,11 +52,13 @@ _SEVERITY_REF = "low"
 # ~30-40 columns (persona dummies + severity dummies + interactions)
 # plus J complaint-level random effects.  750 warmup was insufficient —
 # chains failed to converge (rhat>1.2, ess<15) on issue_severity runs.
+# High adapt_delta (0.99) and max_treedepth (13) reduce divergent
+# transitions and treedepth hits for difficult posteriors.
 _CHAINS = 4
 _ITER_SAMPLING = 1000
 _ITER_WARMUP = 1000
-_ADAPT_DELTA = 0.95
-_MAX_TREEDEPTH = 12
+_ADAPT_DELTA = 0.99
+_MAX_TREEDEPTH = 13
 
 # Stan model paths (relative to repo root)
 _STAN_DIR = Path(__file__).resolve().parent.parent / "models" / "stan"
@@ -328,21 +330,25 @@ def _gate_fit(diagnostics: Dict[str, Any]) -> str:
     """Apply acceptance gate. Returns 'OK', 'WARN', or 'FAIL'.
 
     Logic:
-        FAIL — severe non-convergence or many divergences.
-        WARN — mild/medium issues (slightly high Rhat, modest ESS, any divergences).
+        FAIL — non-convergence (Rhat > 1.01, ESS < 400) or any divergences.
+        WARN — minor issues (treedepth hits, domain warnings).
         OK   — clean diagnostics.
+
+    Tighter thresholds ensure posterior draws are reliable for inference.
     """
     rhat = diagnostics.get("max_rhat", float("nan"))
     ess = diagnostics.get("min_ess_bulk", 0)
     div = diagnostics.get("divergences", 0)
     td = diagnostics.get("treedepth_hits", 0)
 
-    # Hard fail: clearly non-converged or unstable chains
-    if (not np.isfinite(rhat)) or rhat > 1.05 or ess < 100 or div > 5:
+    # Hard fail: non-convergent chains or any divergent transitions
+    # Divergences indicate the sampler could not explore the posterior
+    # properly — even 1 divergence is concerning for inference.
+    if (not np.isfinite(rhat)) or rhat > 1.01 or ess < 400 or div > 0:
         return "FAIL"
 
-    # Warning band: marginal convergence or any sampler pathologies
-    if rhat > 1.01 or ess < 400 or div > 0 or td > 0:
+    # Warning band: treedepth hits (sampler reached max depth)
+    if td > 0:
         return "WARN"
 
     return "OK"
@@ -925,14 +931,15 @@ def run_bayes_robustness(
             )
 
             # Decide whether to use complaint random intercepts.
-            # Only drop for monetary_severity — issue_severity uses all
-            # complaints so singletons are rare there.
+            # Apply globally for both severity metrics: if too many
+            # complaints are singletons, the complaint-level random
+            # intercepts are unidentifiable.
             use_random_intercept = True
-            if severity_metric == "monetary_severity" and pct_singletons > _SINGLETON_THRESHOLD:
+            if pct_singletons > _SINGLETON_THRESHOLD:
                 use_random_intercept = False
                 logger.info(
                     "%s/%s: %.0f%% of complaints are singletons (>%.0f%% threshold) "
-                    "→ dropping complaint random intercept (fixed-effect models). "
+                    "-> using fixed-effect models. "
                     "Random intercepts are unidentifiable when most complaint "
                     "groups contain a single observation.",
                     model, severity_metric,
@@ -984,202 +991,182 @@ def run_bayes_robustness(
                     return _LOGIT_STAN, _ORDINAL_STAN
                 return _LOGIT_FIXED_STAN, _ORDINAL_FIXED_STAN
 
-            # For issue_severity, fit once and fatal on failure (no fallbacks).
-            if severity_metric == "issue_severity":
-                b1_stan, b2_stan = _pick_stan_files(use_random_intercept, flex=False)
-                sd_b1, sd_b2 = _make_stan_data(X, use_random_intercept)
-                method_lbl = "hierarchical" if use_random_intercept else "fixed-effect"
-                result = _try_b1_b2(
-                    df=df, X=X, col_names=col_names, dim_levels=dim_levels,
-                    b1_stan_file=b1_stan, b2_stan_file=b2_stan,
-                    stan_data_b1=sd_b1, stan_data_b2=sd_b2,
-                    fit_id_b1=f"B1__{fit_prefix}", fit_id_b2=f"B2__{fit_prefix}",
-                    seed=seed, output_dir=output_dir,
-                    method_label=method_lbl,
-                )
-                if result is None:
-                    raise RuntimeError(
-                        f"Bayesian models FAILED for {model}/{severity_metric}. "
-                        f"Posterior draws are unreliable."
-                    )
-                metric_result.update(result)
+            # ── 5-step fallback chain (applied to both severity metrics) ──
+            # If singleton ratio is high, we start with fixed-effect models.
+            # The chain progressively tries more robust configurations.
+            attempted: List[str] = []
+            result: Optional[Dict[str, Any]] = None
+            fallback_used: Optional[str] = None
 
-            # For monetary_severity, use 5-step fallback chain.
+            # ── Step 1: standard fit ──
+            step_label = "standard"
+            method_lbl = "hierarchical" if use_random_intercept else "fixed-effect"
+            logger.info("%s fallback chain: step 1 -- %s fit (K=%d)",
+                        severity_metric, method_lbl, X.shape[1])
+            b1_stan, b2_stan = _pick_stan_files(use_random_intercept, flex=False)
+            sd_b1, sd_b2 = _make_stan_data(X, use_random_intercept)
+            result = _try_b1_b2(
+                df=df, X=X, col_names=col_names, dim_levels=dim_levels,
+                b1_stan_file=b1_stan, b2_stan_file=b2_stan,
+                stan_data_b1=sd_b1, stan_data_b2=sd_b2,
+                fit_id_b1=f"B1__{fit_prefix}", fit_id_b2=f"B2__{fit_prefix}",
+                seed=seed, output_dir=output_dir,
+                method_label=method_lbl,
+            )
+            if result is not None:
+                fallback_used = step_label
+                logger.info("%s: step 1 (%s) succeeded", severity_metric, method_lbl)
             else:
-                attempted: List[str] = []
-                result: Optional[Dict[str, Any]] = None
-                fallback_used: Optional[str] = None
+                attempted.append(f"step 1: {method_lbl} (K={X.shape[1]})")
+                logger.warning("%s: step 1 (%s) FAILED", severity_metric, method_lbl)
 
-                # ── Step 1: standard fit ──
-                step_label = "standard"
-                method_lbl = "hierarchical" if use_random_intercept else "fixed-effect"
-                logger.info("monetary_severity fallback chain: "
-                            "step 1 — %s fit (K=%d)", method_lbl, X.shape[1])
-                b1_stan, b2_stan = _pick_stan_files(use_random_intercept, flex=False)
-                sd_b1, sd_b2 = _make_stan_data(X, use_random_intercept)
-                result = _try_b1_b2(
-                    df=df, X=X, col_names=col_names, dim_levels=dim_levels,
-                    b1_stan_file=b1_stan, b2_stan_file=b2_stan,
-                    stan_data_b1=sd_b1, stan_data_b2=sd_b2,
-                    fit_id_b1=f"B1__{fit_prefix}", fit_id_b2=f"B2__{fit_prefix}",
-                    seed=seed, output_dir=output_dir,
-                    method_label=method_lbl,
+            # ── Fallback 2: category-level random intercept ──
+            if result is None:
+                # Use product_category as grouping variable (coarser
+                # than complaint ID, so random intercepts are
+                # identifiable even with many singletons).
+                cat_col = "product_category"
+                if cat_col in df.columns and df[cat_col].notna().sum() > 0:
+                    cat_vals = df[cat_col].fillna("_unknown_").values
+                    unique_cats = np.unique(cat_vals)
+                    cat_map = {c: i + 1 for i, c in enumerate(unique_cats)}
+                    jj_cat = np.array([cat_map[c] for c in cat_vals])
+                    J_cat = len(unique_cats)
+
+                    logger.info(
+                        "%s fallback chain: step 2 -- category-level RE (%s, J=%d)",
+                        severity_metric, cat_col, J_cat,
+                    )
+                    b1_stan_cat, b2_stan_cat = _LOGIT_STAN, _ORDINAL_STAN
+                    common_cat: Dict[str, Any] = {
+                        "N": len(df), "K": X.shape[1], "X": X.tolist(),
+                        "J": J_cat, "jj": jj_cat.tolist(),
+                    }
+                    result = _try_b1_b2(
+                        df=df, X=X, col_names=col_names, dim_levels=dim_levels,
+                        b1_stan_file=b1_stan_cat, b2_stan_file=b2_stan_cat,
+                        stan_data_b1={**common_cat, "y": y_logistic},
+                        stan_data_b2={**common_cat, "y": y_ordinal},
+                        fit_id_b1=f"B1__{fit_prefix}__catRE",
+                        fit_id_b2=f"B2__{fit_prefix}__catRE",
+                        seed=seed, output_dir=output_dir,
+                        method_label=f"category-RE({cat_col})",
+                    )
+                    if result is not None:
+                        fallback_used = "category-RE"
+                        logger.info("%s: step 2 (category RE) succeeded", severity_metric)
+                    else:
+                        attempted.append(f"step 2: category-RE({cat_col}, J={J_cat})")
+                        logger.warning("%s: step 2 (category RE) FAILED", severity_metric)
+                else:
+                    attempted.append(f"step 2: category-RE skipped ({cat_col} not available)")
+                    logger.warning(
+                        "%s fallback chain: step 2 skipped -- %s column not available",
+                        severity_metric, cat_col,
+                    )
+
+            # ── Fallback 3: per-dimension models ──
+            if result is None:
+                logger.info(
+                    "%s fallback chain: step 3 -- per-dimension models",
+                    severity_metric,
+                )
+                result = _try_per_dimension(
+                    df=df,
+                    severity_metric=severity_metric,
+                    jj=jj, J=J,
+                    use_random_intercept=use_random_intercept,
+                    fit_id_prefix=fit_prefix,
+                    seed=seed,
+                    output_dir=output_dir,
                 )
                 if result is not None:
-                    fallback_used = step_label
-                    logger.info("monetary_severity: step 1 (%s) succeeded", method_lbl)
+                    fallback_used = "per-dimension"
+                    logger.info("%s: step 3 (per-dimension) succeeded", severity_metric)
                 else:
-                    attempted.append(f"step 1: {method_lbl} (K={X.shape[1]})")
-                    logger.warning("monetary_severity: step 1 (%s) FAILED", method_lbl)
+                    attempted.append("step 3: per-dimension models")
+                    logger.warning("%s: step 3 (per-dimension) FAILED", severity_metric)
 
-                # ── Fallback 2: category-level random intercept ──
-                if result is None:
-                    # Use product_category as grouping variable (coarser
-                    # than complaint ID, so random intercepts are
-                    # identifiable even with many singletons).
-                    cat_col = "product_category"
-                    if cat_col in df.columns and df[cat_col].notna().sum() > 0:
-                        cat_vals = df[cat_col].fillna("_unknown_").values
-                        unique_cats = np.unique(cat_vals)
-                        cat_map = {c: i + 1 for i, c in enumerate(unique_cats)}
-                        jj_cat = np.array([cat_map[c] for c in cat_vals])
-                        J_cat = len(unique_cats)
+            # ── Fallback 4: stronger priors (main=0.8, interaction=0.4) ──
+            if result is None:
+                logger.info(
+                    "%s fallback chain: step 4 -- stronger priors (main=0.8, interaction=0.4)",
+                    severity_metric,
+                )
+                # Build per-column prior_sd: 0.8 for main effects, 0.4
+                # for interaction terms (columns containing '__x__').
+                prior_sd = np.array([
+                    0.4 if "__x__" in c else 0.8 for c in col_names
+                ])
+                b1_flex, b2_flex = _pick_stan_files(use_random_intercept, flex=True)
+                sd_b1_flex, sd_b2_flex = _make_stan_data(
+                    X, use_random_intercept, prior_sd=prior_sd,
+                )
+                result = _try_b1_b2(
+                    df=df, X=X, col_names=col_names, dim_levels=dim_levels,
+                    b1_stan_file=b1_flex, b2_stan_file=b2_flex,
+                    stan_data_b1=sd_b1_flex, stan_data_b2=sd_b2_flex,
+                    fit_id_b1=f"B1__{fit_prefix}__flex",
+                    fit_id_b2=f"B2__{fit_prefix}__flex",
+                    seed=seed, output_dir=output_dir,
+                    method_label="flex-prior",
+                )
+                if result is not None:
+                    fallback_used = "flex-prior"
+                    logger.info("%s: step 4 (stronger priors) succeeded", severity_metric)
+                else:
+                    attempted.append("step 4: flex priors (main=0.8, interaction=0.4)")
+                    logger.warning("%s: step 4 (stronger priors) FAILED", severity_metric)
 
-                        logger.info(
-                            "monetary_severity fallback chain: "
-                            "step 2 — category-level RE (%s, J=%d categories)",
-                            cat_col, J_cat,
-                        )
-                        b1_stan_cat, b2_stan_cat = _LOGIT_STAN, _ORDINAL_STAN
-                        common_cat: Dict[str, Any] = {
-                            "N": len(df), "K": X.shape[1], "X": X.tolist(),
-                            "J": J_cat, "jj": jj_cat.tolist(),
-                        }
-                        result = _try_b1_b2(
-                            df=df, X=X, col_names=col_names, dim_levels=dim_levels,
-                            b1_stan_file=b1_stan_cat, b2_stan_file=b2_stan_cat,
-                            stan_data_b1={**common_cat, "y": y_logistic},
-                            stan_data_b2={**common_cat, "y": y_ordinal},
-                            fit_id_b1=f"B1__{fit_prefix}__catRE",
-                            fit_id_b2=f"B2__{fit_prefix}__catRE",
-                            seed=seed, output_dir=output_dir,
-                            method_label=f"category-RE({cat_col})",
-                        )
-                        if result is not None:
-                            fallback_used = "category-RE"
-                            logger.info("monetary_severity: step 2 (category RE) succeeded")
-                        else:
-                            attempted.append(f"step 2: category-RE({cat_col}, J={J_cat})")
-                            logger.warning("monetary_severity: step 2 (category RE) FAILED")
-                    else:
-                        attempted.append(f"step 2: category-RE skipped ({cat_col} not available)")
-                        logger.warning(
-                            "monetary_severity fallback chain: "
-                            "step 2 skipped — %s column not available", cat_col,
-                        )
+            # ── Fallback 5: aggressive sampler (max_treedepth=15) ──
+            if result is None:
+                logger.info(
+                    "%s fallback chain: step 5 -- aggressive sampler (max_treedepth=15)",
+                    severity_metric,
+                )
+                # Re-use stronger priors from step 4 combined with
+                # aggressive sampler tuning (higher max_treedepth).
+                prior_sd = np.array([
+                    0.4 if "__x__" in c else 0.8 for c in col_names
+                ])
+                b1_flex, b2_flex = _pick_stan_files(use_random_intercept, flex=True)
+                sd_b1_agg, sd_b2_agg = _make_stan_data(
+                    X, use_random_intercept, prior_sd=prior_sd,
+                )
+                result = _try_b1_b2(
+                    df=df, X=X, col_names=col_names, dim_levels=dim_levels,
+                    b1_stan_file=b1_flex, b2_stan_file=b2_flex,
+                    stan_data_b1=sd_b1_agg, stan_data_b2=sd_b2_agg,
+                    fit_id_b1=f"B1__{fit_prefix}__aggressive",
+                    fit_id_b2=f"B2__{fit_prefix}__aggressive",
+                    seed=seed, output_dir=output_dir,
+                    adapt_delta=0.99,
+                    max_treedepth=15,
+                    method_label="aggressive-sampler",
+                )
+                if result is not None:
+                    fallback_used = "aggressive-sampler"
+                    logger.info("%s: step 5 (aggressive sampler) succeeded", severity_metric)
+                else:
+                    attempted.append("step 5: aggressive sampler (max_treedepth=15)")
+                    logger.warning("%s: step 5 (aggressive sampler) FAILED", severity_metric)
 
-                # ── Fallback 3: per-dimension models ──
-                if result is None:
-                    logger.info(
-                        "monetary_severity fallback chain: "
-                        "step 3 — per-dimension models (one dim at a time)"
-                    )
-                    result = _try_per_dimension(
-                        df=df,
-                        severity_metric=severity_metric,
-                        jj=jj, J=J,
-                        use_random_intercept=use_random_intercept,
-                        fit_id_prefix=fit_prefix,
-                        seed=seed,
-                        output_dir=output_dir,
-                    )
-                    if result is not None:
-                        fallback_used = "per-dimension"
-                        logger.info("monetary_severity: step 3 (per-dimension) succeeded")
-                    else:
-                        attempted.append("step 3: per-dimension models")
-                        logger.warning("monetary_severity: step 3 (per-dimension) FAILED")
+            # ── All fallbacks exhausted -> fatal ──
+            if result is None:
+                msg_lines = [
+                    f"All Bayesian fallbacks FAILED for {model}/{severity_metric}.",
+                    "Attempted strategies:",
+                ]
+                for a in attempted:
+                    msg_lines.append(f"  - {a}")
+                msg_lines.append("Posterior draws are unreliable for all attempted configurations.")
+                full_msg = "\n".join(msg_lines)
+                logger.critical(full_msg)
+                raise RuntimeError(full_msg)
 
-                # ── Fallback 4: stronger priors (main=1.0, interaction=0.5) ──
-                if result is None:
-                    logger.info(
-                        "monetary_severity fallback chain: "
-                        "step 4 — stronger priors (main=1.0, interaction=0.5)"
-                    )
-                    # Build per-column prior_sd: 1.0 for main effects, 0.5
-                    # for interaction terms (columns containing ':').
-                    prior_sd = np.array([
-                        0.5 if ":" in c else 1.0 for c in col_names
-                    ])
-                    b1_flex, b2_flex = _pick_stan_files(use_random_intercept, flex=True)
-                    sd_b1_flex, sd_b2_flex = _make_stan_data(
-                        X, use_random_intercept, prior_sd=prior_sd,
-                    )
-                    result = _try_b1_b2(
-                        df=df, X=X, col_names=col_names, dim_levels=dim_levels,
-                        b1_stan_file=b1_flex, b2_stan_file=b2_flex,
-                        stan_data_b1=sd_b1_flex, stan_data_b2=sd_b2_flex,
-                        fit_id_b1=f"B1__{fit_prefix}__flex",
-                        fit_id_b2=f"B2__{fit_prefix}__flex",
-                        seed=seed, output_dir=output_dir,
-                        method_label="flex-prior",
-                    )
-                    if result is not None:
-                        fallback_used = "flex-prior"
-                        logger.info("monetary_severity: step 4 (stronger priors) succeeded")
-                    else:
-                        attempted.append("step 4: flex priors (main=1.0, interaction=0.5)")
-                        logger.warning("monetary_severity: step 4 (stronger priors) FAILED")
-
-                # ── Fallback 5: aggressive sampler (adapt_delta=0.99, max_treedepth=15) ──
-                if result is None:
-                    logger.info(
-                        "monetary_severity fallback chain: "
-                        "step 5 — aggressive sampler (adapt_delta=0.99, max_treedepth=15)"
-                    )
-                    # Re-use stronger priors from step 3 combined with
-                    # aggressive sampler tuning.
-                    prior_sd = np.array([
-                        0.5 if ":" in c else 1.0 for c in col_names
-                    ])
-                    b1_flex, b2_flex = _pick_stan_files(use_random_intercept, flex=True)
-                    sd_b1_agg, sd_b2_agg = _make_stan_data(
-                        X, use_random_intercept, prior_sd=prior_sd,
-                    )
-                    result = _try_b1_b2(
-                        df=df, X=X, col_names=col_names, dim_levels=dim_levels,
-                        b1_stan_file=b1_flex, b2_stan_file=b2_flex,
-                        stan_data_b1=sd_b1_agg, stan_data_b2=sd_b2_agg,
-                        fit_id_b1=f"B1__{fit_prefix}__aggressive",
-                        fit_id_b2=f"B2__{fit_prefix}__aggressive",
-                        seed=seed, output_dir=output_dir,
-                        adapt_delta=0.99,
-                        max_treedepth=15,
-                        method_label="aggressive-sampler",
-                    )
-                    if result is not None:
-                        fallback_used = "aggressive-sampler"
-                        logger.info("monetary_severity: step 5 (aggressive sampler) succeeded")
-                    else:
-                        attempted.append("step 5: aggressive sampler (adapt_delta=0.99, max_treedepth=15)")
-                        logger.warning("monetary_severity: step 5 (aggressive sampler) FAILED")
-
-                # ── All fallbacks exhausted → fatal ──
-                if result is None:
-                    msg_lines = [
-                        f"All Bayesian fallbacks FAILED for {model}/monetary_severity.",
-                        "Attempted strategies:",
-                    ]
-                    for a in attempted:
-                        msg_lines.append(f"  - {a}")
-                    msg_lines.append("Posterior draws are unreliable for all attempted configurations.")
-                    full_msg = "\n".join(msg_lines)
-                    logger.critical(full_msg)
-                    raise RuntimeError(full_msg)
-
-                if fallback_used is not None:
-                    metric_result["fallback_step"] = fallback_used
-                metric_result.update(result)
+            if fallback_used is not None:
+                metric_result["fallback_step"] = fallback_used
+            metric_result.update(result)
 
             model_results[severity_metric] = metric_result
 

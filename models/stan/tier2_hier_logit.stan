@@ -1,11 +1,11 @@
 // B1: Hierarchical logistic regression for Tier-2 indicator
 // Non-centred parameterisation for complaint-level random intercept.
 //
-// Priors
-//   beta      ~ Normal(0, 1)
+// Priors (tighter for stability)
+//   beta      ~ Normal(0, 0.8)   [stronger shrinkage on coefficients]
 //   alpha     ~ Normal(0, 2)
-//   sigma_u   ~ Normal(0, 0.5)       [half-normal, lower=0]
-//   z_u       ~ Normal(0, 1)        [non-centred]
+//   sigma_u   ~ Normal(0, 0.5)   [half-normal, lower=0]
+//   z_u       ~ Normal(0, 1)     [non-centred]
 
 data {
   int<lower=1> N;                       // observations
@@ -28,12 +28,11 @@ transformed parameters {
 }
 
 model {
-  // Priors — tightened from Normal(0, 1.5) / Normal(0, 3) after
-  // convergence failures (rhat>1.2, ess<15) on issue_severity.
+  // Stronger shrinkage than Normal(0,1) to stabilise many interaction terms.
   // X includes main-effect + severity + interaction dummies (~30-40 cols);
-  // Normal(0, 1) still allows OR ≈ 2.7 at 1 SD, which is a large effect
-  // on the logit scale, while regularising the many near-zero interactions.
-  beta ~ normal(0, 1);
+  // Normal(0, 0.8) allows OR ~ 2.2 at 1 SD, still a meaningful effect,
+  // while regularising the many near-zero interactions.
+  beta ~ normal(0, 0.8);
   alpha ~ normal(0, 2);
   z_u ~ std_normal();
   // Half-normal(0, 0.5): 95% of mass below ~1.0 on the logit scale.

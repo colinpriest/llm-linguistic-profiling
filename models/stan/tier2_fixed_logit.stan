@@ -2,8 +2,8 @@
 // Used when most complaints are singletons (>50% with exactly 1 obs),
 // making complaint-level random intercepts unidentifiable.
 //
-// Priors
-//   beta      ~ Normal(0, 1)
+// Priors (tighter for stability)
+//   beta      ~ Normal(0, 0.8)   [stronger shrinkage on coefficients]
 //   alpha     ~ Normal(0, 2)
 
 data {
@@ -19,7 +19,9 @@ parameters {
 }
 
 model {
-  beta ~ normal(0, 1);
+  // Stronger shrinkage than Normal(0,1) to stabilise many interaction terms.
+  // OR ~ 2.2 at 1 SD, still allows meaningful effects.
+  beta ~ normal(0, 0.8);
   alpha ~ normal(0, 2);
 
   y ~ bernoulli_logit(alpha + X * beta);

@@ -3,10 +3,11 @@
 // making complaint-level random intercepts unidentifiable.
 //
 // Note: ordered_logistic absorbs the intercept into the cutpoints.
+// No separate alpha/intercept to avoid redundancy with cutpoints.
 //
-// Priors
-//   beta      ~ Normal(0, 1)
-//   c         ~ Normal(0, 2)          [ordered cutpoints]
+// Priors (tighter for stability)
+//   beta      ~ Normal(0, 0.8)   [stronger shrinkage on coefficients]
+//   c         ~ Normal(0, 1.5)   [tighter on cutpoints to avoid inf proposals]
 
 data {
   int<lower=1> N;                       // observations
@@ -21,8 +22,12 @@ parameters {
 }
 
 model {
-  beta ~ normal(0, 1);
-  c ~ normal(0, 2);
+  // Stronger shrinkage than Normal(0,1) to stabilise many interaction terms.
+  // OR ~ 2.2 at 1 SD, still allows meaningful effects.
+  beta ~ normal(0, 0.8);
+  // Tighter cutpoint prior keeps c in reasonable logit-scale range (±3 at 2 SD),
+  // reducing "Cut-points not valid ordered vector" and "inf" proposal warnings.
+  c ~ normal(0, 1.5);
 
   y ~ ordered_logistic(X * beta, c);
 }

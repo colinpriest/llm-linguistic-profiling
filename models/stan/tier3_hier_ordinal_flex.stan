@@ -1,12 +1,12 @@
 // B2-flex: Hierarchical ordinal with per-column prior scales.
-// Used in fallback 3 (stronger priors) — allows tighter regularisation
-// on interaction terms (prior_sd=0.5) vs main effects (prior_sd=1.0).
+// Used in fallback 4 (stronger priors) — allows tighter regularisation
+// on interaction terms (prior_sd=0.4) vs main effects (prior_sd=0.8).
 //
 // Note: ordered_logistic absorbs the intercept into the cutpoints.
 //
 // Priors
 //   beta[k]   ~ Normal(0, prior_sd[k])   [per-column]
-//   c         ~ Normal(0, 2)              [ordered cutpoints]
+//   c         ~ Normal(0, 1.5)            [tighter cutpoints]
 //   sigma_u   ~ Normal(0, 0.5)            [half-normal, lower=0]
 //   z_u       ~ Normal(0, 1)              [non-centred]
 
@@ -33,7 +33,8 @@ transformed parameters {
 
 model {
   beta ~ normal(0, prior_sd);
-  c ~ normal(0, 2);
+  // Tighter cutpoint prior keeps c in reasonable logit-scale range.
+  c ~ normal(0, 1.5);
   z_u ~ std_normal();
   sigma_u ~ normal(0, 0.5);
 

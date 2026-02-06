@@ -1,6 +1,6 @@
 // B1-flex: Hierarchical logistic with per-column prior scales.
-// Used in fallback 3 (stronger priors) — allows tighter regularisation
-// on interaction terms (prior_sd=0.5) vs main effects (prior_sd=1.0).
+// Used in fallback 4 (stronger priors) — allows tighter regularisation
+// on interaction terms (prior_sd=0.4) vs main effects (prior_sd=0.8).
 //
 // Priors
 //   beta[k]   ~ Normal(0, prior_sd[k])   [per-column]
