@@ -456,6 +456,9 @@ def logistic_regression_analysis(
     diag = validate_regression_inputs(
         X, y, model_label=model_label, is_binary=True,
     )
+    # Track diagnostics for reporting
+    preflight_issues = list(diag.get("issues", []))
+    fallback_actions: List[str] = []
 
     # Handle no_variance_x up front: drop constant columns
     if not diag["ok"]:
@@ -476,6 +479,7 @@ def logistic_regression_analysis(
                     response_var=target_col, predictor_vars=predictor_cols,
                 )
             if dropped:
+                fallback_actions.append(f"Removed {len(dropped)} aliased column(s): {dropped}")
                 logger.info(
                     "%s: fix → removed %s; re-validating with %d remaining predictor(s)",
                     model_label, dropped, X.shape[1] - 1,  # -1 for const
@@ -508,6 +512,11 @@ def logistic_regression_analysis(
                     "aic": model.aic,
                     "converged": model.mle_retvals["converged"],
                     "method": "MLE logit",
+                    "diagnostics": {
+                        "preflight_issues": preflight_issues,
+                        "fallback_actions": fallback_actions,
+                        "status": "OK" if not preflight_issues else "WARN",
+                    },
                 }
         except Exception as e:
             diag = diagnose_fit_failure(e, model_label=model_label, X=X, y=y)
@@ -517,11 +526,15 @@ def logistic_regression_analysis(
     # ---- Attempt 2: separation → Firth penalised logit ----------------------
     if primary == "separation_detected":
         logger.info("%s: separation detected, attempting Firth penalised logit", model_label)
-        firth_result = _firth_logit(X, y, model_label=model_label)
+        fallback_actions.append(f"Separation detected → Firth penalised logit")
+        firth_result = _firth_logit(X, y, model_label=model_label,
+                                     preflight_issues=preflight_issues,
+                                     fallback_actions=fallback_actions)
         if firth_result is not None:
             return firth_result
         # Firth failed; fall through to ridge
         logger.info("%s: Firth failed, falling back to ridge logit", model_label)
+        fallback_actions.append("Firth failed → ridge (L2) regularised logit")
         primary = "convergence_failure"
 
     # ---- Attempt 3: convergence_failure → standardise + ridge ---------------
@@ -530,7 +543,11 @@ def logistic_regression_analysis(
             "%s: standard MLE not viable (%s) → falling back to ridge (L2) regularised logit",
             model_label, primary,
         )
-        return _ridge_logit(X, y, model_label=model_label, reason=primary)
+        if not any("ridge" in a.lower() for a in fallback_actions):
+            fallback_actions.append(f"MLE not viable ({primary}) → ridge (L2) regularised logit")
+        return _ridge_logit(X, y, model_label=model_label, reason=primary,
+                           preflight_issues=preflight_issues,
+                           fallback_actions=fallback_actions)
 
     # ---- Should not reach here; fatal if we do ------------------------------
     fatal_regression_error(
@@ -547,6 +564,8 @@ def _firth_logit(
     model_label: str,
     maxiter: int = 200,
     tol: float = 1e-6,
+    preflight_issues: Optional[List[Dict[str, Any]]] = None,
+    fallback_actions: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Firth bias-reduced logistic regression (Jeffreys-prior penalisation).
 
@@ -611,6 +630,11 @@ def _firth_logit(
             "odds_ratios": dict(zip(param_names, np.exp(beta).tolist())),
             "method": "Firth penalised logit (bias-reduced)",
             "converged": True,
+            "diagnostics": {
+                "preflight_issues": preflight_issues or [],
+                "fallback_actions": fallback_actions or [],
+                "status": "WARN",  # Firth is always a fallback
+            },
         }
     except Exception as e:
         logger.warning("%s: Firth logit failed: %s", model_label, e)
@@ -624,6 +648,8 @@ def _ridge_logit(
     model_label: str,
     reason: str,
     alpha: float = 1.0,
+    preflight_issues: Optional[List[Dict[str, Any]]] = None,
+    fallback_actions: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Ridge (L2) regularised logistic regression via scikit-learn.
 
@@ -662,10 +688,23 @@ def _ridge_logit(
             "method": f"Ridge (L2) logit (fallback for {reason})",
             "regularized": True,
             "alpha": alpha,
+            "diagnostics": {
+                "preflight_issues": preflight_issues or [],
+                "fallback_actions": fallback_actions or [],
+                "status": "WARN",  # Ridge is always a fallback
+            },
         }
     except Exception as e:
         logger.warning("%s: ridge logit failed: %s", model_label, e)
-        return {"error": str(e), "method": "ridge_logit_failed"}
+        return {
+            "error": str(e),
+            "method": "ridge_logit_failed",
+            "diagnostics": {
+                "preflight_issues": preflight_issues or [],
+                "fallback_actions": fallback_actions or [],
+                "status": "FAIL",
+            },
+        }
 
 
 # ---------------------------------------------------------------------------

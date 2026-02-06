@@ -229,6 +229,9 @@ def ordinal_mixed_model(
 
     # ---- Pre-flight diagnostics ---------------------------------------------
     diag = validate_regression_inputs(exog, endog, model_label=model_label)
+    preflight_issues = list(diag.get("issues", []))
+    fallback_actions: List[str] = []
+
     if not diag["ok"]:
         types = {i["type"] for i in diag["issues"]}
         if types & {"no_variance_y", "insufficient_data"}:
@@ -236,18 +239,21 @@ def ordinal_mixed_model(
                     "estimand_status": "not_estimable"}
         if types & {"rank_deficient", "no_variance_x"}:
             exog, dropped = sanitise_design_matrix(exog, model_label=model_label)
+            if dropped:
+                fallback_actions.append(f"Removed {len(dropped)} aliased column(s)")
             if exog.shape[1] < 1:
                 return {"skipped": True, "reason": "all predictors dropped after sanitisation",
                         "estimand_status": "not_estimable"}
 
     # ---- Fit ordinal model --------------------------------------------------
-    def _fit_ordinal(exog_mat, standardised=False):
+    def _fit_ordinal(exog_mat, standardised=False, extra_fallbacks=None):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             om = OrderedModel(endog, exog_mat, distr="logit")
             fit_plain = om.fit(method="bfgs", disp=False, maxiter=300 if standardised else 200)
 
         used_cluster = False
+        cluster_fallback_msg = None
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -257,7 +263,8 @@ def ordinal_mixed_model(
                 )
             used_cluster = True
         except Exception:
-            logger.info("Ordinal model: clustered SEs unavailable, using model-based SEs")
+            cluster_fallback_msg = "Clustered SEs unavailable, using model-based SEs"
+            logger.info("Ordinal model: %s", cluster_fallback_msg)
             fit = fit_plain
 
         se_base = np.asarray(fit.bse, dtype=float)
@@ -275,6 +282,17 @@ def ordinal_mixed_model(
         method_note = "repeated-measures ordinal with clustered SEs"
         if standardised:
             method_note += " (standardised predictors, convergence fallback)"
+
+        # Build diagnostics
+        all_fallbacks = list(fallback_actions)
+        if extra_fallbacks:
+            all_fallbacks.extend(extra_fallbacks)
+        if cluster_fallback_msg:
+            all_fallbacks.append(cluster_fallback_msg)
+        if standardised:
+            all_fallbacks.append("Standardised predictors (convergence fallback)")
+
+        diag_status = "OK" if not all_fallbacks and not preflight_issues else "WARN"
 
         return {
             "coefficients": dict(zip(param_names, fit.params.tolist())),
@@ -295,6 +313,11 @@ def ordinal_mixed_model(
                 "method": method_note,
                 "status": "exploratory",
             },
+            "diagnostics": {
+                "preflight_issues": preflight_issues,
+                "fallback_actions": all_fallbacks,
+                "status": diag_status,
+            },
         }
 
     # Attempt 1: standard fit
@@ -310,8 +333,18 @@ def ordinal_mixed_model(
         return _fit_ordinal(exog_std, standardised=True)
     except Exception as e2:
         logger.warning("%s attempt 2 (standardised) failed: %s", model_label, e2)
+        fallback_actions.append(f"Fit failed after standardisation: {e2}")
 
-    return {"skipped": True, "reason": str(e), "estimand_status": "not_estimable"}
+    return {
+        "skipped": True,
+        "reason": str(e),
+        "estimand_status": "not_estimable",
+        "diagnostics": {
+            "preflight_issues": preflight_issues,
+            "fallback_actions": fallback_actions,
+            "status": "FAIL",
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -526,6 +559,9 @@ def logistic_mixed_model_favourable(
     diag = validate_regression_inputs(
         exog, endog, model_label=model_label, is_binary=True,
     )
+    preflight_issues = list(diag.get("issues", []))
+    fallback_actions: List[str] = []
+
     if not diag["ok"]:
         types = {i["type"] for i in diag["issues"]}
         if types & {"no_variance_y", "insufficient_data"}:
@@ -533,6 +569,8 @@ def logistic_mixed_model_favourable(
                     "estimand_status": "not_estimable"}
         if types & {"rank_deficient", "no_variance_x"}:
             exog, dropped = sanitise_design_matrix(exog, model_label=model_label)
+            if dropped:
+                fallback_actions.append(f"Removed {len(dropped)} aliased column(s)")
             if exog.shape[1] < 1:
                 fatal_regression_error(
                     model_label, diag,
@@ -541,7 +579,7 @@ def logistic_mixed_model_favourable(
 
     exog = sm.add_constant(exog)
 
-    def _fit_gee(cov_struct, method_note=""):
+    def _fit_gee(cov_struct, method_note="", extra_fallbacks=None):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             gee_model = GEE(
@@ -554,6 +592,11 @@ def logistic_mixed_model_favourable(
         method_str = "logistic GEE with complaint_id clustering (GLMM approximation)"
         if method_note:
             method_str += f" ({method_note})"
+
+        all_fallbacks = list(fallback_actions)
+        if extra_fallbacks:
+            all_fallbacks.extend(extra_fallbacks)
+        diag_status = "OK" if not all_fallbacks and not preflight_issues else "WARN"
 
         return {
             "coefficients": fit.params.to_dict(),
@@ -572,6 +615,11 @@ def logistic_mixed_model_favourable(
                 "clustering": "complaint_id",
                 "method": method_str,
             },
+            "diagnostics": {
+                "preflight_issues": preflight_issues,
+                "fallback_actions": all_fallbacks,
+                "status": diag_status,
+            },
         }
 
     # Attempt 1: Exchangeable correlation
@@ -580,13 +628,16 @@ def logistic_mixed_model_favourable(
     except Exception as e:
         fit_diag = diagnose_fit_failure(e, model_label=model_label, X=exog, y=endog)
         logger.warning("%s Exchangeable failed (%s): %s", model_label, fit_diag["type"], e)
+        fallback_actions.append(f"Exchangeable failed ({fit_diag['type']})")
 
     # Attempt 2: Independence correlation (more robust)
     try:
-        return _fit_gee(Independence(), method_note="Independence fallback")
+        return _fit_gee(Independence(), method_note="Independence fallback",
+                       extra_fallbacks=["Independence correlation fallback"])
     except Exception as e2:
         fit_diag2 = diagnose_fit_failure(e2, model_label=model_label, X=exog, y=endog)
         logger.warning("%s Independence failed (%s): %s", model_label, fit_diag2["type"], e2)
+        fallback_actions.append(f"Independence also failed ({fit_diag2['type']})")
 
     # Confirmatory model — fatal if not estimable
     fatal_regression_error(
@@ -649,6 +700,9 @@ def logistic_mixed_model_info_request(
     diag = validate_regression_inputs(
         exog, endog, model_label=model_label, is_binary=True,
     )
+    preflight_issues_ir = list(diag.get("issues", []))
+    fallback_actions_ir: List[str] = []
+
     if not diag["ok"]:
         types = {i["type"] for i in diag["issues"]}
         if types & {"no_variance_y", "insufficient_data"}:
@@ -656,6 +710,8 @@ def logistic_mixed_model_info_request(
                     "estimand_status": "not_estimable"}
         if types & {"rank_deficient", "no_variance_x"}:
             exog, dropped = sanitise_design_matrix(exog, model_label=model_label)
+            if dropped:
+                fallback_actions_ir.append(f"Removed {len(dropped)} aliased column(s)")
             if exog.shape[1] < 1:
                 fatal_regression_error(
                     model_label, diag,
@@ -664,7 +720,7 @@ def logistic_mixed_model_info_request(
 
     exog = sm.add_constant(exog)
 
-    def _fit_gee(cov_struct, method_note=""):
+    def _fit_gee_ir(cov_struct, method_note="", extra_fallbacks=None):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             gee_model = GEE(
@@ -677,6 +733,11 @@ def logistic_mixed_model_info_request(
         method_str = "logistic GEE with complaint_id clustering (GLMM approximation)"
         if method_note:
             method_str += f" ({method_note})"
+
+        all_fallbacks = list(fallback_actions_ir)
+        if extra_fallbacks:
+            all_fallbacks.extend(extra_fallbacks)
+        diag_status = "OK" if not all_fallbacks and not preflight_issues_ir else "WARN"
 
         return {
             "coefficients": fit.params.to_dict(),
@@ -695,21 +756,29 @@ def logistic_mixed_model_info_request(
                 "clustering": "complaint_id",
                 "method": method_str,
             },
+            "diagnostics": {
+                "preflight_issues": preflight_issues_ir,
+                "fallback_actions": all_fallbacks,
+                "status": diag_status,
+            },
         }
 
     # Attempt 1: Exchangeable correlation
     try:
-        return _fit_gee(Exchangeable())
+        return _fit_gee_ir(Exchangeable())
     except Exception as e:
         fit_diag = diagnose_fit_failure(e, model_label=model_label, X=exog, y=endog)
         logger.warning("%s Exchangeable failed (%s): %s", model_label, fit_diag["type"], e)
+        fallback_actions_ir.append(f"Exchangeable failed ({fit_diag['type']})")
 
     # Attempt 2: Independence correlation (more robust)
     try:
-        return _fit_gee(Independence(), method_note="Independence fallback")
+        return _fit_gee_ir(Independence(), method_note="Independence fallback",
+                         extra_fallbacks=["Independence correlation fallback"])
     except Exception as e2:
         fit_diag2 = diagnose_fit_failure(e2, model_label=model_label, X=exog, y=endog)
         logger.warning("%s Independence failed (%s): %s", model_label, fit_diag2["type"], e2)
+        fallback_actions_ir.append(f"Independence also failed ({fit_diag2['type']})")
 
     # Confirmatory model — fatal if not estimable
     fatal_regression_error(

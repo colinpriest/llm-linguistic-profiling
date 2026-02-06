@@ -1226,6 +1226,30 @@ def _build_tab_disparate_impact(
                     parts.append("</tr>")
                 parts.append("</tbody></table>")
 
+            # Show model diagnostics if available
+            log_diag = logistic.get("diagnostics", {})
+            if log_diag:
+                status = log_diag.get("status", "OK")
+                preflight = log_diag.get("preflight_issues", [])
+                fallbacks = log_diag.get("fallback_actions", [])
+                method = logistic.get("method", "MLE logit")
+
+                status_color = {"OK": "#2ecc71", "WARN": "#f39c12", "FAIL": "#e74c3c"}.get(status, "#333")
+                parts.append(f'<p style="margin-top:10px;"><strong>Method:</strong> {html.escape(method)} '
+                             f'| <strong>Status:</strong> <span style="color:{status_color};font-weight:bold;">{status}</span></p>')
+
+                if preflight:
+                    parts.append('<details style="margin-top:8px;"><summary style="cursor:pointer;color:#666;">Pre-flight warnings</summary><ul style="margin:5px 0;padding-left:20px;">')
+                    for issue in preflight:
+                        parts.append(f'<li style="color:#f39c12;">{html.escape(issue.get("detail", str(issue)))}</li>')
+                    parts.append('</ul></details>')
+
+                if fallbacks:
+                    parts.append('<details style="margin-top:8px;"><summary style="cursor:pointer;color:#666;">Fallback actions taken</summary><ul style="margin:5px 0;padding-left:20px;">')
+                    for fb in fallbacks:
+                        parts.append(f'<li style="color:#f39c12;">{html.escape(fb)}</li>')
+                    parts.append('</ul></details>')
+
         # Tier distribution chart
         tier_chart = _chart_tier_by_persona(analysis_results)
         if tier_chart:
@@ -3858,6 +3882,92 @@ def _build_tab_repeated_measures(
         parts.append(f'<div class="metric-card"><div class="value">{ds.get("n_models", 0)}</div><div class="label">LLM Models</div></div>')
         parts.append("</div>")
 
+    # ── Model Diagnostics Summary ──
+    # Collect diagnostics from all models
+    all_diags: List[Dict[str, Any]] = []
+    model_keys = ["ordinal_model", "conditional_logistic_favourable", "logistic_gee_favourable",
+                  "logistic_gee_info_request", "linear_mixed_model"]
+    model_labels = {
+        "ordinal_model": "Ordinal Model",
+        "conditional_logistic_favourable": "Conditional Logistic",
+        "logistic_gee_favourable": "GEE Favourable",
+        "logistic_gee_info_request": "GEE Info Request",
+        "linear_mixed_model": "Linear Mixed Model",
+    }
+
+    for model in models:
+        mr = rm.get(model, {})
+        if not mr or mr.get("skipped"):
+            continue
+        for mk in model_keys:
+            m_res = mr.get(mk, {})
+            if m_res and not m_res.get("skipped"):
+                diag = m_res.get("diagnostics", {})
+                if diag:
+                    all_diags.append({
+                        "llm_model": model,
+                        "stat_model": model_labels.get(mk, mk),
+                        "status": diag.get("status", "OK"),
+                        "preflight_issues": diag.get("preflight_issues", []),
+                        "fallback_actions": diag.get("fallback_actions", []),
+                        "method": m_res.get("model_info", {}).get("method", ""),
+                    })
+
+    # Show diagnostics panel if there are any warnings
+    has_warnings = any(d.get("status") != "OK" for d in all_diags)
+    has_issues = any(d.get("preflight_issues") or d.get("fallback_actions") for d in all_diags)
+
+    if has_warnings or has_issues:
+        parts.append('<div class="collapsible">')
+        parts.append('<div class="collapsible-header" style="background:#fef9e7;">Model Diagnostics Summary</div>')
+        parts.append('<div class="collapsible-body">')
+
+        # Status summary
+        n_ok = sum(1 for d in all_diags if d.get("status") == "OK")
+        n_warn = sum(1 for d in all_diags if d.get("status") == "WARN")
+        n_fail = sum(1 for d in all_diags if d.get("status") == "FAIL")
+
+        parts.append('<div class="metrics-grid">')
+        if n_ok > 0:
+            parts.append(f'<div class="metric-card" style="border-left:4px solid #2ecc71;background:#eafaf1;"><div class="value" style="color:#2ecc71;">{n_ok}</div><div class="label">OK</div></div>')
+        if n_warn > 0:
+            parts.append(f'<div class="metric-card" style="border-left:4px solid #f39c12;background:#fef9e7;"><div class="value" style="color:#f39c12;">{n_warn}</div><div class="label">WARN</div></div>')
+        if n_fail > 0:
+            parts.append(f'<div class="metric-card" style="border-left:4px solid #e74c3c;background:#fdedec;"><div class="value" style="color:#e74c3c;">{n_fail}</div><div class="label">FAIL</div></div>')
+        parts.append('</div>')
+
+        # Detailed diagnostics table
+        parts.append('<table class="sortable"><thead><tr>')
+        parts.append('<th>LLM Model</th><th>Statistical Model</th><th>Status</th><th>Method</th><th>Issues / Fallbacks</th>')
+        parts.append('</tr></thead><tbody>')
+
+        for d in all_diags:
+            if d.get("status") == "OK" and not d.get("preflight_issues") and not d.get("fallback_actions"):
+                continue  # Skip OK models without issues
+
+            status = d.get("status", "OK")
+            s_colors = {"OK": "#2ecc71", "WARN": "#f39c12", "FAIL": "#e74c3c"}
+            s_color = s_colors.get(status, "#333")
+            row_bg = ' style="background:#fef9e7;"' if status == "WARN" else (
+                ' style="background:#fdedec;"' if status == "FAIL" else "")
+
+            issues = []
+            for pi in d.get("preflight_issues", []):
+                issues.append(html.escape(pi.get("detail", str(pi))))
+            for fb in d.get("fallback_actions", []):
+                issues.append(html.escape(fb))
+
+            parts.append(f'<tr{row_bg}>')
+            parts.append(f'<td>{html.escape(d.get("llm_model", ""))}</td>')
+            parts.append(f'<td>{html.escape(d.get("stat_model", ""))}</td>')
+            parts.append(f'<td style="color:{s_color};font-weight:bold;">{status}</td>')
+            parts.append(f'<td>{html.escape(d.get("method", "")[:60])}{"..." if len(d.get("method", "")) > 60 else ""}</td>')
+            parts.append(f'<td>{"<br>".join(issues[:3])}{"..." if len(issues) > 3 else ""}</td>')
+            parts.append('</tr>')
+
+        parts.append('</tbody></table>')
+        parts.append('</div></div>')
+
     for model in models:
         mr = rm.get(model, {})
         if not mr or mr.get("skipped"):
@@ -3874,6 +3984,7 @@ def _build_tab_repeated_measures(
             parts.append(f'<p><strong>Method:</strong> {html.escape(mi.get("method", ""))}</p>')
             parts.append(f'<p><strong>Clustering:</strong> {html.escape(mi.get("clustering", ""))}</p>')
             parts.append(f'<p>N = {om.get("n_obs", 0):,}, clusters = {om.get("n_clusters", 0):,}</p>')
+            _render_rm_model_diagnostics(parts, om)
             _render_coefficient_table(parts, om)
             parts.append("</div></div>")
 
@@ -3886,6 +3997,7 @@ def _build_tab_repeated_measures(
             mi = cl.get("model_info", {})
             parts.append(f'<p><strong>Method:</strong> {html.escape(mi.get("method", ""))}</p>')
             parts.append(f'<p>N = {cl.get("n_obs", 0):,}, strata = {cl.get("n_strata", 0):,}, informative = {cl.get("n_informative_strata", 0):,}</p>')
+            _render_rm_model_diagnostics(parts, cl)
             _render_coefficient_table(parts, cl, show_or=True)
             parts.append("</div></div>")
 
@@ -3898,6 +4010,7 @@ def _build_tab_repeated_measures(
             mi = gee_fav.get("model_info", {})
             parts.append(f'<p><strong>Method:</strong> {html.escape(mi.get("method", ""))}</p>')
             parts.append(f'<p>N = {gee_fav.get("n_obs", 0):,}, clusters = {gee_fav.get("n_clusters", 0):,}</p>')
+            _render_rm_model_diagnostics(parts, gee_fav)
             _render_coefficient_table(parts, gee_fav, show_or=True)
             parts.append("</div></div>")
 
@@ -3910,6 +4023,7 @@ def _build_tab_repeated_measures(
             mi = gee_info.get("model_info", {})
             parts.append(f'<p><strong>Method:</strong> {html.escape(mi.get("method", ""))}</p>')
             parts.append(f'<p>N = {gee_info.get("n_obs", 0):,}, clusters = {gee_info.get("n_clusters", 0):,}</p>')
+            _render_rm_model_diagnostics(parts, gee_info)
             _render_coefficient_table(parts, gee_info, show_or=True)
             parts.append("</div></div>")
 
@@ -3923,6 +4037,7 @@ def _build_tab_repeated_measures(
             parts.append(f'<p><strong>Method:</strong> {html.escape(mi.get("method", ""))}</p>')
             icc = lmm.get("icc", 0)
             parts.append(f'<p><strong>ICC:</strong> {icc:.3f} &mdash; {html.escape(mi.get("icc_interpretation", ""))}</p>')
+            _render_rm_model_diagnostics(parts, lmm)
             parts.append('<div class="metrics-grid">')
             parts.append(f'<div class="metric-card"><div class="value">{_fmt(lmm.get("random_effects_variance"))}</div><div class="label">Random Effect Var</div></div>')
             parts.append(f'<div class="metric-card"><div class="value">{_fmt(lmm.get("residual_variance"))}</div><div class="label">Residual Var</div></div>')
@@ -3969,6 +4084,39 @@ def _build_tab_repeated_measures(
             _render_coefficient_table(parts, lmm)
 
     return "\n".join(parts)
+
+
+def _render_rm_model_diagnostics(parts: List[str], model_results: Dict[str, Any]) -> None:
+    """Render inline diagnostics for a repeated measures model if issues exist."""
+    diag = model_results.get("diagnostics", {})
+    if not diag:
+        return
+
+    status = diag.get("status", "OK")
+    preflight = diag.get("preflight_issues", [])
+    fallbacks = diag.get("fallback_actions", [])
+
+    # Only show if there are issues
+    if status == "OK" and not preflight and not fallbacks:
+        return
+
+    status_color = {"OK": "#2ecc71", "WARN": "#f39c12", "FAIL": "#e74c3c"}.get(status, "#333")
+    parts.append(f'<p style="margin-top:5px;"><strong>Status:</strong> '
+                 f'<span style="color:{status_color};font-weight:bold;">{status}</span></p>')
+
+    if preflight:
+        parts.append('<details style="margin:5px 0;"><summary style="cursor:pointer;color:#666;font-size:0.9em;">Pre-flight warnings</summary>')
+        parts.append('<ul style="margin:5px 0;padding-left:20px;font-size:0.85em;">')
+        for issue in preflight:
+            parts.append(f'<li style="color:#f39c12;">{html.escape(issue.get("detail", str(issue)))}</li>')
+        parts.append('</ul></details>')
+
+    if fallbacks:
+        parts.append('<details style="margin:5px 0;"><summary style="cursor:pointer;color:#666;font-size:0.9em;">Fallback actions taken</summary>')
+        parts.append('<ul style="margin:5px 0;padding-left:20px;font-size:0.85em;">')
+        for fb in fallbacks:
+            parts.append(f'<li style="color:#f39c12;">{html.escape(fb)}</li>')
+        parts.append('</ul></details>')
 
 
 def _render_coefficient_table(
