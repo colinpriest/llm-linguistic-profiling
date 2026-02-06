@@ -2221,6 +2221,53 @@ def _build_tab_severity(
     parts.append("<h2>Severity Amplification Analysis</h2>")
     parts.append("<p>Tests whether LLM bias in complaint resolution is amplified in high-severity cases.</p>")
 
+    # ── Bayesian robustness status banner ──
+    bayes_rob = sev.get("bayesian_robustness", {})
+    if bayes_rob:
+        n_fail, n_warn, n_fallback = 0, 0, 0
+        fallback_details = []
+        for model_name in models:
+            mr = bayes_rob.get(model_name, {})
+            if mr.get("skipped"):
+                continue
+            for metric in ["monetary_severity", "issue_severity"]:
+                mm = mr.get(metric, {})
+                if mm.get("skipped"):
+                    continue
+                fb = mm.get("fallback_step")
+                if fb and fb != "standard":
+                    n_fallback += 1
+                    fallback_details.append(f"{model_name}/{metric}: {fb}")
+                for mtype in ["logistic", "ordinal"]:
+                    status = mm.get(mtype, {}).get("status", "")
+                    if status == "FAIL":
+                        n_fail += 1
+                    elif status == "WARN":
+                        n_warn += 1
+
+        if n_fail > 0:
+            parts.append('<div style="background:#fdedec;border-left:4px solid #e74c3c;padding:12px;margin:10px 0;">')
+            parts.append(f'<strong style="color:#e74c3c;">&#9888; Bayesian Model Failures:</strong> '
+                         f'{n_fail} Stan model(s) failed to converge. '
+                         'See Panel 11 (Bayesian Robustness) for details. '
+                         'Frequentist results remain valid but Bayesian robustness checks are incomplete.')
+            parts.append('</div>')
+        elif n_fallback > 0:
+            parts.append('<div style="background:#fef9e7;border-left:4px solid #f39c12;padding:12px;margin:10px 0;">')
+            parts.append(f'<strong style="color:#f39c12;">&#9888; Bayesian Fallback Strategies Used:</strong> '
+                         f'{n_fallback} model configuration(s) required fallback strategies to achieve convergence. '
+                         'See Panel 11 for details.')
+            if fallback_details:
+                parts.append(f'<br><small>Affected: {"; ".join(fallback_details[:3])}'
+                             f'{"..." if len(fallback_details) > 3 else ""}</small>')
+            parts.append('</div>')
+        elif n_warn > 0:
+            parts.append('<div style="background:#fef9e7;border-left:4px solid #f39c12;padding:12px;margin:10px 0;">')
+            parts.append(f'<strong style="color:#f39c12;">&#9888; Bayesian Model Warnings:</strong> '
+                         f'{n_warn} Stan model(s) had minor issues (e.g., treedepth hits). '
+                         'Results are usable but see Panel 11 for diagnostics.')
+            parts.append('</div>')
+
     # ── Panel 1: Overview ──
     parts.append('<div class="collapsible">')
     parts.append('<div class="collapsible-header">Panel 1: Severity Overview</div>')
@@ -3156,6 +3203,225 @@ def _build_tab_severity(
                         style = ' style="font-weight:bold;"' if level == "high" else ""
                         parts.append(f'<td{style}>{_fmt(gap, 3)}</td></tr>')
             parts.append('</tbody></table>')
+
+        parts.append('</div></div>')
+
+    # ── Panel 11: Bayesian Robustness (Stan Models) ──
+    bayes_rob = sev.get("bayesian_robustness", {})
+    if bayes_rob:
+        parts.append('<div class="collapsible">')
+        parts.append('<div class="collapsible-header">Panel 11: Bayesian Robustness (Stan MCMC)</div>')
+        parts.append('<div class="collapsible-body">')
+        parts.append('<p>Non-confirmatory Bayesian hierarchical models fitted via Stan MCMC. '
+                     'B1 = logistic regression for P(Tier2); B2 = ordinal cumulative-logit for Tier 0/1/2. '
+                     'These robustness checks use proper uncertainty quantification for the amplification estimand.</p>')
+
+        # Status summary cards
+        parts.append('<h3>Model Fit Status</h3>')
+        parts.append('<div class="metrics-grid">')
+        n_ok, n_warn, n_fail, n_skip = 0, 0, 0, 0
+        for model in models:
+            mr = bayes_rob.get(model, {})
+            if mr.get("skipped"):
+                n_skip += 1
+                continue
+            for metric in ["monetary_severity", "issue_severity"]:
+                mm = mr.get(metric, {})
+                if mm.get("skipped"):
+                    n_skip += 1
+                    continue
+                for mtype in ["logistic", "ordinal"]:
+                    status = mm.get(mtype, {}).get("status", "")
+                    if status == "OK":
+                        n_ok += 1
+                    elif status == "WARN":
+                        n_warn += 1
+                    elif status == "FAIL":
+                        n_fail += 1
+
+        status_colors = [("#2ecc71", "#eafaf1", "OK", n_ok),
+                         ("#f39c12", "#fef9e7", "WARN", n_warn),
+                         ("#e74c3c", "#fdedec", "FAIL", n_fail),
+                         ("#95a5a6", "#f2f3f4", "SKIPPED", n_skip)]
+        for color, bg, label, count in status_colors:
+            if count > 0:
+                parts.append(f'<div class="metric-card" style="border-left: 4px solid {color}; background: {bg};">')
+                parts.append(f'<div class="value" style="color: {color};">{count}</div>')
+                parts.append(f'<div class="label">{label}</div></div>')
+        parts.append('</div>')
+
+        # Detailed diagnostics table
+        parts.append('<h3>MCMC Diagnostics</h3>')
+        parts.append('<p>Acceptance criteria: R-hat &le; 1.01, ESS &ge; 400, 0 divergences. '
+                     'Status: <span style="color:#2ecc71">OK</span> = clean, '
+                     '<span style="color:#f39c12">WARN</span> = minor issues (treedepth hits), '
+                     '<span style="color:#e74c3c">FAIL</span> = non-convergent (results unreliable).</p>')
+        parts.append('<table class="sortable"><thead><tr>')
+        parts.append('<th>Model</th><th>Metric</th><th>Type</th><th>Status</th>')
+        parts.append('<th>Method / Fallback</th><th>R-hat</th><th>ESS</th>')
+        parts.append('<th>Divergences</th><th>Treedepth Hits</th>')
+        parts.append('</tr></thead><tbody>')
+
+        for model in models:
+            mr = bayes_rob.get(model, {})
+            if mr.get("skipped"):
+                parts.append(f'<tr><td>{html.escape(model)}</td>')
+                parts.append(f'<td colspan="8" style="color:#95a5a6;">Skipped: {html.escape(mr.get("reason", "unknown"))}</td></tr>')
+                continue
+
+            for metric in ["monetary_severity", "issue_severity"]:
+                mm = mr.get(metric, {})
+                if mm.get("skipped"):
+                    parts.append(f'<tr><td>{html.escape(model)}</td>')
+                    parts.append(f'<td>{metric.replace("_", " ").title()}</td>')
+                    parts.append(f'<td colspan="7" style="color:#95a5a6;">Skipped: {html.escape(mm.get("reason", "unknown"))}</td></tr>')
+                    continue
+
+                fallback = mm.get("fallback_step", "standard")
+
+                for mtype, mlabel in [("logistic", "B1 Logistic"), ("ordinal", "B2 Ordinal")]:
+                    mdata = mm.get(mtype, {})
+                    if not mdata:
+                        continue
+
+                    status = mdata.get("status", "N/A")
+                    method = mdata.get("method", fallback)
+                    diag = mdata.get("diagnostics", {})
+                    rhat = diag.get("max_rhat", float("nan"))
+                    ess = diag.get("min_ess_bulk", float("nan"))
+                    div = diag.get("divergences", 0)
+                    td = diag.get("treedepth_hits", 0)
+
+                    # Status color
+                    s_colors = {"OK": "#2ecc71", "WARN": "#f39c12", "FAIL": "#e74c3c"}
+                    s_color = s_colors.get(status, "#333")
+                    row_bg = ' style="background:#fdedec;"' if status == "FAIL" else (
+                        ' style="background:#fef9e7;"' if status == "WARN" else "")
+
+                    # Highlight problematic diagnostics
+                    rhat_style = ' style="color:#e74c3c;font-weight:bold;"' if np.isfinite(rhat) and rhat > 1.01 else ""
+                    ess_style = ' style="color:#e74c3c;font-weight:bold;"' if np.isfinite(ess) and ess < 400 else ""
+                    div_style = ' style="color:#e74c3c;font-weight:bold;"' if div > 0 else ""
+                    td_style = ' style="color:#f39c12;"' if td > 0 else ""
+
+                    parts.append(f'<tr{row_bg}>')
+                    parts.append(f'<td>{html.escape(model)}</td>')
+                    parts.append(f'<td>{metric.replace("_", " ").title()}</td>')
+                    parts.append(f'<td>{mlabel}</td>')
+                    parts.append(f'<td style="color:{s_color};font-weight:bold;">{status}</td>')
+                    parts.append(f'<td>{html.escape(method)}</td>')
+                    parts.append(f'<td{rhat_style}>{_fmt(rhat, 4)}</td>')
+                    parts.append(f'<td{ess_style}>{_fmt(ess, 0)}</td>')
+                    parts.append(f'<td{div_style}>{div}</td>')
+                    parts.append(f'<td{td_style}>{td}</td>')
+                    parts.append('</tr>')
+
+        parts.append('</tbody></table>')
+
+        # Fallback actions summary
+        fallback_actions = []
+        for model in models:
+            mr = bayes_rob.get(model, {})
+            if mr.get("skipped"):
+                continue
+            for metric in ["monetary_severity", "issue_severity"]:
+                mm = mr.get(metric, {})
+                if mm.get("skipped"):
+                    continue
+                fb = mm.get("fallback_step")
+                if fb and fb != "standard":
+                    fallback_actions.append((model, metric, fb))
+
+        if fallback_actions:
+            parts.append('<h3>Fallback Actions Taken</h3>')
+            parts.append('<p style="color:#f39c12;"><strong>Warning:</strong> The following model fits '
+                         'required fallback strategies due to convergence issues with the standard configuration. '
+                         'Results should be interpreted with additional caution.</p>')
+            parts.append('<table><thead><tr><th>Model</th><th>Severity Metric</th><th>Fallback Strategy</th><th>Description</th></tr></thead><tbody>')
+            fallback_desc = {
+                "category-RE": "Used product_category random effects instead of complaint-level",
+                "per-dimension": "Fitted separate models per demographic dimension",
+                "flex-prior": "Applied tighter priors (main=0.8, interaction=0.4)",
+                "aggressive-sampler": "Increased max_treedepth to 15",
+            }
+            for model, metric, fb in fallback_actions:
+                desc = fallback_desc.get(fb, fb)
+                parts.append(f'<tr><td>{html.escape(model)}</td>')
+                parts.append(f'<td>{metric.replace("_", " ").title()}</td>')
+                parts.append(f'<td style="color:#f39c12;font-weight:bold;">{fb}</td>')
+                parts.append(f'<td>{html.escape(desc)}</td></tr>')
+            parts.append('</tbody></table>')
+        else:
+            parts.append('<p style="color:#2ecc71;"><strong>&#10003;</strong> All models converged with standard configuration. '
+                         'No fallback strategies were required.</p>')
+
+        # Amplification results table
+        parts.append('<h3>Bayesian Amplification Estimates</h3>')
+        parts.append('<p>A = D(high) − D(low), where D(s) = max − min predicted P(Tier2) across persona dimension levels at severity s. '
+                     'P(A&gt;0) is the posterior probability that bias amplifies with severity.</p>')
+        parts.append('<table class="sortable"><thead><tr>')
+        parts.append('<th>Model</th><th>Metric</th><th>Dimension</th><th>Model Type</th>')
+        parts.append('<th>A (mean)</th><th>95% CrI</th><th>P(A&gt;0)</th><th>D(low)</th><th>D(high)</th>')
+        parts.append('</tr></thead><tbody>')
+
+        for model in models:
+            mr = bayes_rob.get(model, {})
+            if mr.get("skipped"):
+                continue
+            for metric in ["monetary_severity", "issue_severity"]:
+                mm = mr.get(metric, {})
+                if mm.get("skipped"):
+                    continue
+
+                for mtype, mlabel in [("logistic", "Logistic"), ("ordinal", "Ordinal")]:
+                    mdata = mm.get(mtype, {})
+                    if not mdata or mdata.get("status") == "FAIL":
+                        continue
+
+                    amp = mdata.get("amplification", {})
+                    for dim in ["age", "geographic", "education", "socioeconomic"]:
+                        dim_amp = amp.get(dim, {})
+                        if not dim_amp:
+                            continue
+
+                        a_mean = dim_amp.get("A_mean", float("nan"))
+                        a_lo = dim_amp.get("A_CrI_low", float("nan"))
+                        a_hi = dim_amp.get("A_CrI_high", float("nan"))
+                        p_gt0 = dim_amp.get("P_A_gt_0", float("nan"))
+                        d_low = dim_amp.get("D_low_mean", float("nan"))
+                        d_high = dim_amp.get("D_high_mean", float("nan"))
+
+                        # Highlight strong evidence of amplification
+                        row_style = ""
+                        if np.isfinite(p_gt0) and p_gt0 > 0.95:
+                            row_style = ' style="background:#fdecea;"'
+                        elif np.isfinite(p_gt0) and p_gt0 < 0.05:
+                            row_style = ' style="background:#eafaf1;"'
+
+                        parts.append(f'<tr{row_style}>')
+                        parts.append(f'<td>{html.escape(model)}</td>')
+                        parts.append(f'<td>{metric.replace("_", " ").title()}</td>')
+                        parts.append(f'<td>{dim.title()}</td>')
+                        parts.append(f'<td>{mlabel}</td>')
+                        parts.append(f'<td>{_fmt(a_mean, 4)}</td>')
+                        parts.append(f'<td>[{_fmt(a_lo, 4)}, {_fmt(a_hi, 4)}]</td>')
+                        # Color-code P(A>0)
+                        p_color = "#e74c3c" if np.isfinite(p_gt0) and p_gt0 > 0.95 else (
+                            "#2ecc71" if np.isfinite(p_gt0) and p_gt0 < 0.05 else "#333")
+                        parts.append(f'<td style="color:{p_color};font-weight:bold;">{_pct(p_gt0)}</td>')
+                        parts.append(f'<td>{_fmt(d_low, 4)}</td>')
+                        parts.append(f'<td>{_fmt(d_high, 4)}</td>')
+                        parts.append('</tr>')
+
+        parts.append('</tbody></table>')
+
+        # Note about non-confirmatory status
+        parts.append('<div style="background:#f8f9fa;border-left:4px solid #95a5a6;padding:12px;margin-top:15px;">')
+        parts.append('<strong>Note:</strong> These Bayesian models serve as non-confirmatory robustness checks. '
+                     'The primary confirmatory analyses use frequentist methods (GEE, ANOVA). '
+                     'Bayesian results provide complementary uncertainty quantification and should be interpreted '
+                     'in conjunction with the frequentist findings.')
+        parts.append('</div>')
 
         parts.append('</div></div>')
 
