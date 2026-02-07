@@ -61,25 +61,25 @@ Comparison: original vs neutralized persona signal
   esl entropy: original=0.485, neutralized=0.038
 
 output:
-# Can ChatGPT Anonymize Complaints? Executive Summary
+# Does Neutralization Remove Demographic Signals from Complaint Text?
 
 ## The Experiment
-We tested whether ChatGPT can serve as a preprocessing filter to remove demographic signals from complaint text before downstream AI processing.
+We tested whether ChatGPT can rewrite complaints to remove demographic signals from the text. The goal is straightforward: if all complaints are standardized to neutral, professional language, subsequent AI systems cannot infer customer demographics from writing style — eliminating the opportunity for style-based bias in remedy decisions.
 
-The goal: if all complaints are rewritten in a uniform style, subsequent AI systems cannot infer customer demographics from writing patterns—eliminating the opportunity for style-based bias in remedy recommendations.
-
-Here’s how we tested it:
+Here's how we tested it:
 
 - Took **5,000** original complaints with diverse writing styles
-- Asked ChatGPT to rewrite each in **“neutral, professional”** language
-- Asked ChatGPT to guess the customer’s demographic profile from the neutralized text
-- Measured whether demographic diversity collapsed to uniformity (indicating successful signal removal)
+- Asked ChatGPT to rewrite each in **"neutral, professional"** language
+- Asked ChatGPT to guess the customer's demographic profile from the neutralized text
+- Measured whether diversity collapsed to uniformity (indicating successful signal removal)
 
-## Key Finding: Neutralization Works Well for Most Dimensions
-Both models successfully homogenized complaint language, dramatically reducing the AI’s ability to distinguish between customer personas.
+**Important:** Standardization is the intended outcome. When neutralization works, the LLM should infer similar personas from all complaints — that means the demographic signals have been successfully removed.
 
-### Signal Removal Effectiveness
-We measured **“entropy”**—a technical term for diversity. **Lower entropy after neutralization** means the technique is working (all complaints now look the same to the AI).
+## Key Finding: Neutralization Successfully Removes Most Demographic Signals
+Both models effectively standardized complaint language, dramatically reducing the ability to distinguish between customer personas.
+
+### How We Measured Success
+We measured **"entropy"** — a measure of diversity. **Lower entropy after neutralization** means the technique is working (complaints now look similar to the AI).
 
 ### GPT-4o-mini Results
 
@@ -104,28 +104,22 @@ We measured **“entropy”**—a technical term for diversity. **Lower entropy 
 | Geography | High (0.90) | High (0.82) | ⚠️ 9% reduction |
 
 ## What Works Well
-Three dimensions show excellent anonymization in both models:
+Three dimensions show excellent signal removal in both models:
 
-- **Education:** 87–94% signal reduction — the AI can no longer distinguish college-educated from high-school-educated writing styles  
-- **ESL status:** 92–99% signal reduction — non-native English patterns are effectively normalized  
-- **Income level:** 72–82% signal reduction — socioeconomic markers in language are largely removed  
+- **Education:** 87-94% reduction — the AI can no longer distinguish college-educated from high-school-educated writing styles
+- **ESL status:** 92-99% reduction — non-native English patterns are effectively normalized
+- **Income level:** 72-82% reduction — socioeconomic markers in language are largely removed
 
-These are meaningful results. Education, language background, and income level are among the most concerning dimensions for potential discrimination, and neutralization effectively masks them.
+These are the dimensions most likely to correlate with how complaints are written, and neutralization effectively standardizes them.
 
 ## Where Gaps Remain
-**Geographic signals persist** in both models (only **9–15% reduction**). Something about how customers reference locations, services, or contexts continues to reveal urban/suburban/rural patterns.
+**Geographic signals persist** in both models (only 9-15% reduction). Something about how customers reference locations, services, or contexts continues to reveal urban/suburban/rural patterns.
 
 **Gender and age show mixed results:**
-- **GPT-5-mini** achieves moderate anonymization (**46–51% reduction**)
-- **GPT-4o-mini** struggles with these dimensions (**0–8% reduction**)
+- **GPT-5-mini** achieves moderate signal removal (46-51% reduction)
+- **GPT-4o-mini** struggles with these dimensions (0-8% reduction)
 
 ## Conclusion
-ChatGPT is largely effective at anonymizing complaint language, particularly for the highest-risk dimensions of **education**, **language background**, and **socioeconomic status**. After neutralization, downstream AI systems cannot reliably infer these characteristics from writing style.
+Neutralization is largely effective at standardizing complaint language. The technique removes demographic signals for **education**, **language background**, and **income level** in both models. **GPT-5-mini** provides more consistent signal removal across all dimensions.
 
-**GPT-5-mini** delivers more consistent anonymization across all dimensions and is the better choice for this application. **Geographic signals remain partially detectable** in both models and represent an area for further refinement.
-
-## Recommended Actions
-- Neutralization is a viable bias mitigation strategy, particularly for **education**, **ESL**, and **income-related** bias
-- **GPT-5-mini** is preferred for more complete anonymization
-- Consider supplementary measures for geographic signals if location-based bias is a concern
-- Validate end-to-end: confirm that reduced persona signals translate to reduced outcome disparities in your specific downstream processes
+The next step is to test whether removing these signals actually eliminates bias in remedy decisions.

@@ -23,7 +23,7 @@ Model: gpt-5-mini (5000 estimates)
   esl     525
   native  4475
 ── Full persona type counts (23/36 present) ──
-  old_rural_college_high             0   
+  old_rural_college_high             0
   old_rural_college_low              0
   old_rural_college_middle           2
   old_rural_high_school_high         0
@@ -67,15 +67,15 @@ Model: gpt-5-mini (5000 estimates)
   0.8-1.0  11
 
 output:
-# Does ChatGPT Profile Customers? Executive Summary
+# Does the LLM Infer Customer Personas from Writing Style?
 
 ## What We Tested
-We ran an experiment asking ChatGPT to estimate the demographic profile of **5,000 customers** based solely on the text of their complaints. The goal was to understand whether—and how—the AI forms assumptions about who customers are from how they communicate.
+We asked ChatGPT to estimate the demographic profile of **5,000 customers** based solely on the text of their complaints. The goal was to establish whether the LLM infers implicit personas from how complaints are written — a necessary first step before testing whether those inferences affect decisions.
 
-## Key Finding: ChatGPT Has a “Default Customer” in Mind
-When guessing demographics from complaint text, ChatGPT overwhelmingly imagines a very specific type of person.
+## Key Finding: The LLM Infers Personas from Writing Style
+When analysing complaint text, the LLM consistently infers demographic characteristics. This confirms the model responds to stylistic cues, which is relevant background for testing decision bias.
 
-| Characteristic | ChatGPT’s Dominant Assumption |
+| Characteristic | Most Common Inference |
 |---|---|
 | Age | Older (68%) |
 | Location | Suburban (72%) |
@@ -84,30 +84,24 @@ When guessing demographics from complaint text, ChatGPT overwhelmingly imagines 
 | Gender | Male (73%) |
 | Language background | Native English speaker (90%) |
 
-The single most common profile—**older, suburban, college-educated, middle-class male**—accounted for **45%** of all **5,000** estimates.
+The single most common profile — **older, suburban, college-educated, middle-class male** — accounted for **45%** of all estimates.
 
-## What’s Missing from the AI’s Mental Picture
-The model’s assumptions show stark blind spots:
+## Distribution Patterns
+The model's inferences cluster around certain profiles:
 
-- **Rural customers are nearly invisible:** Only **0.5%** of estimates (**26 out of 5,000**)
-- **High-income customers essentially don’t exist:** Just **4** estimates total (**0.08%**)
-- **Women are significantly underrepresented:** Despite likely comprising close to half of actual complainants
-- **36** possible demographic combinations exist; only **23** ever appeared
+- **Age:** 68% classified as older vs 32% younger
+- **Location:** 72% suburban, 28% urban, 0.5% rural
+- **Education:** 72% college-educated, 28% high school
+- **Income:** 92% middle class, 8% low income, <1% high income
+- **36** possible persona combinations exist; **23** appeared in the estimates
 
-## How Confident Is the AI in These Guesses?
-Very confident—perhaps too confident. In **93%** of cases, ChatGPT reported **60–80% certainty** in its demographic estimates, suggesting the model readily forms firm assumptions about customers based on limited textual cues.
+## Confidence Levels
+The model reported moderate-to-high confidence in its estimates:
+- **93%** of estimates had 60-80% confidence
+- Very few estimates showed low (<40%) or very high (>80%) confidence
 
-## Why This Matters
-If ChatGPT is used anywhere in your complaint-handling process, these embedded assumptions could influence:
+## Why This Matters for the Experiment
+The key question is NOT whether these persona estimates are accurate or complete. What matters is whether the LLM's remedy decisions differ based on the persona it infers. If decisions vary by inferred persona when the complaint substance is identical, that would indicate bias.
 
-- How complaints are prioritized or routed
-- The tone and formality of automated responses
-- Risk assessments or escalation decisions
-- Downstream analytics about your customer base
-
-The AI appears to mentally “picture” a narrow slice of customers and may process complaints differently based on implicit profiling—even when no demographic information is provided.
-
-## Recommended Actions
-1. Audit any AI-assisted complaint workflows for unintended demographic assumptions
-2. Avoid feeding demographic estimates into downstream decisions without validation
-3. Consider whether these patterns reflect training data biases that could affect your customers
+## Next Step
+The experiment proceeds to test whether these inferred personas correlate with — and causally affect — remedy decisions.
