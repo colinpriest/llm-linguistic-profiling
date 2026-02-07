@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 _ANALYSIS_VERSIONS: Dict[str, str] = {
     "severity_analysis": "1.0",
     "bayes_robustness": "1.1",  # v1.1: ordinal models use softplus cutpoint reparameterization
+    "repeated_measures": "1.0",  # v1.0: includes model diagnostics
+    "correlation_analysis": "1.0",  # v1.0: includes model diagnostics
 }
 
 
@@ -95,7 +97,7 @@ def _compute_cache_key(
 class AnalysisCache:
     """Cache for expensive analysis results (severity, Bayesian, etc.)."""
 
-    ANALYSIS_TYPES = ["severity_analysis", "bayes_robustness"]
+    ANALYSIS_TYPES = ["severity_analysis", "bayes_robustness", "repeated_measures", "correlation_analysis"]
 
     def __init__(self, cache_dir: str = "./cache") -> None:
         self.cache_dir = Path(cache_dir) / "analysis"

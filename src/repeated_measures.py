@@ -1160,11 +1160,42 @@ def run_repeated_measures_analysis(
     personas_df: pd.DataFrame,
     severity_df: pd.DataFrame,
     models: List[str],
+    use_cache: bool = True,
+    cache_dir: str = "./cache",
 ) -> Dict[str, Any]:
     """Run the full repeated-measures causal analysis suite.
 
-    Returns a structured dict with all model results, ready for reporting.
+    Parameters
+    ----------
+    baseline_df : Baseline remedy decisions.
+    persona_decisions_df : Persona-rewritten decisions.
+    neutralized_df : Neutralized decisions.
+    personas_df : Persona classifications.
+    severity_df : Severity metadata.
+    models : List of LLM model identifiers.
+    use_cache : If True (default), check for cached results before computing.
+    cache_dir : Directory for analysis cache files.
+
+    Returns
+    -------
+    Dict with all model results, ready for reporting.
     """
+    # Check cache first
+    if use_cache:
+        from src.analysis_cache import get_analysis_cache
+        cache = get_analysis_cache(cache_dir)
+        dataframes = {
+            "baseline_df": baseline_df,
+            "persona_decisions_df": persona_decisions_df,
+            "neutralized_df": neutralized_df,
+            "personas_df": personas_df,
+            "severity_df": severity_df,
+        }
+        params = {"models": models}
+        cached_result = cache.get("repeated_measures", dataframes, params)
+        if cached_result is not None:
+            return cached_result
+
     logger.info("Running repeated-measures causal analysis...")
 
     # Suppress known warnings for the entire analysis.  warnings.catch_warnings()
@@ -1190,10 +1221,14 @@ def run_repeated_measures_analysis(
     )
 
     try:
-        return _run_repeated_measures_inner(
+        result = _run_repeated_measures_inner(
             baseline_df, persona_decisions_df, neutralized_df,
             personas_df, severity_df, models,
         )
+        # Cache the result
+        if use_cache:
+            cache.put("repeated_measures", dataframes, params, result)
+        return result
     finally:
         _warning_ctx.__exit__(None, None, None)
 

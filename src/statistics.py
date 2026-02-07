@@ -715,6 +715,8 @@ def correlation_analysis(
     decisions_df: pd.DataFrame,
     personas_df: pd.DataFrame,
     dims: Optional[List[str]] = None,
+    use_cache: bool = True,
+    cache_dir: str = "./cache",
 ) -> Dict[str, Any]:
     """Run full correlation analysis between personas and remedy decisions.
 
@@ -723,9 +725,24 @@ def correlation_analysis(
     decisions_df : DataFrame with columns [case_id, model, tier, confidence]
     personas_df  : DataFrame with columns [case_id, model, age, geographic, education, socioeconomic, gender, esl, persona_label]
     dims : List of persona dimensions to analyze (default: ESTIMATE_DIMS)
+    use_cache : If True (default), check for cached results before computing.
+    cache_dir : Directory for analysis cache files.
     """
     if dims is None:
         dims = ESTIMATE_DIMS
+
+    # Check cache first
+    if use_cache:
+        from src.analysis_cache import get_analysis_cache
+        cache = get_analysis_cache(cache_dir)
+        dataframes = {
+            "decisions_df": decisions_df,
+            "personas_df": personas_df,
+        }
+        params = {"dims": dims if dims else ESTIMATE_DIMS}
+        cached_result = cache.get("correlation_analysis", dataframes, params)
+        if cached_result is not None:
+            return cached_result
     # Filter to dims that actually exist in the personas_df
     available_dims = [d for d in dims if d in personas_df.columns]
 
@@ -754,6 +771,10 @@ def correlation_analysis(
 
     # 5. Per-dimension favorable rates
     results["rates_by_dimension"] = _rates_by_dimension(merged, available_dims)
+
+    # Cache the result
+    if use_cache:
+        cache.put("correlation_analysis", dataframes, params, results)
 
     return results
 

@@ -1583,7 +1583,9 @@ class Experiment:
             # Step 3: Correlation
             if personas_m is not None and baseline_m is not None and len(personas_m) > 0 and len(baseline_m) > 0:
                 logger.info("Running correlation analysis for %s...", model)
-                model_results["correlation"] = correlation_analysis(baseline_m, personas_m)
+                model_results["correlation"] = correlation_analysis(
+                    baseline_m, personas_m, cache_dir=self.cache_dir
+                )
                 model_results["process_correlation"] = process_correlation_analysis(baseline_m, personas_m)
 
             # Step 5: Causal
@@ -2050,6 +2052,7 @@ class Experiment:
             personas_df=self.personas_df,
             severity_df=severity_df,
             models=self.models,
+            cache_dir=self.cache_dir,
         )
         self.analysis_results["repeated_measures"] = result
 
@@ -3036,6 +3039,28 @@ class Experiment:
             "You are a communications specialist who translates technical statistical "
             "findings into clear, actionable language for business executives. "
             + context_description + "\n\n"
+            "CORE EXPERIMENTAL QUESTION:\n"
+            "The experiment tests ONE key question: Do LLMs make different decisions "
+            "based on linguistic style when those decisions should be identical? "
+            "In a fair decision-making system, the remedy should depend only on the "
+            "complaint substance, not on how it is written. Any difference in decisions "
+            "by linguistic style is potential bias.\n\n"
+            "WHAT TO REPORT:\n"
+            "1. Whether bias exists (decisions differ by linguistic style)\n"
+            "2. If bias exists, does it vary by implicit persona, severity, or LLM model?\n"
+            "3. Can this bias be mitigated?\n\n"
+            "AVOID THESE COMMON ERRORS:\n"
+            "- Do NOT claim that neutralization 'collapses diverse voices' — standardizing "
+            "language is the intended behaviour, not a problem.\n"
+            "- Do NOT claim that estimating a 'default persona' is problematic — the "
+            "experiment defaults text to the most likely persona, which is expected.\n"
+            "- Do NOT claim that 'some groups are invisible' or 'underrepresented groups "
+            "may be mischaracterized' — in a fair system, group identification should "
+            "NOT affect outcomes, so misclassification is irrelevant.\n"
+            "- Do NOT claim that 'models are confident about demographics they cannot "
+            "truly know' — this is irrelevant; the key point is whether decisions change.\n"
+            "- Do NOT make claims about whether patterns 'reflect the complaint dataset's "
+            "writing style' — the matched-guise design controls for this.\n\n"
             "Rules:\n"
             "- Use plain business English; avoid jargon like 'chi-squared', 'p-value', "
             "'Cramer\\'s V', 'odds ratio', 'AIR', 'FDR', 'McNemar', 'Friedman', "
@@ -3045,7 +3070,9 @@ class Experiment:
             "- Organise with clear headings and bullet points.\n"
             "- Keep percentages and concrete comparisons (e.g. '55% vs 73%') but "
             "remove test statistics.\n"
-            "- Be honest about limitations and what is inconclusive.\n\n"
+            "- Be honest about limitations and what is inconclusive.\n"
+            "- When discussing severity, be clear about whether you mean monetary "
+            "severity (dollar amounts) or issue severity (product/issue category).\n\n"
             "ONE-SHOT EXAMPLE\n"
             "────────────────\n"
             f"INPUT:\n{example_input}\n\n"
@@ -3093,9 +3120,10 @@ class Experiment:
                 "linguistic_differences",
                 "one-shot-example-linguistic-differences.md",
                 data,
-                "We did an experiment that asked ChatGPT to estimate the demographic "
-                "of customers based upon their complaints. The topic is whether ChatGPT "
-                "may be implicitly profiling customers, and if so, what does it look like.",
+                "We asked ChatGPT to estimate customer demographics from complaint text. "
+                "This establishes whether the LLM infers implicit personas from writing "
+                "style. Note: the key question is NOT whether these estimates are accurate "
+                "or complete, but whether subsequent decisions differ by inferred persona.",
             )
             if text:
                 sections["linguistic_differences"] = text
@@ -3111,11 +3139,10 @@ class Experiment:
                 "ai_decision_making",
                 "one-shot-example-ai-decision-making.md",
                 data,
-                "We did an experiment that asked ChatGPT to recommend remedial action "
-                "based upon customer complaints. Then we linked that to the estimated "
-                "customer persona. The topic is whether ChatGPT may be biased based "
-                "upon its implicit profiling of customers, and if so, what does it "
-                "look like.",
+                "We asked ChatGPT to recommend remedial action based on complaints, then "
+                "linked decisions to inferred personas. The key question: do remedy "
+                "decisions correlate with inferred persona? In a fair system, remedies "
+                "should depend only on complaint substance, not writing style.",
             )
             if text:
                 sections["ai_decision_making"] = text
@@ -3131,11 +3158,11 @@ class Experiment:
                 "correlation_vs_cause",
                 "one-shot-example-correlation-vs-cause.md",
                 data,
-                "We carried out an experiment that reworded the same complaints to "
-                "resemble different personas. Our objective was to test whether ChatGPT "
-                "shows bias by personas based upon their writing style. The generated "
-                "text should explain the experiment, then discuss the results, and "
-                "conclude whether ChatGPT is biased on average.",
+                "We used a matched-guise design: the SAME complaint was rewritten in 36 "
+                "different persona styles, then each version was sent for remedy decision. "
+                "This is the causal test: if decisions differ by writing style when the "
+                "underlying complaint is identical, that proves bias exists. Focus on "
+                "the size of any differences and whether they are statistically meaningful.",
             )
             if text:
                 sections["correlation_vs_cause"] = text
@@ -3151,12 +3178,12 @@ class Experiment:
                 "severity_stakes",
                 "one-shot-example-severity-stakes.md",
                 data,
-                "We analysed whether AI bias in complaint resolution varies by the "
-                "stakes involved — both the dollar amount at issue and the severity "
-                "of the product/issue category. The question is whether unfair "
-                "treatment worsens when the stakes are higher. The generated text "
-                "should explain the analysis, present findings for each model, and "
-                "conclude whether severity amplifies bias.",
+                "We analysed whether any detected bias varies by complaint severity. "
+                "IMPORTANT: there are TWO severity metrics that may show different "
+                "patterns: (1) monetary severity (dollar amounts in dispute), and "
+                "(2) issue severity (product/issue category). Be explicit about which "
+                "metric you are discussing. If one shows amplification and the other "
+                "does not, state this clearly without contradiction.",
             )
             if text:
                 sections["severity_stakes"] = text
@@ -3172,12 +3199,12 @@ class Experiment:
                 "language_neutralisation",
                 "one-shot-example-language-neutralisation.md",
                 data,
-                "We carried out an experiment that reworded the same complaints to a "
-                "neutral persona. Our objective was to test whether ChatGPT can "
-                "anonymise stakeholders by making their language persona-neutral. The "
-                "generated text should explain the experiment, then discuss the results, "
-                "and conclude whether ChatGPT is effective at anonymising by "
-                "neutralising persona-specific wordings.",
+                "We tested whether rewriting complaints to neutral language removes "
+                "demographic signals from the text. This is INTENDED behaviour: the "
+                "goal is to standardize language so that downstream decisions cannot "
+                "be influenced by writing style. Success means all complaints look "
+                "similar after neutralization. Do NOT frame this as 'collapsing voices' "
+                "or 'creating a default persona' — standardization is the mitigation.",
             )
             if text:
                 sections["language_neutralisation"] = text
@@ -3193,11 +3220,11 @@ class Experiment:
                 "bias_mitigation",
                 "one-shot-example-bias-mitigation.md",
                 data,
-                "We carried out an experiment that reworded complaints to anonymise "
-                "the implicit personas. Our objective was to test whether using a "
-                "common linguistic style removes any bias. The generated text should "
-                "explain the experiment, then discuss the results, and conclude "
-                "whether this risk mitigation approach works.",
+                "We tested whether neutralizing complaint language before remedy "
+                "decisions eliminates any detected bias. This is the key mitigation "
+                "test: if decisions become uniform after neutralization, the "
+                "mitigation works. Focus on whether outcome variance decreases and "
+                "whether any statistically significant persona differences remain.",
             )
             if text:
                 sections["bias_mitigation"] = text
@@ -3214,9 +3241,12 @@ class Experiment:
                 "one-shot-examples-conclusion.md",
                 combined_sections,
                 "Write a half-page Plain English executive summary, suitable for a "
-                "non-technical business executive audience, with 3-5 key findings "
-                "and recommendations. You are synthesising the findings from 6 "
-                "preceding executive summary sections into an overall conclusion.",
+                "non-technical business executive audience. Answer these questions: "
+                "(1) Does linguistic style bias exist in LLM complaint decisions? "
+                "(2) If so, does bias vary by persona, severity metric, or LLM model? "
+                "(3) Does the neutralization mitigation eliminate detected bias? "
+                "Focus on actionable findings. Avoid tangential commentary about "
+                "'invisible groups', 'default personas', or persona estimation accuracy.",
             )
             if text:
                 sections["conclusion"] = text
