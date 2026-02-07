@@ -46,6 +46,10 @@ def parse_args() -> argparse.Namespace:
         help="Clear only Bayesian model cache (retain severity amplification cache)",
     )
     parser.add_argument(
+        "--clear-exec-cache", action="store_true", default=False,
+        help="Clear only executive summary cache (regenerate summaries without re-running LLM calls)",
+    )
+    parser.add_argument(
         "--models", nargs="+", default=["gpt-4o-mini", "gpt-5-mini"],
         help='Models to test (default: ["gpt-4o-mini", "gpt-5-mini"])',
     )
@@ -166,6 +170,7 @@ def main() -> None:
         clear_cache=args.clear_cache,
         clear_analysis_cache=args.clear_analysis_cache,
         clear_bayes_cache=args.clear_bayes_cache,
+        clear_exec_cache=args.clear_exec_cache,
         verbose=args.verbose,
         api_key=api_key,
     )

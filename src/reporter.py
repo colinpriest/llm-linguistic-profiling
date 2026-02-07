@@ -4164,6 +4164,337 @@ def _render_coefficient_table(
     parts.append("</tbody></table></div>")
 
 
+# ---------------------------------------------------------------------------
+# Mitigation Effectiveness Tab
+# ---------------------------------------------------------------------------
+
+
+def _build_tab_mitigation_effectiveness(
+    analysis_results: Dict[str, Any],
+    models: List[str],
+) -> str:
+    """Build the Mitigation Effectiveness Analysis tab content."""
+    parts: List[str] = []
+    me = analysis_results.get("mitigation_effectiveness", {})
+
+    parts.append("<h2>Mitigation Effectiveness Analysis</h2>")
+    parts.append(
+        '<p class="note">This analysis uses machine learning models (LightGBM, mixed-effects) '
+        "and causal inference techniques to understand when and why neutralization and persona-based "
+        "interventions are effective at reducing bias. SHAP values provide local explanations for "
+        "individual complaints, enabling targeted mitigation strategies.</p>"
+    )
+
+    if not me or me.get("error"):
+        error_msg = me.get("error", "Analysis not available") if me else "Analysis not available"
+        parts.append(f'<p class="warning">Mitigation effectiveness analysis: {html.escape(str(error_msg))}</p>')
+        return "\n".join(parts)
+
+    # ---- Golden Example ----
+    golden = me.get("golden_example")
+    if golden:
+        parts.append('<div class="collapsible">')
+        parts.append('<div class="collapsible-header">Golden Example: Full Pipeline Walkthrough</div>')
+        parts.append('<div class="collapsible-body">')
+
+        parts.append(f'<p><strong>Complaint ID:</strong> {html.escape(str(golden.get("complaint_id", "")))}</p>')
+        parts.append(f'<p><strong>Product:</strong> {html.escape(str(golden.get("product", "")))}</p>')
+        parts.append(f'<p><strong>Issue:</strong> {html.escape(str(golden.get("issue", "")))}</p>')
+
+        # Original text snippet
+        snippet = golden.get("complaint_snippet", "")
+        if snippet:
+            parts.append(f'<p><strong>Complaint Snippet:</strong></p>')
+            parts.append(f'<blockquote style="background:#f9f9f9;padding:10px;border-left:3px solid #3498db;">{html.escape(snippet)}</blockquote>')
+
+        # Estimated persona
+        est_persona = golden.get("estimated_persona", {})
+        if est_persona:
+            parts.append("<p><strong>Estimated Persona (by model):</strong></p>")
+            parts.append("<ul>")
+            for model_name, persona_dict in est_persona.items():
+                if isinstance(persona_dict, dict):
+                    persona_str = ", ".join(f"{k}={v}" for k, v in persona_dict.items() if v)
+                    parts.append(f"<li>{html.escape(model_name)}: {html.escape(persona_str)}</li>")
+            parts.append("</ul>")
+
+        # Original tier assignments
+        orig_tiers = golden.get("original_tiers", {})
+        if orig_tiers:
+            parts.append("<p><strong>Original Tier Assignments:</strong></p>")
+            parts.append("<ul>")
+            for model_name, tier in orig_tiers.items():
+                parts.append(f"<li>{html.escape(model_name)}: Tier {tier}</li>")
+            parts.append("</ul>")
+
+        # Tier variance by model
+        tier_var = golden.get("tier_variance_by_model", {})
+        if tier_var:
+            parts.append("<p><strong>Tier Variance Across Personas:</strong></p>")
+            parts.append("<ul>")
+            for model_name, var in tier_var.items():
+                parts.append(f"<li>{html.escape(model_name)}: {_fmt(var, 3)}</li>")
+            parts.append("</ul>")
+
+        # Neutralization effect
+        neut_effect = golden.get("neutralization_effect_by_model", {})
+        if neut_effect:
+            parts.append("<p><strong>Neutralization Effect (tier change):</strong></p>")
+            parts.append("<ul>")
+            for model_name, effect in neut_effect.items():
+                direction = "↑" if effect > 0 else ("↓" if effect < 0 else "→")
+                parts.append(f"<li>{html.escape(model_name)}: {direction} {effect:+d}</li>")
+            parts.append("</ul>")
+
+        # Neutralized tiers
+        neut_tiers = golden.get("neutralized_tiers", {})
+        if neut_tiers:
+            parts.append("<p><strong>Neutralized Tier Assignments:</strong></p>")
+            parts.append("<ul>")
+            for model_name, tier in neut_tiers.items():
+                parts.append(f"<li>{html.escape(model_name)}: Tier {tier}</li>")
+            parts.append("</ul>")
+
+        parts.append("</div></div>")
+
+    # ---- Model Results by LLM ----
+    for model in models:
+        parts.append(f"<h3>Model: {html.escape(model)}</h3>")
+
+        # Neutralization models
+        neut_models = me.get("neutralization_models", {}).get(model, [])
+        if neut_models:
+            parts.append('<div class="collapsible collapsed">')
+            parts.append('<div class="collapsible-header">Neutralization Effectiveness Models</div>')
+            parts.append('<div class="collapsible-body">')
+
+            for m in neut_models:
+                model_type = m.get("model_type", "unknown")
+                target = m.get("target", "")
+                metrics = m.get("metrics", {})
+
+                parts.append(f"<h4>{html.escape(model_type.upper())} - Target: {html.escape(target)}</h4>")
+
+                # Metrics
+                if metrics and not metrics.get("error"):
+                    parts.append('<div class="metrics-grid">')
+                    if "r2" in metrics:
+                        parts.append(f'<div class="metric-card"><div class="value">{_fmt(metrics["r2"], 3)}</div><div class="label">R²</div></div>')
+                    if "rmse" in metrics:
+                        parts.append(f'<div class="metric-card"><div class="value">{_fmt(metrics["rmse"], 3)}</div><div class="label">RMSE</div></div>')
+                    if "cv_folds" in metrics:
+                        parts.append(f'<div class="metric-card"><div class="value">{metrics["cv_folds"]}</div><div class="label">CV Folds</div></div>')
+                    if "aic" in metrics:
+                        parts.append(f'<div class="metric-card"><div class="value">{_fmt(metrics["aic"], 1)}</div><div class="label">AIC</div></div>')
+                    parts.append("</div>")
+                elif metrics.get("error"):
+                    parts.append(f'<p class="warning">Model error: {html.escape(str(metrics["error"]))}</p>')
+
+                # Feature importance
+                importance = m.get("feature_importance", [])
+                if importance:
+                    parts.append("<p><strong>Top Features by Importance:</strong></p>")
+                    parts.append('<table><thead><tr><th>Rank</th><th>Feature</th><th>Importance</th></tr></thead><tbody>')
+                    for feat in importance[:10]:
+                        parts.append(
+                            f'<tr><td>{feat.get("rank", "")}</td>'
+                            f'<td>{html.escape(str(feat.get("feature", "")))}</td>'
+                            f'<td>{_fmt(feat.get("importance"), 4)}</td></tr>'
+                        )
+                    parts.append("</tbody></table>")
+
+                # Coefficients (for mixed-effects)
+                coeffs = m.get("coefficients")
+                if coeffs:
+                    parts.append("<p><strong>Model Coefficients:</strong></p>")
+                    parts.append('<table><thead><tr><th>Feature</th><th>Coefficient</th><th>Std Err</th><th>p-value</th></tr></thead><tbody>')
+                    for c in coeffs[:10]:
+                        p_val = c.get("p_value", 1)
+                        color = "#27ae60" if p_val < 0.05 else "#333"
+                        parts.append(
+                            f'<tr><td>{html.escape(str(c.get("feature", "")))}</td>'
+                            f'<td>{_fmt(c.get("coefficient"), 4)}</td>'
+                            f'<td>{_fmt(c.get("std_err"), 4)}</td>'
+                            f'<td style="color:{color}">{_fmt(p_val, 4)}</td></tr>'
+                        )
+                    parts.append("</tbody></table>")
+
+            parts.append("</div></div>")
+
+        # Causal persona models
+        causal_models = me.get("causal_persona_models", {}).get(model, [])
+        if causal_models:
+            parts.append('<div class="collapsible collapsed">')
+            parts.append('<div class="collapsible-header">Causal Persona Effect Models</div>')
+            parts.append('<div class="collapsible-body">')
+
+            for m in causal_models:
+                model_type = m.get("model_type", "unknown")
+                target = m.get("target", "")
+                metrics = m.get("metrics", {})
+
+                parts.append(f"<h4>{html.escape(model_type.upper())} - Target: {html.escape(target)}</h4>")
+
+                if metrics and not metrics.get("error"):
+                    parts.append('<div class="metrics-grid">')
+                    if "r2" in metrics:
+                        parts.append(f'<div class="metric-card"><div class="value">{_fmt(metrics["r2"], 3)}</div><div class="label">R²</div></div>')
+                    if "rmse" in metrics:
+                        parts.append(f'<div class="metric-card"><div class="value">{_fmt(metrics["rmse"], 3)}</div><div class="label">RMSE</div></div>')
+                    parts.append("</div>")
+
+                importance = m.get("feature_importance", [])
+                if importance:
+                    parts.append("<p><strong>Top Features (Causal Drivers):</strong></p>")
+                    parts.append('<table><thead><tr><th>Rank</th><th>Feature</th><th>Importance</th></tr></thead><tbody>')
+                    for feat in importance[:10]:
+                        parts.append(
+                            f'<tr><td>{feat.get("rank", "")}</td>'
+                            f'<td>{html.escape(str(feat.get("feature", "")))}</td>'
+                            f'<td>{_fmt(feat.get("importance"), 4)}</td></tr>'
+                        )
+                    parts.append("</tbody></table>")
+
+            parts.append("</div></div>")
+
+        # Heterogeneous treatment effects
+        hte_list = me.get("heterogeneous_effects", {}).get(model, [])
+        if hte_list:
+            parts.append('<div class="collapsible collapsed">')
+            parts.append('<div class="collapsible-header">Heterogeneous Treatment Effects (Who Benefits Most?)</div>')
+            parts.append('<div class="collapsible-body">')
+
+            parts.append(
+                '<p class="note">Causal Forest estimates Conditional Average Treatment Effects (CATE) '
+                "to identify subgroups where neutralization or persona changes have larger effects.</p>"
+            )
+
+            for hte in hte_list:
+                treatment = hte.get("treatment", "")
+                ate = hte.get("overall_ate", 0)
+                ate_ci = hte.get("ate_ci", [0, 0])
+
+                parts.append(f"<h4>Treatment: {html.escape(treatment)}</h4>")
+                parts.append(f"<p><strong>Average Treatment Effect:</strong> {_fmt(ate, 3)} "
+                           f"(95% CI: [{_fmt(ate_ci[0], 3)}, {_fmt(ate_ci[1], 3)}])</p>")
+
+                moderators = hte.get("important_moderators", [])
+                if moderators:
+                    parts.append(f"<p><strong>Important Effect Moderators:</strong> {', '.join(html.escape(m) for m in moderators)}</p>")
+
+                cate_subgroups = hte.get("cate_by_subgroup", [])
+                if cate_subgroups:
+                    parts.append("<p><strong>CATE by Subgroup:</strong></p>")
+                    parts.append('<table><thead><tr><th>Subgroup</th><th>CATE</th><th>95% CI</th><th>n</th></tr></thead><tbody>')
+                    for sg in cate_subgroups:
+                        cate = sg.get("cate", 0)
+                        ci_l = sg.get("ci_lower", 0)
+                        ci_u = sg.get("ci_upper", 0)
+                        parts.append(
+                            f'<tr><td>{html.escape(str(sg.get("subgroup", "")))}</td>'
+                            f'<td>{_fmt(cate, 3)}</td>'
+                            f'<td>[{_fmt(ci_l, 3)}, {_fmt(ci_u, 3)}]</td>'
+                            f'<td>{sg.get("n", 0)}</td></tr>'
+                        )
+                    parts.append("</tbody></table>")
+
+            parts.append("</div></div>")
+
+    # ---- Supporting Examples ----
+    examples = me.get("supporting_examples", [])
+    if examples:
+        parts.append('<div class="collapsible collapsed">')
+        parts.append('<div class="collapsible-header">Worked Examples with SHAP Explanations</div>')
+        parts.append('<div class="collapsible-body">')
+
+        parts.append(
+            '<p class="note">Each example shows a complaint with its SHAP-based explanation. '
+            "Features with positive SHAP values push the prediction higher (more effective intervention); "
+            "negative values push it lower.</p>"
+        )
+
+        for i, ex in enumerate(examples):
+            category = ex.get("category", "")
+            complaint_id = ex.get("complaint_id", "")
+
+            # Category badge color
+            badge_color = {
+                "neutralization_best_case": "#27ae60",
+                "neutralization_worst_case": "#e74c3c",
+                "neutralization_typical": "#3498db",
+                "causal_best_case": "#27ae60",
+                "causal_worst_case": "#e74c3c",
+                "causal_typical": "#3498db",
+            }.get(category, "#95a5a6")
+
+            parts.append(f'<div style="border:1px solid #ddd;padding:15px;margin:10px 0;border-radius:5px;">')
+            parts.append(f'<span style="background:{badge_color};color:white;padding:2px 8px;border-radius:3px;font-size:0.85em;">'
+                        f'{html.escape(category)}</span>')
+            parts.append(f'<p><strong>Complaint:</strong> {html.escape(str(complaint_id))}</p>')
+
+            product = ex.get("product", "")
+            issue = ex.get("issue", "")
+            if product or issue:
+                parts.append(f'<p><strong>Product:</strong> {html.escape(product)} | <strong>Issue:</strong> {html.escape(issue)}</p>')
+
+            snippet = ex.get("complaint_snippet", "")
+            if snippet:
+                parts.append(f'<blockquote style="background:#f9f9f9;padding:8px;border-left:3px solid {badge_color};font-size:0.9em;">'
+                            f'{html.escape(snippet)}</blockquote>')
+
+            # Outcome summary
+            outcome = ex.get("outcome_summary", {})
+            if outcome:
+                outcome_str = ", ".join(f"{k}={_fmt(v, 3)}" for k, v in outcome.items())
+                parts.append(f'<p><strong>Outcome:</strong> {html.escape(outcome_str)}</p>')
+
+            # SHAP features
+            shap_features = ex.get("shap_features", [])
+            shap_values = ex.get("shap_values")
+            if shap_features and shap_values:
+                # Show top 5 SHAP contributors
+                shap_pairs = list(zip(shap_features, shap_values))
+                shap_pairs.sort(key=lambda x: abs(x[1]), reverse=True)
+                top_shap = shap_pairs[:5]
+
+                parts.append("<p><strong>Top SHAP Contributors:</strong></p>")
+                parts.append("<ul>")
+                for feat, val in top_shap:
+                    arrow = "↑" if val > 0 else "↓"
+                    color = "#27ae60" if val > 0 else "#e74c3c"
+                    parts.append(f'<li style="color:{color}">{arrow} {html.escape(str(feat))}: {val:+.3f}</li>')
+                parts.append("</ul>")
+
+            # Interpretation
+            interpretation = ex.get("interpretation", "")
+            if interpretation:
+                parts.append(f'<p><em>{html.escape(interpretation)}</em></p>')
+
+            parts.append("</div>")
+
+        parts.append("</div></div>")
+
+    # ---- Feature Importance Agreement ----
+    agreement = me.get("feature_importance_agreement", {})
+    if agreement:
+        parts.append('<div class="collapsible collapsed">')
+        parts.append('<div class="collapsible-header">Cross-Model Feature Importance Agreement</div>')
+        parts.append('<div class="collapsible-body">')
+
+        parts.append(
+            "<p>Spearman rank correlation between feature importance rankings across models. "
+            "Higher values indicate models agree on which features drive mitigation effectiveness.</p>"
+        )
+        parts.append('<table><thead><tr><th>Model Pair</th><th>Rank Correlation</th></tr></thead><tbody>')
+        for pair, corr in agreement.items():
+            color = "#27ae60" if corr > 0.7 else ("#e67e22" if corr > 0.4 else "#e74c3c")
+            parts.append(f'<tr><td>{html.escape(pair)}</td><td style="color:{color};font-weight:bold;">{_fmt(corr, 3)}</td></tr>')
+        parts.append("</tbody></table>")
+        parts.append("</div></div>")
+
+    return "\n".join(parts)
+
+
 def generate_report(
     analysis_results: Dict[str, Any],
     text_features_df: Optional[pd.DataFrame],
@@ -4223,6 +4554,7 @@ def generate_report(
         tab_severity = _build_tab_severity(analysis_results, complaints, models)
         tab_repeated = _build_tab_repeated_measures(analysis_results, models)
         tab_sparsity = _build_tab_sparsity(analysis_results, models)
+        tab_mitigation_eff = _build_tab_mitigation_effectiveness(analysis_results, models)
 
     # Assemble the body
     body_parts: List[str] = []
@@ -4247,6 +4579,7 @@ def generate_report(
         ("tab-severity", "Severity Analysis"),
         ("tab-repeated", "Repeated Measures"),
         ("tab-sparsity", "Sparsity Analysis"),
+        ("tab-mitigation-eff", "Mitigation Effectiveness"),
         ("tab-detailed", "Detailed Results"),
     ]
     for i, (tid, label) in enumerate(tabs):
@@ -4265,6 +4598,7 @@ def generate_report(
         ("tab-severity", tab_severity),
         ("tab-repeated", tab_repeated),
         ("tab-sparsity", tab_sparsity),
+        ("tab-mitigation-eff", tab_mitigation_eff),
         ("tab-detailed", tab_detailed),
     ]
     for i, (tid, content) in enumerate(tab_contents):

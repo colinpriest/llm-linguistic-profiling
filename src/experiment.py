@@ -17,6 +17,7 @@ from tqdm import tqdm
 from src.cache import ResponseCache
 from src.data_loader import load_and_clean
 from src.llm_client import LLMClient
+from src.mitigation_analysis import run_mitigation_effectiveness_analysis
 from src.repeated_measures import run_repeated_measures_analysis
 from src.severity_analysis import run_severity_analysis
 from src.sparsity_analysis import run_sparsity_analysis
@@ -127,6 +128,7 @@ class Experiment:
         clear_cache: bool = False,
         clear_analysis_cache: bool = False,
         clear_bayes_cache: bool = False,
+        clear_exec_cache: bool = False,
         verbose: bool = False,
         api_key: str = "",
     ) -> None:
@@ -192,6 +194,19 @@ class Experiment:
                 logger.info("Bayesian model cache cleared: %d files removed", cleared)
             else:
                 logger.info("Bayesian model cache was already empty")
+
+        # Clear executive summary cache (separate from main LLM cache)
+        if clear_exec_cache:
+            exec_cache_dir = Path(cache_dir) / "executive_summary"
+            if exec_cache_dir.exists():
+                count = 0
+                for f in exec_cache_dir.iterdir():
+                    if f.is_file():
+                        f.unlink()
+                        count += 1
+                logger.info("Executive summary cache cleared: %d files removed", count)
+            else:
+                logger.info("Executive summary cache directory does not exist (nothing to clear)")
 
         # LLM client
         config = LLMConfig(
@@ -1621,6 +1636,7 @@ class Experiment:
         self._collect_multiple_comparisons()
         self._run_repeated_measures_analysis()
         self._run_sparsity_analysis()
+        self._run_mitigation_effectiveness_analysis()
         self._display_analysis_results()
 
     # ------------------------------------------------------------------
@@ -2156,6 +2172,78 @@ class Experiment:
                     shrinkage.get("max_abs_shrinkage", 0),
                     shrinkage.get("n_cells_shrunk_gt_5pct", 0),
                 )
+
+    # ------------------------------------------------------------------
+    # Mitigation effectiveness analysis
+    # ------------------------------------------------------------------
+
+    def _run_mitigation_effectiveness_analysis(self) -> None:
+        """Run mitigation effectiveness analysis with ML models and SHAP."""
+        if self.baseline_df is None or self.neutralized_df is None or self.personas_df is None:
+            logger.info("Skipping mitigation effectiveness analysis (missing required data)")
+            return
+
+        if len(self.baseline_df) < 50 or len(self.neutralized_df) < 50:
+            logger.info("Skipping mitigation effectiveness analysis (insufficient data)")
+            return
+
+        # Build complaints DataFrame for the analysis
+        complaints_df = pd.DataFrame([
+            {
+                "case_id": c.case_id,
+                "narrative": c.narrative,
+                "product_category": c.product_category,
+                "issue_category": c.issue_category,
+                "monetary_severity": c.monetary_severity,
+                "issue_severity": c.issue_severity,
+            }
+            for c in self.complaints
+        ])
+
+        try:
+            result = run_mitigation_effectiveness_analysis(
+                baseline_df=self.baseline_df,
+                neutralized_df=self.neutralized_df,
+                personas_df=self.personas_df,
+                complaints_df=complaints_df,
+                models=self.models,
+                persona_decisions_df=self.persona_decisions_df,
+                text_features_df=self.text_features_df,
+                n_examples=7,
+            )
+            self.analysis_results["mitigation_effectiveness"] = result
+
+            # Console summary
+            logger.info("── Mitigation Effectiveness Analysis Summary ──")
+            for model in self.models:
+                neut_models = result.get("neutralization_models", {}).get(model, [])
+                for m in neut_models:
+                    if m.get("metrics"):
+                        r2 = m["metrics"].get("r2", 0)
+                        rmse = m["metrics"].get("rmse", 0)
+                        logger.info("  %s %s: R²=%.3f, RMSE=%.3f",
+                                    model, m.get("model_type", ""), r2, rmse)
+
+                hte_list = result.get("heterogeneous_effects", {}).get(model, [])
+                for hte in hte_list:
+                    if hte.get("overall_ate"):
+                        logger.info("  %s HTE (%s): ATE=%.3f, CI=[%.3f, %.3f]",
+                                    model, hte.get("treatment", ""),
+                                    hte["overall_ate"],
+                                    hte["ate_ci"][0], hte["ate_ci"][1])
+
+            golden = result.get("golden_example")
+            if golden:
+                logger.info("  Golden example: %s (%s)",
+                            golden.get("complaint_id", ""),
+                            golden.get("product", ""))
+
+            n_examples = len(result.get("supporting_examples", []))
+            logger.info("  Supporting examples: %d", n_examples)
+
+        except Exception as e:
+            logger.warning("Mitigation effectiveness analysis failed: %s", e)
+            self.analysis_results["mitigation_effectiveness"] = {"error": str(e)}
 
     # ------------------------------------------------------------------
     # Display analysis results
@@ -3049,9 +3137,12 @@ class Experiment:
             "1. Whether bias exists (decisions differ by linguistic style)\n"
             "2. If bias exists, does it vary by implicit persona, severity, or LLM model?\n"
             "3. Can this bias be mitigated?\n\n"
-            "AVOID THESE COMMON ERRORS:\n"
-            "- Do NOT claim that neutralization 'collapses diverse voices' — standardizing "
-            "language is the intended behaviour, not a problem.\n"
+            "AVOID THESE COMMON ERRORS (CRITICAL - DO NOT INCLUDE ANY OF THESE):\n"
+            "- Do NOT claim that neutralization 'collapses diverse voices' or creates a "
+            "'stereotyped default' — standardizing language is the intended behaviour, "
+            "not a problem or risk.\n"
+            "- Do NOT speculate about 'downstream fairness implications' of neutralization "
+            "— the experiment tests whether neutralization WORKS, not hypothetical risks.\n"
             "- Do NOT claim that estimating a 'default persona' is problematic — the "
             "experiment defaults text to the most likely persona, which is expected.\n"
             "- Do NOT claim that 'some groups are invisible' or 'underrepresented groups "
@@ -3060,7 +3151,9 @@ class Experiment:
             "- Do NOT claim that 'models are confident about demographics they cannot "
             "truly know' — this is irrelevant; the key point is whether decisions change.\n"
             "- Do NOT make claims about whether patterns 'reflect the complaint dataset's "
-            "writing style' — the matched-guise design controls for this.\n\n"
+            "writing style' — the matched-guise design controls for this.\n"
+            "- Do NOT add 'balanced' commentary suggesting risks of the mitigation approach "
+            "— report what the data shows, not hypothetical concerns.\n\n"
             "Rules:\n"
             "- Use plain business English; avoid jargon like 'chi-squared', 'p-value', "
             "'Cramer\\'s V', 'odds ratio', 'AIR', 'FDR', 'McNemar', 'Friedman', "

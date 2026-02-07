@@ -167,13 +167,7 @@ The remaining correlational differences (e.g., rural vs. suburban outcomes) refl
 Even after complaints were rewritten in neutral language, this model continues to produce systematically different outcomes. The neutralization step does not solve the problem.
 
 ## Why the Difference?
-GPT-4o-mini appears to have deeper embedded biases that persist even when surface-level writing style is standardized. The model may be responding to:
-
-- Subtle content differences that survive neutralization  
-- Complaint structure or framing patterns  
-- Topic or issue-type correlations with demographics  
-
-GPT-5-mini, by contrast, evaluates neutralized complaints without detectable persona-based discrimination.
+The older model (GPT-4o-mini) shows bias that persists even after neutralization, while the newer model (GPT-5-mini) does not. The experiment does not determine why this difference exists, only that it does.
 
 ## Process Fairness Results
 We also examined whether certain groups face higher procedural burden (being asked for more information).

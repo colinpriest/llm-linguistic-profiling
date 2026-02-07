@@ -73,6 +73,7 @@ def _compute_cache_key(
     analysis_type: str,
     dataframes: Dict[str, Optional[pd.DataFrame]],
     params: Dict[str, Any],
+    debug: bool = False,
 ) -> str:
     """Compute a cache key from DataFrames and parameters."""
     version = _ANALYSIS_VERSIONS.get(analysis_type, "1.0")
@@ -81,17 +82,26 @@ def _compute_cache_key(
 
     # Hash each DataFrame
     for name, df in sorted(dataframes.items()):
-        parts.append(_hash_dataframe(df, name))
+        df_hash = _hash_dataframe(df, name)
+        parts.append(df_hash)
+        if debug:
+            logger.info("  Cache key component [%s]: %s", name, df_hash[:60])
 
     # Include parameters
     for key, value in sorted(params.items()):
         if isinstance(value, list):
-            parts.append(f"{key}:{','.join(map(str, value))}")
+            param_str = f"{key}:{','.join(map(str, value))}"
         else:
-            parts.append(f"{key}:{value}")
+            param_str = f"{key}:{value}"
+        parts.append(param_str)
+        if debug:
+            logger.info("  Cache key component [param:%s]: %s", key, param_str)
 
     combined = "|".join(parts)
-    return hashlib.blake2b(combined.encode(), digest_size=24).hexdigest()
+    result = hashlib.blake2b(combined.encode(), digest_size=24).hexdigest()
+    if debug:
+        logger.info("  Final cache key: %s", result)
+    return result
 
 
 class AnalysisCache:
@@ -110,10 +120,23 @@ class AnalysisCache:
         analysis_type: str,
         dataframes: Dict[str, Optional[pd.DataFrame]],
         params: Dict[str, Any],
+        debug: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Look up cached analysis result."""
-        key = _compute_cache_key(analysis_type, dataframes, params)
+        # Check if any cache file exists for this analysis type (for miss diagnosis)
+        type_dir = self.cache_dir / analysis_type
+        existing_files = list(type_dir.glob("*.json")) if type_dir.exists() else []
+
+        # Enable debug logging if cache exists but we might miss
+        should_debug = debug or (len(existing_files) > 0)
+        if should_debug:
+            logger.info("Computing cache key for %s...", analysis_type)
+
+        key = _compute_cache_key(analysis_type, dataframes, params, debug=should_debug)
         path = self._path(analysis_type, key)
+
+        # Log cache lookup attempt
+        logger.debug("Cache lookup for %s: key=%s", analysis_type, key[:16])
 
         if path.exists():
             try:
@@ -141,6 +164,31 @@ class AnalysisCache:
                 self._delete_path(path)
 
         self._misses += 1
+
+        # Log cache miss with diagnosis
+        if existing_files:
+            # Cache files exist but key doesn't match - log details for debugging
+            logger.info(
+                "Cache MISS for %s: computed key=%s, found %d existing file(s) with different keys",
+                analysis_type, key[:16], len(existing_files),
+            )
+            # Compare with existing cache to show what changed
+            for cache_file in existing_files[:1]:
+                try:
+                    cached_data = json.loads(cache_file.read_text(encoding="utf-8"))
+                    cached_shapes = cached_data.get("dataframe_shapes", {})
+                    logger.info("  Existing cache shapes: %s", cached_shapes)
+                    # Compare shapes
+                    for name, df in dataframes.items():
+                        cached_shape = cached_shapes.get(name)
+                        current_shape = list(df.shape) if df is not None else None
+                        if cached_shape != current_shape:
+                            logger.info("  MISMATCH in %s: cached=%s, current=%s", name, cached_shape, current_shape)
+                except Exception as e:
+                    logger.debug("Could not compare with cached file: %s", e)
+        else:
+            logger.info("Cache MISS for %s: no cached results found", analysis_type)
+
         return None
 
     def put(

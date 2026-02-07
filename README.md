@@ -93,6 +93,7 @@ python llm_fairness_experiment.py --models gpt-4o-mini --verbose
 | `--clear-cache` | false | Clear everything: LLM response cache, text-feature cache, data pipeline cache, and analysis caches |
 | `--clear-analysis-cache` | false | Clear only severity amplification + Bayesian analysis caches (keeps LLM/text-feature caches) |
 | `--clear-bayes-cache` | false | Clear only the Bayesian model cache (retains severity amplification cache and all LLM caches) |
+| `--clear-exec-cache` | false | Clear only executive summary cache (regenerate summaries without re-running LLM calls) |
 | `--models` | gpt-4o-mini gpt-5-mini | Models to test |
 | `--threads` | 100 | Concurrent LLM request threads |
 | `--output-dir` | ./output | Directory for report and artifacts |

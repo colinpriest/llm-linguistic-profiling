@@ -71,7 +71,7 @@ Here's how we tested it:
 - Took **5,000** original complaints with diverse writing styles
 - Asked ChatGPT to rewrite each in **"neutral, professional"** language
 - Asked ChatGPT to guess the customer's demographic profile from the neutralized text
-- Measured whether diversity collapsed to uniformity (indicating successful signal removal)
+- Measured whether all complaints became uniform (indicating successful signal removal)
 
 **Important:** Standardization is the intended outcome. When neutralization works, the LLM should infer similar personas from all complaints — that means the demographic signals have been successfully removed.
 
