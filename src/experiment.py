@@ -2833,6 +2833,158 @@ class Experiment:
                 lines.append("── GPT-5.2 Commentary ──")
                 lines.append(f"  {commentary}")
             lines.append("")
+
+        # Add mitigation effectiveness analysis
+        mit_eff_data = self._capture_mitigation_effectiveness_data()
+        if mit_eff_data:
+            lines.append("")
+            lines.append("━" * 50)
+            lines.append("MITIGATION EFFECTIVENESS DEEP-DIVE")
+            lines.append("━" * 50)
+            lines.append(mit_eff_data)
+
+        return "\n".join(lines)
+
+    def _capture_mitigation_effectiveness_data(self) -> str:
+        """Capture mitigation effectiveness analysis for exec summary.
+
+        Covers:
+        - Most/least biased personas (from causal persona models)
+        - Most/least effective bias mitigation (from neutralization models)
+        - Text feature associations with personas
+        - Golden example journey summary
+        - Supporting example highlights
+        """
+        mit = self.analysis_results.get("mitigation_effectiveness")
+        if not mit or mit.get("error"):
+            return ""
+
+        lines: List[str] = ["── Mitigation Effectiveness Analysis ──"]
+
+        # --- Feature importance from neutralization models ---
+        lines.append("")
+        lines.append("WHAT PREDICTS NEUTRALIZATION EFFECTIVENESS?")
+        lines.append("(Higher importance = feature more strongly predicts tier change)")
+        for model in self.models:
+            neut_models = mit.get("neutralization_models", {}).get(model, [])
+            for m in neut_models:
+                mtype = m.get("model_type", "unknown")
+                metrics = m.get("metrics", {})
+                r2 = metrics.get("r2", 0)
+                lines.append(f"\n{model} ({mtype}): R²={r2:.3f}")
+
+                # Feature importance
+                fi = m.get("feature_importance", [])
+                if fi:
+                    lines.append("  Top features predicting tier change after neutralization:")
+                    for feat in sorted(fi, key=lambda x: x.get("importance", 0), reverse=True)[:8]:
+                        fname = feat.get("feature", "")
+                        fimp = feat.get("importance", 0)
+                        lines.append(f"    {fname}: {fimp:.4f}")
+
+                # Mixed-effects coefficients (if available)
+                coeffs = m.get("coefficients")
+                if coeffs and mtype == "mixed_effects":
+                    lines.append("  Statistical significance (mixed-effects):")
+                    for c in coeffs:
+                        if c.get("p_value", 1) < 0.05:
+                            lines.append(f"    {c.get('feature')}: coef={c.get('coef', 0):.3f}, p={c.get('p_value', 1):.4f} *")
+
+        # --- Causal persona effects (which dimension changes matter most?) ---
+        lines.append("")
+        lines.append("CAUSAL PERSONA EFFECTS (Matched-Guise Test)")
+        lines.append("(Which dimension changes most affect tier assignment?)")
+        for model in self.models:
+            causal_models = mit.get("causal_persona_models", {}).get(model, [])
+            for m in causal_models:
+                mtype = m.get("model_type", "unknown")
+                metrics = m.get("metrics", {})
+                r2 = metrics.get("r2", 0)
+                lines.append(f"\n{model} ({mtype}): R²={r2:.3f}")
+
+                fi = m.get("feature_importance", [])
+                if fi:
+                    lines.append("  Dimension changes ranked by effect on tier:")
+                    for feat in sorted(fi, key=lambda x: x.get("importance", 0), reverse=True):
+                        fname = feat.get("feature", "")
+                        fimp = feat.get("importance", 0)
+                        lines.append(f"    {fname}: {fimp:.4f}")
+
+        # --- Heterogeneous Treatment Effects ---
+        lines.append("")
+        lines.append("HETEROGENEOUS EFFECTS (Who benefits most from neutralization?)")
+        for model in self.models:
+            hte_list = mit.get("heterogeneous_effects", {}).get(model, [])
+            for hte in hte_list:
+                treatment = hte.get("treatment", "")
+                ate = hte.get("overall_ate", 0)
+                ate_ci = hte.get("ate_ci", [0, 0])
+                moderators = hte.get("important_moderators", [])
+
+                lines.append(f"\n{model} treatment={treatment}:")
+                lines.append(f"  Average Treatment Effect: {ate:.3f} [{ate_ci[0]:.3f}, {ate_ci[1]:.3f}]")
+                if moderators:
+                    lines.append(f"  Effect varies by: {', '.join(moderators)}")
+
+                # Subgroup CATE
+                cate = hte.get("cate_by_subgroup", [])
+                if cate:
+                    lines.append("  Subgroup effects:")
+                    for sg in cate[:5]:  # top 5
+                        lines.append(f"    {sg.get('subgroup', '')}: CATE={sg.get('cate', 0):.3f}")
+
+        # --- Golden Example Summary ---
+        golden = mit.get("golden_example")
+        if golden:
+            lines.append("")
+            lines.append("GOLDEN EXAMPLE (Single complaint tracked through full pipeline)")
+            lines.append(f"  Complaint: {golden.get('complaint_id', '')} ({golden.get('product', '')})")
+            lines.append(f"  Estimated persona: {golden.get('estimated_persona', {})}")
+            lines.append(f"  Original tiers by model: {golden.get('original_tiers', {})}")
+            lines.append(f"  Neutralized tiers by model: {golden.get('neutralized_tiers', {})}")
+
+            tier_var = golden.get("tier_variance_by_model", {})
+            neut_eff = golden.get("neutralization_effect_by_model", {})
+            for model in self.models:
+                var = tier_var.get(model, 0)
+                eff = neut_eff.get(model, 0)
+                lines.append(f"  {model}: tier variance across personas={var:.3f}, neutralization effect={eff:+.2f}")
+
+            # Persona variants summary
+            persona_tiers = golden.get("persona_tiers", {})
+            if persona_tiers:
+                # Find best and worst personas
+                all_tiers = []
+                for persona, model_tiers in persona_tiers.items():
+                    for m, t in model_tiers.items():
+                        all_tiers.append((persona, m, t))
+                if all_tiers:
+                    best = min(all_tiers, key=lambda x: x[2])
+                    worst = max(all_tiers, key=lambda x: x[2])
+                    lines.append(f"  Best outcome persona: {best[0]} (tier {best[2]} on {best[1]})")
+                    lines.append(f"  Worst outcome persona: {worst[0]} (tier {worst[2]} on {worst[1]})")
+
+        # --- Supporting Examples Summary ---
+        examples = mit.get("supporting_examples", [])
+        if examples:
+            lines.append("")
+            lines.append(f"SUPPORTING EXAMPLES ({len(examples)} selected)")
+            for ex in examples:
+                cat = ex.get("category", "")
+                cid = ex.get("complaint_id", "")
+                interp = ex.get("interpretation", "")
+                lines.append(f"  {cat}: {cid}")
+                if interp:
+                    lines.append(f"    → {interp[:200]}")
+
+        # --- Cross-Model Agreement ---
+        agreement = mit.get("feature_importance_agreement", {})
+        if agreement:
+            lines.append("")
+            lines.append("CROSS-MODEL AGREEMENT (Feature Importance)")
+            for pair, corr in agreement.items():
+                lines.append(f"  {pair}: Spearman ρ={corr:.3f}")
+
         return "\n".join(lines)
 
     def _capture_severity_data(self) -> str:
