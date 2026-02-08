@@ -1537,20 +1537,36 @@ class Experiment:
     # Run all analyses
     # ------------------------------------------------------------------
 
-    def _data_diagnostic(self) -> None:
-        """Log data suitability diagnostics before running statistical analyses."""
+    def _data_diagnostic(self) -> Dict[str, Any]:
+        """Log and capture data suitability diagnostics before running statistical analyses.
+
+        Returns a dictionary with diagnostic results for each model, suitable for
+        display in the HTML dashboard.
+        """
         logger.info("── Data Diagnostic ──")
         dims = ESTIMATE_DIMS
+        diagnostics: Dict[str, Any] = {}
 
         for model in self.models:
             logger.info("  Model: %s", model)
+            model_diag: Dict[str, Any] = {
+                "issues": [],
+                "warnings": [],
+                "tier_distribution": {},
+                "dimension_cell_sizes": {},
+                "persona_cell_stats": {},
+            }
 
             # Baseline tier variation
             if self.baseline_df is not None:
                 b_m = self.baseline_df[self.baseline_df["model"] == model]
-                tier_vc = b_m["tier"].value_counts()
-                logger.info("    Baseline tiers: %s (n=%d)", dict(tier_vc), len(b_m))
+                tier_vc = b_m["tier"].value_counts().to_dict()
+                model_diag["tier_distribution"] = {str(k): int(v) for k, v in tier_vc.items()}
+                model_diag["n_complaints"] = len(b_m)
+                logger.info("    Baseline tiers: %s (n=%d)", tier_vc, len(b_m))
+
                 if b_m["tier"].nunique() < 2:
+                    model_diag["warnings"].append("No tier variation — logistic regression will be skipped")
                     logger.warning("    ⚠ No tier variation — logistic regression will be skipped")
 
             # Persona × tier cell sizes
@@ -1564,26 +1580,50 @@ class Experiment:
                     # Check per-dimension cell sizes
                     for dim in dims:
                         grp = merged.groupby(dim)["favorable"]
+                        dim_info: Dict[str, Any] = {"min_cell_size": int(grp.size().min()), "constant_levels": []}
+
                         for level, sub in grp:
                             if sub.nunique() < 2:
+                                dim_info["constant_levels"].append(str(level))
                                 logger.info(
                                     "    %s=%s: target is constant (%s) — will use regularised logistic regression",
                                     dim, level, sub.iloc[0],
                                 )
-                        min_cell = grp.size().min()
-                        logger.info("    %s: min cell size = %d", dim, min_cell)
+
+                        model_diag["dimension_cell_sizes"][dim] = dim_info
+                        logger.info("    %s: min cell size = %d", dim, dim_info["min_cell_size"])
+
+                        # Flag small cells
+                        if dim_info["min_cell_size"] < 10:
+                            model_diag["warnings"].append(f"{dim}: min cell size = {dim_info['min_cell_size']} (< 10)")
 
                     # Overall persona_label cell stats
                     persona_sizes = merged.groupby("persona_label").size()
+                    model_diag["persona_cell_stats"] = {
+                        "n_personas": len(persona_sizes),
+                        "min_cell": int(persona_sizes.min()),
+                        "median_cell": float(persona_sizes.median()),
+                        "max_cell": int(persona_sizes.max()),
+                    }
                     logger.info(
                         "    Persona cells: %d personas, min=%d, median=%.0f, max=%d",
                         len(persona_sizes), persona_sizes.min(), persona_sizes.median(), persona_sizes.max(),
                     )
 
+                    # Flag sparse personas
+                    sparse_count = (persona_sizes < 5).sum()
+                    if sparse_count > 0:
+                        model_diag["warnings"].append(f"{sparse_count} persona(s) have fewer than 5 observations")
+
+            diagnostics[model] = model_diag
+
+        return diagnostics
+
     def _run_analyses(self) -> None:
         """Run statistical analyses after all steps complete."""
         self._build_dataframes()
-        self._data_diagnostic()
+        data_diag = self._data_diagnostic()
+        self.analysis_results["data_diagnostic"] = data_diag
 
         results: Dict[str, Any] = {"models": self.models, "timestamp": self.timestamp}
 

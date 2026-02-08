@@ -1766,6 +1766,86 @@ def _build_tab_detailed_results(
     parts.append("</tbody></table>")
     parts.append("</div></div>")
 
+    # Data Quality Diagnostic
+    data_diag = analysis_results.get("data_diagnostic", {})
+    if data_diag:
+        has_warnings = any(m.get("warnings") for m in data_diag.values())
+        header_style = ' style="background:#fef9e7;"' if has_warnings else ''
+
+        parts.append('<div class="collapsible">')
+        parts.append(f'<div class="collapsible-header"{header_style}>Data Quality Diagnostic</div>')
+        parts.append('<div class="collapsible-body">')
+        parts.append('<p>Pre-flight checks on data suitability for statistical analyses. '
+                     'Warnings indicate potential issues that may affect model reliability.</p>')
+
+        for model in models:
+            md = data_diag.get(model, {})
+            if not md:
+                continue
+
+            warnings = md.get("warnings", [])
+            status = "⚠ WARN" if warnings else "✓ OK"
+            status_color = "#f39c12" if warnings else "#2ecc71"
+
+            parts.append(f'<h4>{html.escape(model)} '
+                        f'<span style="color:{status_color};font-weight:bold;margin-left:10px;">{status}</span></h4>')
+
+            # Tier distribution
+            tier_dist = md.get("tier_distribution", {})
+            n_complaints = md.get("n_complaints", 0)
+            if tier_dist:
+                dist_str = ", ".join(f"Tier {k}: {v}" for k, v in sorted(tier_dist.items()))
+                parts.append(f'<p><strong>Tier distribution:</strong> {dist_str} (n={n_complaints:,})</p>')
+
+            # Dimension cell sizes
+            dim_cells = md.get("dimension_cell_sizes", {})
+            if dim_cells:
+                parts.append('<table class="sortable"><thead><tr>')
+                parts.append('<th>Dimension</th><th>Min Cell Size</th><th>Constant Levels</th><th>Status</th>')
+                parts.append('</tr></thead><tbody>')
+
+                for dim, info in sorted(dim_cells.items()):
+                    min_cell = info.get("min_cell_size", 0)
+                    const_levels = info.get("constant_levels", [])
+
+                    if min_cell < 5:
+                        cell_style = ' style="color:#e74c3c;font-weight:bold;"'
+                        cell_status = "Critical"
+                    elif min_cell < 10:
+                        cell_style = ' style="color:#f39c12;"'
+                        cell_status = "Warning"
+                    else:
+                        cell_style = ''
+                        cell_status = "OK"
+
+                    const_str = ", ".join(const_levels) if const_levels else "—"
+                    parts.append(f'<tr>')
+                    parts.append(f'<td>{dim.title()}</td>')
+                    parts.append(f'<td{cell_style}>{min_cell}</td>')
+                    parts.append(f'<td>{html.escape(const_str)}</td>')
+                    parts.append(f'<td{cell_style}>{cell_status}</td>')
+                    parts.append('</tr>')
+
+                parts.append('</tbody></table>')
+
+            # Persona cell stats
+            persona_stats = md.get("persona_cell_stats", {})
+            if persona_stats:
+                parts.append(f'<p><strong>Persona cells:</strong> {persona_stats.get("n_personas", 0)} personas, '
+                            f'min={persona_stats.get("min_cell", 0)}, '
+                            f'median={persona_stats.get("median_cell", 0):.0f}, '
+                            f'max={persona_stats.get("max_cell", 0)}</p>')
+
+            # Warnings
+            if warnings:
+                parts.append('<div style="background:#fef9e7;border-left:4px solid #f39c12;padding:10px;margin:10px 0;">')
+                parts.append('<strong>Warnings:</strong><ul style="margin:5px 0;padding-left:20px;">')
+                for w in warnings:
+                    parts.append(f'<li>{html.escape(w)}</li>')
+                parts.append('</ul></div>')
+
+        parts.append("</div></div>")
+
     # Persona distribution chart
     parts.append('<div class="collapsible">')
     parts.append('<div class="collapsible-header">Persona Distribution</div>')
@@ -3447,6 +3527,110 @@ def _build_tab_severity(
                      'in conjunction with the frequentist findings.')
         parts.append('</div>')
 
+        parts.append('</div></div>')
+
+    # ── Panel 12: IPW Robustness (Monetary Severity) ──
+    ipw_rob = sev.get("ipw_robustness", {})
+    if ipw_rob and not ipw_rob.get("error"):
+        parts.append('<div class="collapsible">')
+        parts.append('<div class="collapsible-header">Panel 12: IPW Robustness (Monetary Severity)</div>')
+        parts.append('<div class="collapsible-body">')
+        parts.append('<p>Inverse Probability Weighting (IPW) re-weights the monetary severity subset '
+                     'to account for potential selection bias. Complaints with extractable dollar amounts '
+                     'may differ systematically from those without. IPW adjusts for this by weighting '
+                     'each observation by 1/P(has dollar amount | covariates).</p>')
+
+        # Propensity diagnostics
+        prop_diag = ipw_rob.get("propensity_diagnostics", {})
+        if prop_diag:
+            parts.append('<h3>Propensity Model Diagnostics</h3>')
+            parts.append('<div class="metrics-grid">')
+            parts.append(f'<div class="metric-card"><div class="value">{prop_diag.get("n_M1", 0):,}</div>'
+                        f'<div class="label">Complaints with $ amounts</div></div>')
+            parts.append(f'<div class="metric-card"><div class="value">{prop_diag.get("effective_sample_size_M1", 0):.0f}</div>'
+                        f'<div class="label">Effective sample size (IPW)</div></div>')
+            parts.append(f'<div class="metric-card"><div class="value">{prop_diag.get("coverage_M1", 0):.1%}</div>'
+                        f'<div class="label">Coverage rate</div></div>')
+            if prop_diag.get("trivial"):
+                parts.append('<div class="metric-card" style="border-left:4px solid #f39c12;background:#fef9e7;">'
+                            '<div class="value">Trivial</div>'
+                            '<div class="label">Propensity model (nearly all have $ amounts)</div></div>')
+            parts.append('</div>')
+
+        # Per-model comparison tables
+        parts.append('<h3>Unweighted vs. IPW-Weighted Amplification</h3>')
+        parts.append('<p>Compares amplification estimates with and without IPW adjustment. '
+                     'Material changes (|delta| > 0.5) suggest selection bias affects conclusions.</p>')
+
+        for model in models:
+            mr = ipw_rob.get(model, {})
+            if not mr:
+                continue
+
+            parts.append(f'<h4>{html.escape(model)}</h4>')
+            parts.append('<table class="sortable"><thead><tr>')
+            parts.append('<th>Dimension</th><th>Unweighted Amp.</th><th>IPW-Weighted Amp.</th>')
+            parts.append('<th>Delta</th><th>Unweighted p</th><th>IPW p</th><th>Verdict</th>')
+            parts.append('</tr></thead><tbody>')
+
+            dims_data = mr.get("dimensions", {})
+            for dim in ["age", "geographic", "education", "socioeconomic"]:
+                dim_data = dims_data.get(dim, {})
+                if not dim_data:
+                    continue
+
+                uw = dim_data.get("unweighted", {})
+                wt = dim_data.get("weighted", {})
+
+                uw_amp = uw.get("amplification", {}).get("point", float("nan"))
+                wt_amp = wt.get("amplification", {}).get("point", float("nan"))
+                delta = wt_amp - uw_amp if np.isfinite(uw_amp) and np.isfinite(wt_amp) else float("nan")
+
+                uw_p = uw.get("interaction", {}).get("p_value", float("nan"))
+                wt_p = wt.get("interaction", {}).get("p_value", float("nan"))
+
+                # Verdict based on material change
+                if np.isfinite(delta):
+                    if abs(delta) > 0.5:
+                        verdict = '<span style="color:#e74c3c;font-weight:bold;">Material change</span>'
+                        row_bg = ' style="background:#fdedec;"'
+                    elif abs(delta) > 0.2:
+                        verdict = '<span style="color:#f39c12;">Moderate change</span>'
+                        row_bg = ' style="background:#fef9e7;"'
+                    else:
+                        verdict = '<span style="color:#2ecc71;">Stable</span>'
+                        row_bg = ''
+                else:
+                    verdict = 'N/A'
+                    row_bg = ''
+
+                parts.append(f'<tr{row_bg}>')
+                parts.append(f'<td>{dim.title()}</td>')
+                parts.append(f'<td>{_fmt(uw_amp, 2)}x</td>')
+                parts.append(f'<td>{_fmt(wt_amp, 2)}x</td>')
+                parts.append(f'<td>{_fmt(delta, 2):+}</td>' if np.isfinite(delta) else '<td>N/A</td>')
+                parts.append(f'<td>{_fmt(uw_p, 4)}</td>')
+                parts.append(f'<td>{_fmt(wt_p, 4)}</td>')
+                parts.append(f'<td>{verdict}</td>')
+                parts.append('</tr>')
+
+            parts.append('</tbody></table>')
+
+        # Note about interpretation
+        parts.append('<div style="background:#f8f9fa;border-left:4px solid #95a5a6;padding:12px;margin-top:15px;">')
+        parts.append('<strong>Interpretation:</strong> If IPW-weighted results differ materially from unweighted results, '
+                     'this suggests that the subset of complaints with extractable dollar amounts may not be representative. '
+                     'The IPW-weighted estimates adjust for this selection bias and should be preferred if there are '
+                     'systematic differences in which complaints have dollar amounts.')
+        parts.append('</div>')
+
+        parts.append('</div></div>')
+
+    elif ipw_rob.get("error"):
+        parts.append('<div class="collapsible">')
+        parts.append('<div class="collapsible-header" style="background:#fdedec;">Panel 12: IPW Robustness (Error)</div>')
+        parts.append('<div class="collapsible-body">')
+        parts.append(f'<p style="color:#e74c3c;">IPW robustness analysis failed: {html.escape(str(ipw_rob.get("error")))}</p>')
         parts.append('</div></div>')
 
     return "\n".join(parts)
