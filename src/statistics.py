@@ -665,7 +665,7 @@ def _ridge_logit(
 
     try:
         lr = LogisticRegression(
-            l1_ratio=0, C=1.0 / alpha, solver="lbfgs",
+            C=1.0 / alpha, solver="lbfgs",
             max_iter=500, fit_intercept=False,  # const already in X
         )
         lr.fit(X_std.values, y.values)

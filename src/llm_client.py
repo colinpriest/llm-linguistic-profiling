@@ -81,6 +81,9 @@ class LLMClient:
         # Per-task stats
         self._task_stats: Dict[str, RepairStats] = {}
 
+        # Deferred warnings (logged after tqdm completes to avoid breaking progress bar)
+        self._deferred_warnings: List[str] = []
+
     # ------------------------------------------------------------------
     # Single request (with retry)
     # ------------------------------------------------------------------
@@ -183,14 +186,14 @@ class LLMClient:
                         "https://platform.openai.com/account/billing"
                     ) from e
 
-                # Token-limit truncation is non-retryable — the same
-                # prompt will hit the same limit every time.
-                is_token_limit = (
+                # Response truncation or validation failure — may be retryable
+                # for transient issues, but persistent for true output overflow.
+                is_truncation = (
                     "max_tokens" in err_str
                     or "length limit" in err_str
                     or "incomplete" in err_str
                 )
-                if is_token_limit:
+                if is_truncation:
                     is_reasoning = request.model.startswith(_REASONING_PREFIXES)
                     # Tasks whose input length varies (neutralize, rewrite,
                     # remedy) can hit the token ceiling on outlier-long
@@ -207,27 +210,24 @@ class LLMClient:
                             f"Output truncated by token limit for model "
                             f"{request.model!r} on {request.task}: {short_err}"
                         ) from e
-                    # Outlier input — log a warning and fail just this request.
+                    # Allow retries for incomplete responses (may be transient).
+                    # Only fail definitively after all attempts exhausted.
+                    if attempt < MAX_ATTEMPTS:
+                        logger.debug(
+                            "Response truncated/incomplete for %s (%s/%s), attempt %d. Retrying...",
+                            request.case_id, request.task, request.model, attempt,
+                        )
+                        time.sleep(self.config.retry_delay * (2 ** (attempt - 1)))
+                        continue
+                    # All retries exhausted — record the failure with clear messaging.
                     prompt_chars = len(request.prompt_system) + len(request.prompt_user)
-                    est_prompt_tokens = prompt_chars // 4  # rough estimate
-                    effective_limit = (
-                        max(self.config.max_tokens, 32_000)
-                        if is_reasoning
-                        else self.config.max_tokens
-                    )
-                    # Extract just the first line of the error to avoid
-                    # dumping the verbose <failed_attempts> block.
+                    narrative_chars = len(request.prompt_user)
                     err_first_line = str(e).split("\n", 1)[0][:200]
-                    logger.warning(
-                        "Token limit hit for %s (%s/%s): skipping. "
-                        "prompt_chars=%d (~%d tokens), "
-                        "user_text_chars=%d, "
-                        "max_tokens=%d. %s",
-                        request.case_id, request.model, request.task,
-                        prompt_chars, est_prompt_tokens,
-                        len(request.prompt_user),
-                        effective_limit,
-                        err_first_line,
+                    # Store warning for deferred logging (avoid breaking tqdm)
+                    self._deferred_warnings.append(
+                        f"Response truncated for {request.case_id} ({request.model}/{request.task}) "
+                        f"after {MAX_ATTEMPTS} attempts: narrative={narrative_chars} chars, "
+                        f"API error: {err_first_line}"
                     )
                     self._record_failure(request.task)
                     return LLMResponse(
@@ -237,9 +237,9 @@ class LLMClient:
                         task=request.task,
                         success=False,
                         error_message=(
-                            f"Token limit exceeded: "
-                            f"prompt_chars={prompt_chars} (~{est_prompt_tokens} tokens), "
-                            f"max_tokens={effective_limit}"
+                            f"Response truncated/incomplete after {MAX_ATTEMPTS} attempts: "
+                            f"narrative={narrative_chars} chars. "
+                            f"API error: {err_first_line}"
                         ),
                         latency_ms=latency_ms,
                         timestamp=datetime.now(),
@@ -478,7 +478,17 @@ class LLMClient:
         finally:
             pool.shutdown(wait=not force_shutdown, cancel_futures=force_shutdown)
 
+        # Flush deferred warnings after tqdm completes (avoids breaking progress bar)
+        self._flush_deferred_warnings()
+
         return [r for r in responses if r is not None]
+
+    def _flush_deferred_warnings(self) -> None:
+        """Log any warnings that were deferred during batch execution."""
+        warnings = self._deferred_warnings
+        self._deferred_warnings = []
+        for msg in warnings:
+            logger.warning(msg)
 
     # ------------------------------------------------------------------
     # Stats tracking

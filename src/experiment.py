@@ -16,8 +16,11 @@ from tqdm import tqdm
 
 from src.cache import ResponseCache
 from src.data_loader import load_and_clean
+from src.diagnostics import get_diagnostics, DiagnosticCollector, DiagnosticCategory
 from src.llm_client import LLMClient
 from src.mitigation_analysis import run_mitigation_effectiveness_analysis
+from src.persona_analysis import run_persona_analysis
+from src.text_rewriting_analysis import run_text_rewriting_analysis
 from src.repeated_measures import run_repeated_measures_analysis
 from src.severity_analysis import run_severity_analysis
 from src.sparsity_analysis import run_sparsity_analysis
@@ -248,6 +251,9 @@ class Experiment:
 
     def run(self) -> Dict[str, Any]:
         """Execute the full experiment pipeline."""
+        # Reset diagnostics collector for this run
+        DiagnosticCollector.reset()
+
         logger.info("=" * 60)
         logger.info("LLM Fairness Experiment – starting")
         logger.info("Models: %s", self.models)
@@ -288,12 +294,26 @@ class Experiment:
         # Generate paper bundle
         self._generate_paper_bundle()
 
+        # Collect all diagnostics for the report
+        self.analysis_results["diagnostics"] = get_diagnostics().to_dict()
+
         logger.info("=" * 60)
         logger.info("Experiment complete. Output: %s", self.output_dir)
         logger.info(self.cache.stats_summary())
         tf_stats = text_feature_cache.stats_summary()
         if tf_stats:
             logger.info(tf_stats)
+
+        # Log diagnostics summary
+        diag_summary = self.analysis_results["diagnostics"]
+        if diag_summary.get("total_count", 0) > 0:
+            logger.info(
+                "Diagnostics: %d errors, %d warnings, %d with fallback",
+                diag_summary.get("level_counts", {}).get("error", 0),
+                diag_summary.get("level_counts", {}).get("warning", 0),
+                diag_summary.get("with_fallback", 0),
+            )
+
         return self.analysis_results
 
     def _generate_paper_bundle(self) -> None:
@@ -1677,6 +1697,8 @@ class Experiment:
         self._run_repeated_measures_analysis()
         self._run_sparsity_analysis()
         self._run_mitigation_effectiveness_analysis()
+        self._run_persona_analysis()
+        self._run_text_rewriting_analysis()
         self._display_analysis_results()
 
     # ------------------------------------------------------------------
@@ -2283,7 +2305,114 @@ class Experiment:
 
         except Exception as e:
             logger.warning("Mitigation effectiveness analysis failed: %s", e)
+            get_diagnostics().error(
+                category=DiagnosticCategory.COMPUTATION,
+                module="experiment",
+                message=f"Mitigation effectiveness analysis failed: {e}",
+                fallback_action=None,
+            )
             self.analysis_results["mitigation_effectiveness"] = {"error": str(e)}
+
+    # ------------------------------------------------------------------
+    # Persona linguistic analysis
+    # ------------------------------------------------------------------
+
+    def _run_persona_analysis(self) -> None:
+        """Run persona linguistic analysis with LightGBM and PDPs."""
+        if self.personas_df is None or self.text_features_df is None:
+            logger.info("Skipping persona analysis (missing personas or text features)")
+            return
+
+        logger.info("Running persona linguistic analysis...")
+
+        try:
+            result = run_persona_analysis(
+                personas_df=self.personas_df,
+                text_features_df=self.text_features_df,
+                models=self.models,
+            )
+            self.analysis_results["persona_analysis"] = result
+
+            # Console summary
+            logger.info("── Persona Analysis Summary ──")
+            for model in self.models:
+                model_result = result.get(model, {})
+                dims = model_result.get("dimensions", {})
+                if dims:
+                    logger.info("  %s: analyzed %d persona dimensions", model, len(dims))
+                    for dim, values in dims.items():
+                        logger.info("    %s: %d values analyzed", dim, len(values))
+
+        except Exception as e:
+            logger.warning("Persona analysis failed: %s", e)
+            get_diagnostics().error(
+                category=DiagnosticCategory.COMPUTATION,
+                module="experiment",
+                message=f"Persona analysis failed: {e}",
+                fallback_action=None,
+            )
+            self.analysis_results["persona_analysis"] = {"error": str(e)}
+
+    # ------------------------------------------------------------------
+    # Text rewriting analysis
+    # ------------------------------------------------------------------
+
+    def _run_text_rewriting_analysis(self) -> None:
+        """Run text rewriting analysis to compare text characteristics before/after persona rewriting."""
+        if self.text_features_df is None or self.text_features_df.empty:
+            logger.info("Skipping text rewriting analysis (no text features data)")
+            return
+
+        # Check if we have rewritten variants
+        variants = self.text_features_df["variant"].unique()
+        has_rewrites = any(
+            v not in ["original", "neutralized"] for v in variants
+        )
+
+        if not has_rewrites:
+            logger.info("Skipping text rewriting analysis (no rewritten variants found)")
+            return
+
+        logger.info("Running text rewriting analysis...")
+
+        try:
+            result = run_text_rewriting_analysis(self.text_features_df)
+            self.analysis_results["text_rewriting"] = result
+
+            # Console summary
+            if "error" not in result:
+                n_sig = len(result.get("significant_features", []))
+                n_total = len(result.get("overall_comparisons", []))
+                n_personas = result.get("n_personas", 0)
+
+                logger.info("── Text Rewriting Analysis Summary ──")
+                logger.info("  Significant features (FDR-corrected): %d/%d", n_sig, n_total)
+
+                if result.get("significant_features"):
+                    logger.info("  Changed features: %s", ", ".join(result["significant_features"][:5]))
+
+                logger.info("  Personas analyzed: %d", n_personas)
+
+                # Top effect sizes
+                comparisons = result.get("overall_comparisons", [])
+                if comparisons:
+                    sorted_comps = sorted(comparisons, key=lambda x: abs(x.get("cohens_d", 0)), reverse=True)
+                    logger.info("  Top effect sizes:")
+                    for comp in sorted_comps[:3]:
+                        d = comp.get("cohens_d", 0)
+                        feat = comp.get("feature_label", comp.get("feature", ""))
+                        pct = comp.get("pct_change", 0)
+                        logger.info("    %s: d=%.3f (%.1f%% change)", feat, d, pct)
+
+        except Exception as e:
+            logger.warning("Text rewriting analysis failed: %s", e)
+            get_diagnostics().error(
+                category=DiagnosticCategory.COMPUTATION,
+                module="experiment",
+                message=f"Text rewriting analysis failed: {e}",
+                fallback_action=None,
+            )
+            self.analysis_results["text_rewriting"] = {"error": str(e)}
 
     # ------------------------------------------------------------------
     # Display analysis results

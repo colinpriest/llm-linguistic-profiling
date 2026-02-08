@@ -581,7 +581,12 @@ def amplification_ratio(
     """Amplification ratio = bias_high / bias_low with bootstrap CI.
 
     Bias is measured as SD of mean outcome across personas.
+
+    Uses operation-level caching to avoid recomputing expensive bootstrap
+    when the same data is analyzed in different runs.
     """
+    from src.analysis_cache import get_operation_cache
+
     df = decisions_df[
         (decisions_df["model"] == model)
         & (decisions_df[severity_metric].isin(SEVERITY_LEVELS))
@@ -599,6 +604,29 @@ def amplification_ratio(
     bias_low = _bias_at_level(df, "low")
     bias_high = _bias_at_level(df, "high")
     point = _safe_div(bias_high, bias_low)
+
+    # Check operation cache for bootstrap results
+    op_cache = get_operation_cache()
+    cache_params = {
+        "severity_metric": severity_metric,
+        "model": model,
+        "persona_col": persona_col,
+        "outcome_col": outcome_col,
+        "n_boot": n_boot,
+        "seed": seed,
+    }
+    cache_cols = ["case_id", severity_metric, persona_col, outcome_col]
+    cache_key = op_cache.compute_key("amplification_bootstrap", df, cache_params, cache_cols)
+    cached = op_cache.get("amplification_bootstrap", cache_key)
+    if cached is not None:
+        # Use cached bootstrap CIs, update point estimate with current data
+        return {
+            "point": float(point) if np.isfinite(point) else float("nan"),
+            "ci_lower": cached.get("ci_lower", float("nan")),
+            "ci_upper": cached.get("ci_upper", float("nan")),
+            "bias_low": bias_low,
+            "bias_high": bias_high,
+        }
 
     # Bootstrap CI: resample at complaint (case_id) level
     rng = np.random.RandomState(seed)
@@ -618,6 +646,14 @@ def amplification_ratio(
     else:
         ci_lower = float("nan")
         ci_upper = float("nan")
+
+    # Cache the bootstrap results
+    op_cache.put("amplification_bootstrap", cache_key, {
+        "ci_lower": ci_lower,
+        "ci_upper": ci_upper,
+        "n_boot": n_boot,
+        "n_valid_boots": len(boot_ratios),
+    })
 
     return {
         "point": float(point) if np.isfinite(point) else float("nan"),
@@ -646,6 +682,9 @@ def dimension_severity_interaction(
     yielding much better-powered tests (~200+ obs per cell vs ~15-20 for
     the full 36-persona grid).
 
+    Uses operation-level caching to avoid recomputing expensive bootstrap
+    when the same data is analyzed in different runs.
+
     Parameters
     ----------
     decisions_df : DataFrame with [case_id, model, tier, {severity_metric}, {dimension}]
@@ -660,6 +699,8 @@ def dimension_severity_interaction(
     Dict with keys: anova, amplification, dimension_means_by_severity,
     cell_sizes, min_cell_size, dimension, severity_metric.
     """
+    from src.analysis_cache import get_operation_cache
+
     df = decisions_df[
         (decisions_df["model"] == model)
         & (decisions_df[severity_metric].isin(SEVERITY_LEVELS))
@@ -747,6 +788,28 @@ def dimension_severity_interaction(
     bias_high = _dim_bias("high")
     amp_point = _safe_div(bias_high, bias_low)
 
+    # Check operation cache for bootstrap results
+    op_cache = get_operation_cache()
+    cache_params = {
+        "severity_metric": severity_metric,
+        "model": model,
+        "dimension": dimension,
+        "n_boot": n_boot,
+        "seed": seed,
+    }
+    cache_cols = ["case_id", severity_metric, dimension, "tier"]
+    cache_key = op_cache.compute_key(f"dim_severity_bootstrap_{dimension}", df, cache_params, cache_cols)
+    cached = op_cache.get(f"dim_severity_bootstrap_{dimension}", cache_key)
+    if cached is not None:
+        result["amplification"] = {
+            "bias_low": bias_low,
+            "bias_high": bias_high,
+            "point": float(amp_point) if np.isfinite(amp_point) else float("nan"),
+            "ci_lower": cached.get("ci_lower", float("nan")),
+            "ci_upper": cached.get("ci_upper", float("nan")),
+        }
+        return result
+
     # Bootstrap CI on amplification ratio
     rng = np.random.RandomState(seed)
     case_ids = df["case_id"].unique()
@@ -767,6 +830,14 @@ def dimension_severity_interaction(
         ci_hi = float(np.percentile(boot_ratios, 97.5))
     else:
         ci_lo = ci_hi = float("nan")
+
+    # Cache the bootstrap results
+    op_cache.put(f"dim_severity_bootstrap_{dimension}", cache_key, {
+        "ci_lower": ci_lo,
+        "ci_upper": ci_hi,
+        "n_boot": n_boot,
+        "n_valid_boots": len(boot_ratios),
+    })
 
     result["amplification"] = {
         "bias_low": bias_low,

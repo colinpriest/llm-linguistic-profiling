@@ -21,6 +21,16 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from src.diagnostics import (
+    get_diagnostics,
+    record_dependency_missing,
+    record_model_fit_error,
+    record_model_fit_warning,
+    record_data_quality_issue,
+    record_computation_error,
+    DiagnosticCategory,
+)
+
 logger = logging.getLogger(__name__)
 
 # Optional imports with graceful degradation
@@ -29,14 +39,20 @@ try:
     HAS_LIGHTGBM = True
 except ImportError:
     HAS_LIGHTGBM = False
-    logger.warning("lightgbm not installed - using sklearn RandomForest fallback")
+    record_dependency_missing(
+        "mitigation_analysis", "lightgbm",
+        fallback="Using sklearn RandomForest instead"
+    )
 
 try:
     import shap
     HAS_SHAP = True
 except ImportError:
     HAS_SHAP = False
-    logger.warning("shap not installed - SHAP explanations will be unavailable")
+    record_dependency_missing(
+        "mitigation_analysis", "shap",
+        fallback="SHAP explanations will be unavailable"
+    )
 
 try:
     from econml.dml import CausalForestDML
@@ -44,7 +60,10 @@ try:
     HAS_ECONML = True
 except ImportError:
     HAS_ECONML = False
-    logger.warning("econml not installed - heterogeneous treatment effects unavailable")
+    record_dependency_missing(
+        "mitigation_analysis", "econml",
+        fallback="Heterogeneous treatment effects will be unavailable"
+    )
 
 try:
     import statsmodels.api as sm
@@ -52,10 +71,14 @@ try:
     HAS_STATSMODELS = True
 except ImportError:
     HAS_STATSMODELS = False
-    logger.warning("statsmodels not installed - mixed-effects models unavailable")
+    record_dependency_missing(
+        "mitigation_analysis", "statsmodels",
+        fallback="Mixed-effects models will be unavailable"
+    )
 
 # Sklearn fallback always available
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.inspection import partial_dependence
 from sklearn.model_selection import cross_val_score
 from sklearn.preprocessing import LabelEncoder
 
@@ -77,6 +100,7 @@ class ModelFitResults:
     shap_base_value: Optional[float] = None
     model_object: Any = None  # fitted model for prediction
     coefficients: Optional[pd.DataFrame] = None  # for mixed-effects
+    partial_dependence: Optional[Dict[str, Any]] = None  # PDP data for top features
 
 
 @dataclass
@@ -167,6 +191,9 @@ class MitigationAnalysisResults:
     # Summary statistics
     feature_importance_agreement: Dict[str, float] = field(default_factory=dict)
 
+    # Pre-flight diagnostics
+    preflight_diagnostics: Optional["PreFlightDiagnostics"] = None
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -185,6 +212,7 @@ class MitigationAnalysisResults:
             "golden_example": self._golden_to_dict(self.golden_example) if self.golden_example else None,
             "supporting_examples": [self._example_to_dict(e) for e in self.supporting_examples],
             "feature_importance_agreement": self.feature_importance_agreement,
+            "preflight_diagnostics": self.preflight_diagnostics.to_dict() if self.preflight_diagnostics else None,
         }
 
     def _model_fit_to_dict(self, m: ModelFitResults) -> Dict[str, Any]:
@@ -195,6 +223,7 @@ class MitigationAnalysisResults:
             "feature_importance": m.feature_importance.to_dict("records") if m.feature_importance is not None else [],
             "metrics": m.metrics,
             "coefficients": m.coefficients.to_dict("records") if m.coefficients is not None else None,
+            "partial_dependence": m.partial_dependence,
         }
 
     def _hte_to_dict(self, h: HeterogeneousEffects) -> Dict[str, Any]:
@@ -240,6 +269,224 @@ class MitigationAnalysisResults:
             "tier_variance_by_model": g.tier_variance_by_model,
             "neutralization_effect_by_model": g.neutralization_effect_by_model,
         }
+
+
+# -----------------------------------------------------------------------------
+# Pre-flight Diagnostics
+# -----------------------------------------------------------------------------
+
+
+@dataclass
+class PreFlightCheck:
+    """Result of a single pre-flight check."""
+
+    check_name: str
+    passed: bool
+    message: str
+    details: Dict[str, Any] = field(default_factory=dict)
+    recommendation: str = ""
+
+
+@dataclass
+class ModelSelectionDecision:
+    """Decision about which model to use based on pre-flight checks."""
+
+    target: str  # 'tier_delta', 'dispersion_delta', etc.
+    recommended_model: str  # 'mixed_effects', 'ols', 'lightgbm'
+    reason: str
+    checks: List[PreFlightCheck] = field(default_factory=list)
+
+
+@dataclass
+class PreFlightDiagnostics:
+    """Complete pre-flight diagnostics for mitigation analysis."""
+
+    # Per-model, per-target decisions
+    model_decisions: Dict[str, List[ModelSelectionDecision]] = field(default_factory=dict)
+
+    # Summary
+    n_checks_run: int = 0
+    n_checks_passed: int = 0
+    n_checks_failed: int = 0
+
+    # User-facing summary messages
+    summary_messages: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "model_decisions": {
+                model: [
+                    {
+                        "target": d.target,
+                        "recommended_model": d.recommended_model,
+                        "reason": d.reason,
+                        "checks": [
+                            {
+                                "check_name": c.check_name,
+                                "passed": c.passed,
+                                "message": c.message,
+                                "details": c.details,
+                                "recommendation": c.recommendation,
+                            }
+                            for c in d.checks
+                        ],
+                    }
+                    for d in decisions
+                ]
+                for model, decisions in self.model_decisions.items()
+            },
+            "n_checks_run": self.n_checks_run,
+            "n_checks_passed": self.n_checks_passed,
+            "n_checks_failed": self.n_checks_failed,
+            "summary_messages": self.summary_messages,
+        }
+
+
+def run_preflight_checks(
+    baseline_df: pd.DataFrame,
+    neutralized_df: pd.DataFrame,
+    personas_df: pd.DataFrame,
+    persona_decisions_df: Optional[pd.DataFrame],
+    complaints_df: pd.DataFrame,
+    models: List[str],
+) -> PreFlightDiagnostics:
+    """
+    Run pre-flight checks to determine optimal model selection strategy.
+
+    This function analyzes the data structure BEFORE any model fitting to:
+    1. Detect singleton group issues that would cause mixed-effects to fail
+    2. Recommend appropriate fallback models
+    3. Provide user-facing diagnostic messages
+
+    Returns PreFlightDiagnostics with model recommendations per target.
+    """
+    diagnostics = PreFlightDiagnostics()
+    checks_run = 0
+    checks_passed = 0
+
+    for model in models:
+        model_decisions = []
+
+        # Filter data for this LLM model
+        baseline_m = baseline_df[baseline_df["model"] == model]
+        neutralized_m = neutralized_df[neutralized_df["model"] == model]
+
+        # Merge to get paired observations
+        merged = baseline_m[["case_id", "tier"]].rename(columns={"tier": "tier_original"})
+        merged = merged.merge(
+            neutralized_m[["case_id", "tier"]].rename(columns={"tier": "tier_neutralized"}),
+            on="case_id",
+            how="inner",
+        )
+
+        # Check 1: Sufficient sample size
+        checks_run += 1
+        n_obs = len(merged)
+        sample_check = PreFlightCheck(
+            check_name="sample_size",
+            passed=n_obs >= 50,
+            message=f"Sample size: {n_obs} observations",
+            details={"n_observations": n_obs, "minimum_required": 50},
+            recommendation="Need at least 50 observations for reliable analysis" if n_obs < 50 else "",
+        )
+        if sample_check.passed:
+            checks_passed += 1
+
+        # Check 2: Group structure for mixed-effects
+        checks_run += 1
+        obs_per_case = merged.groupby("case_id").size()
+        n_groups = len(obs_per_case)
+        pct_singleton = (obs_per_case == 1).mean()
+        mean_obs_per_group = obs_per_case.mean()
+
+        use_mixed_effects = pct_singleton <= 0.5 and mean_obs_per_group >= 1.5
+
+        group_check = PreFlightCheck(
+            check_name="group_structure",
+            passed=use_mixed_effects,
+            message=f"Group structure: {pct_singleton:.0%} singleton groups, {mean_obs_per_group:.1f} mean obs/group",
+            details={
+                "n_groups": n_groups,
+                "pct_singleton": float(pct_singleton),
+                "mean_obs_per_group": float(mean_obs_per_group),
+                "threshold_singleton": 0.5,
+                "threshold_mean_obs": 1.5,
+            },
+            recommendation="" if use_mixed_effects else
+                "Mixed-effects models require multiple observations per complaint. "
+                "Using OLS regression instead (no random intercepts).",
+        )
+        if group_check.passed:
+            checks_passed += 1
+
+        # Check 3: Target variance
+        checks_run += 1
+        tier_delta = merged["tier_neutralized"] - merged["tier_original"]
+        target_variance = tier_delta.var()
+        has_variance = target_variance > 0 and tier_delta.nunique() > 1
+
+        variance_check = PreFlightCheck(
+            check_name="target_variance",
+            passed=has_variance,
+            message=f"Target variance: {target_variance:.4f} ({tier_delta.nunique()} unique values)",
+            details={
+                "variance": float(target_variance) if np.isfinite(target_variance) else 0,
+                "n_unique": int(tier_delta.nunique()),
+            },
+            recommendation="" if has_variance else
+                "No variance in tier changes - all complaints have identical outcomes after neutralization.",
+        )
+        if variance_check.passed:
+            checks_passed += 1
+
+        # Make model selection decision for tier_delta target
+        checks = [sample_check, group_check, variance_check]
+
+        if not sample_check.passed:
+            recommended = "skip"
+            reason = f"Insufficient sample size ({n_obs} < 50)"
+        elif not variance_check.passed:
+            recommended = "skip"
+            reason = "No variance in target variable"
+        elif use_mixed_effects:
+            recommended = "mixed_effects"
+            reason = f"Sufficient group structure ({pct_singleton:.0%} singletons)"
+        else:
+            recommended = "ols"
+            reason = f"Singleton-heavy data ({pct_singleton:.0%}) - using OLS instead of mixed-effects"
+
+        decision = ModelSelectionDecision(
+            target="tier_delta",
+            recommended_model=recommended,
+            reason=reason,
+            checks=checks,
+        )
+        model_decisions.append(decision)
+
+        # Add summary message if OLS fallback is being used
+        if recommended == "ols":
+            msg = (
+                f"[{model}] Pre-flight: Using OLS regression for tier_delta "
+                f"({pct_singleton:.0%} singleton groups in {n_groups} complaints)"
+            )
+            logger.info(msg)
+            diagnostics.summary_messages.append(msg)
+        elif recommended == "mixed_effects":
+            msg = (
+                f"[{model}] Pre-flight: Using mixed-effects model for tier_delta "
+                f"({pct_singleton:.0%} singleton groups)"
+            )
+            logger.info(msg)
+            diagnostics.summary_messages.append(msg)
+
+        diagnostics.model_decisions[model] = model_decisions
+
+    diagnostics.n_checks_run = checks_run
+    diagnostics.n_checks_passed = checks_passed
+    diagnostics.n_checks_failed = checks_run - checks_passed
+
+    return diagnostics
 
 
 # -----------------------------------------------------------------------------
@@ -511,6 +758,15 @@ def fit_lightgbm_model(
     ss_tot = np.sum((y - np.mean(y)) ** 2)
     r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
 
+    # Compute partial dependence plots for top 10 features
+    pdp_data = compute_partial_dependence_plots(
+        model=model,
+        X=X,
+        feature_names=feature_names,
+        feature_importance=importance_df,
+        top_k=10,
+    )
+
     return ModelFitResults(
         model_type="lightgbm",
         target=target_name,
@@ -523,6 +779,7 @@ def fit_lightgbm_model(
             "best_rounds": best_rounds,
         },
         model_object=model,
+        partial_dependence=pdp_data,
     )
 
 
@@ -576,6 +833,15 @@ def fit_sklearn_rf_model(
     ss_tot = np.sum((y - np.mean(y)) ** 2)
     r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
 
+    # Compute partial dependence plots for top 10 features
+    pdp_data = compute_partial_dependence_plots(
+        model=model,
+        X=X,
+        feature_names=feature_names,
+        feature_importance=importance_df,
+        top_k=10,
+    )
+
     return ModelFitResults(
         model_type="sklearn_rf",
         target=target_name,
@@ -587,6 +853,7 @@ def fit_sklearn_rf_model(
             "cv_folds": n_cv_folds,
         },
         model_object=model,
+        partial_dependence=pdp_data,
     )
 
 
@@ -597,10 +864,13 @@ def fit_mixed_effects_model(
     random_effect: str,
     llm_model: str,
 ) -> ModelFitResults:
-    """Fit mixed-effects regression model."""
+    """Fit mixed-effects regression model with fallback to OLS."""
 
     if not HAS_STATSMODELS:
-        logger.warning("statsmodels not available, skipping mixed-effects model")
+        record_model_fit_error(
+            "mitigation_analysis", "mixed_effects", target,
+            "statsmodels not installed", fallback=None
+        )
         return ModelFitResults(
             model_type="mixed_effects",
             target=target,
@@ -611,6 +881,12 @@ def fit_mixed_effects_model(
 
     # Check for sufficient data
     if len(df) < 50:
+        record_data_quality_issue(
+            "mitigation_analysis",
+            f"Insufficient data for mixed-effects model (n={len(df)})",
+            fallback=None,
+            details={"target": target, "n_rows": len(df)},
+        )
         return ModelFitResults(
             model_type="mixed_effects",
             target=target,
@@ -621,6 +897,12 @@ def fit_mixed_effects_model(
 
     # Check for variance in target
     if df[target].nunique() < 2:
+        record_data_quality_issue(
+            "mitigation_analysis",
+            f"No variance in target '{target}' for mixed-effects model",
+            fallback=None,
+            details={"target": target, "unique_values": df[target].nunique()},
+        )
         return ModelFitResults(
             model_type="mixed_effects",
             target=target,
@@ -629,66 +911,242 @@ def fit_mixed_effects_model(
             metrics={"error": "no variance in target"},
         )
 
+    # Check if mixed effects is appropriate (need multiple obs per group)
+    obs_per_group = df.groupby(random_effect).size()
+    mean_obs = obs_per_group.mean()
+    pct_singleton = (obs_per_group == 1).mean()
+
+    # If >50% groups have only 1 observation, fall back to OLS
+    use_ols_fallback = pct_singleton > 0.5 or mean_obs < 1.5
+
     # Build formula
     formula = f"{target} ~ " + " + ".join(fixed_effects)
 
-    try:
-        # Fit model with warnings suppressed
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=RuntimeWarning)
-            warnings.filterwarnings("ignore", message=".*Hessian.*")
-            warnings.filterwarnings("ignore", message=".*positive definite.*")
+    # Try mixed-effects first (unless we know it won't work)
+    if not use_ols_fallback:
+        result = _try_mixed_effects_fit(df, formula, random_effect, target, llm_model)
+        if result is not None:
+            return result
+        record_model_fit_warning(
+            "mitigation_analysis", "mixed_effects", target,
+            "All optimization methods failed",
+            fallback="Using OLS regression instead"
+        )
+    else:
+        record_model_fit_warning(
+            "mitigation_analysis", "mixed_effects", target,
+            f"Insufficient group structure ({pct_singleton:.0%} singleton groups)",
+            fallback="Using OLS regression instead"
+        )
 
-            model = mixedlm(formula, df, groups=df[random_effect])
-            result = model.fit(method="lbfgs", maxiter=100)
+    # Fall back to OLS regression
+    return _fit_ols_fallback(df, target, fixed_effects, llm_model)
 
-        # Check for valid standard errors
-        if not result.converged or np.any(np.isnan(result.bse_fe)):
+
+def _try_mixed_effects_fit(
+    df: pd.DataFrame,
+    formula: str,
+    random_effect: str,
+    target: str,
+    llm_model: str,
+) -> Optional[ModelFitResults]:
+    """Attempt mixed-effects fit with multiple optimization methods."""
+
+    methods = ["lbfgs", "powell", "cg"]
+
+    for method in methods:
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                warnings.filterwarnings("ignore", message=".*Hessian.*")
+                warnings.filterwarnings("ignore", message=".*positive definite.*")
+                warnings.filterwarnings("ignore", message=".*convergence.*")
+
+                model = mixedlm(formula, df, groups=df[random_effect])
+                result = model.fit(method=method, maxiter=200)
+
+            # Check for valid fit
+            if not result.converged:
+                continue
+            if np.any(np.isnan(result.bse_fe)):
+                continue
+
+            # Extract coefficients
+            std_err = result.bse_fe.values
+            std_err = np.where(np.isnan(std_err), 1e-10, std_err)
+
+            coef_df = pd.DataFrame({
+                "feature": result.fe_params.index,
+                "coefficient": result.fe_params.values,
+                "std_err": std_err,
+                "z_value": result.fe_params.values / std_err,
+                "p_value": result.pvalues.values[:len(result.fe_params)] if len(result.pvalues) >= len(result.fe_params) else [np.nan] * len(result.fe_params),
+            })
+
+            coef_df["importance"] = np.abs(coef_df["z_value"])
+            coef_df["importance"] = coef_df["importance"].replace([np.inf, -np.inf], 0).fillna(0)
+            coef_df = coef_df.sort_values("importance", ascending=False)
+            coef_df["rank"] = range(1, len(coef_df) + 1)
+
             return ModelFitResults(
                 model_type="mixed_effects",
                 target=target,
                 llm_model=llm_model,
-                feature_importance=pd.DataFrame(),
-                metrics={"error": "model did not converge properly"},
+                feature_importance=coef_df[["feature", "importance", "rank"]],
+                metrics={
+                    "aic": result.aic if np.isfinite(result.aic) else None,
+                    "bic": result.bic if np.isfinite(result.bic) else None,
+                    "llf": result.llf if np.isfinite(result.llf) else None,
+                    "converged": result.converged,
+                    "method": method,
+                },
+                coefficients=coef_df,
+                model_object=result,
             )
 
-        # Extract coefficients with safe handling of NaN
-        std_err = result.bse_fe.values
-        std_err = np.where(np.isnan(std_err), 1e-10, std_err)  # Replace NaN with small value
+        except Exception as e:
+            logger.debug(f"Mixed-effects with method={method} failed: {e}")
+            continue
 
+    return None
+
+
+def _fit_ols_fallback(
+    df: pd.DataFrame,
+    target: str,
+    fixed_effects: List[str],
+    llm_model: str,
+) -> ModelFitResults:
+    """Fit OLS regression as fallback when mixed-effects fails."""
+
+    try:
+        formula = f"{target} ~ " + " + ".join(fixed_effects)
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+
+            from statsmodels.formula.api import ols
+            model = ols(formula, data=df)
+            result = model.fit()
+
+        # Extract coefficients
         coef_df = pd.DataFrame({
-            "feature": result.fe_params.index,
-            "coefficient": result.fe_params.values,
-            "std_err": std_err,
-            "z_value": result.fe_params.values / std_err,
-            "p_value": result.pvalues.values[:len(result.fe_params)] if len(result.pvalues) >= len(result.fe_params) else [np.nan] * len(result.fe_params),
+            "feature": result.params.index,
+            "coefficient": result.params.values,
+            "std_err": result.bse.values,
+            "t_value": result.tvalues.values,
+            "p_value": result.pvalues.values,
         })
 
-        # Feature importance from |coefficient / std_err|
-        coef_df["importance"] = np.abs(coef_df["z_value"])
+        coef_df["importance"] = np.abs(coef_df["t_value"])
         coef_df["importance"] = coef_df["importance"].replace([np.inf, -np.inf], 0).fillna(0)
         coef_df = coef_df.sort_values("importance", ascending=False)
         coef_df["rank"] = range(1, len(coef_df) + 1)
 
         return ModelFitResults(
-            model_type="mixed_effects",
+            model_type="ols_fallback",
             target=target,
             llm_model=llm_model,
             feature_importance=coef_df[["feature", "importance", "rank"]],
             metrics={
+                "r2": result.rsquared,
+                "r2_adj": result.rsquared_adj,
                 "aic": result.aic if np.isfinite(result.aic) else None,
                 "bic": result.bic if np.isfinite(result.bic) else None,
-                "llf": result.llf if np.isfinite(result.llf) else None,
-                "converged": result.converged,
+                "f_pvalue": result.f_pvalue if np.isfinite(result.f_pvalue) else None,
+                "note": "OLS fallback (insufficient group structure for mixed effects)",
             },
             coefficients=coef_df,
             model_object=result,
         )
 
     except Exception as e:
-        logger.debug(f"Mixed-effects model failed: {e}")
+        record_model_fit_error(
+            "mitigation_analysis", "ols_fallback", target,
+            str(e), fallback=None
+        )
         return ModelFitResults(
-            model_type="mixed_effects",
+            model_type="ols_fallback",
+            target=target,
+            llm_model=llm_model,
+            feature_importance=pd.DataFrame(),
+            metrics={"error": str(e)},
+        )
+
+
+def fit_ols_model(
+    df: pd.DataFrame,
+    target: str,
+    fixed_effects: List[str],
+    llm_model: str,
+) -> ModelFitResults:
+    """
+    Fit OLS regression as primary model when pre-flight determines mixed-effects is inappropriate.
+
+    This is called directly when pre-flight diagnostics detect singleton-heavy data,
+    rather than falling back after a failed mixed-effects attempt.
+    """
+    if not HAS_STATSMODELS:
+        record_model_fit_error(
+            "mitigation_analysis", "ols", target,
+            "statsmodels not installed", fallback=None
+        )
+        return ModelFitResults(
+            model_type="ols",
+            target=target,
+            llm_model=llm_model,
+            feature_importance=pd.DataFrame(),
+            metrics={"error": "statsmodels not installed"},
+        )
+
+    try:
+        formula = f"{target} ~ " + " + ".join(fixed_effects)
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+
+            from statsmodels.formula.api import ols
+            model = ols(formula, data=df)
+            result = model.fit()
+
+        # Extract coefficients
+        coef_df = pd.DataFrame({
+            "feature": result.params.index,
+            "coefficient": result.params.values,
+            "std_err": result.bse.values,
+            "t_value": result.tvalues.values,
+            "p_value": result.pvalues.values,
+        })
+
+        coef_df["importance"] = np.abs(coef_df["t_value"])
+        coef_df["importance"] = coef_df["importance"].replace([np.inf, -np.inf], 0).fillna(0)
+        coef_df = coef_df.sort_values("importance", ascending=False)
+        coef_df["rank"] = range(1, len(coef_df) + 1)
+
+        return ModelFitResults(
+            model_type="ols",
+            target=target,
+            llm_model=llm_model,
+            feature_importance=coef_df[["feature", "importance", "rank"]],
+            metrics={
+                "r2": result.rsquared,
+                "r2_adj": result.rsquared_adj,
+                "aic": result.aic if np.isfinite(result.aic) else None,
+                "bic": result.bic if np.isfinite(result.bic) else None,
+                "f_pvalue": result.f_pvalue if np.isfinite(result.f_pvalue) else None,
+                "note": "OLS used per pre-flight check (data structure unsuitable for mixed-effects)",
+            },
+            coefficients=coef_df,
+            model_object=result,
+        )
+
+    except Exception as e:
+        record_model_fit_error(
+            "mitigation_analysis", "ols", target,
+            str(e), fallback=None
+        )
+        return ModelFitResults(
+            model_type="ols",
             target=target,
             llm_model=llm_model,
             feature_importance=pd.DataFrame(),
@@ -775,6 +1233,146 @@ def generate_shap_waterfall_data(
 
 
 # -----------------------------------------------------------------------------
+# Partial Dependence Plots
+# -----------------------------------------------------------------------------
+
+
+class _LightGBMWrapper:
+    """Wrapper to make LightGBM Booster compatible with sklearn's partial_dependence."""
+
+    def __init__(self, booster: Any, feature_names: List[str]):
+        self.booster = booster
+        self.feature_names = feature_names
+        # Required sklearn attributes
+        self.n_features_in_ = len(feature_names)
+        self.feature_names_in_ = np.array(feature_names)
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """Predict using the LightGBM booster."""
+        if isinstance(X, pd.DataFrame):
+            return self.booster.predict(X)
+        return self.booster.predict(X)
+
+    def fit(self, X: Any, y: Any) -> "_LightGBMWrapper":
+        """Dummy fit method for sklearn compatibility."""
+        return self
+
+
+def compute_partial_dependence_plots(
+    model: Any,
+    X: pd.DataFrame,
+    feature_names: List[str],
+    feature_importance: pd.DataFrame,
+    top_k: int = 10,
+    grid_resolution: int = 50,
+) -> Dict[str, Any]:
+    """
+    Compute partial dependence plots for the top-k most important features.
+
+    Returns a dictionary with PDP data for each feature:
+    {
+        "feature_name": {
+            "grid_values": [...],  # x-axis values
+            "avg_predictions": [...],  # y-axis (average prediction)
+            "feature_type": "numeric" | "categorical",
+            "importance_rank": int,
+            "importance_value": float,
+        },
+        ...
+    }
+    """
+    if feature_importance.empty:
+        return {}
+
+    # Get top-k features by importance
+    top_features = feature_importance.head(top_k)["feature"].tolist()
+    top_importance = feature_importance.head(top_k).set_index("feature")
+
+    # Encode categorical features for the model
+    X_encoded = X.copy()
+    label_encoders = {}
+    categorical_cols = X_encoded.select_dtypes(include=["object", "category"]).columns.tolist()
+
+    for col in categorical_cols:
+        le = LabelEncoder()
+        X_encoded[col] = le.fit_transform(X_encoded[col].astype(str))
+        label_encoders[col] = le
+
+    X_encoded = X_encoded.fillna(0)
+
+    # Prepare model wrapper for LightGBM
+    if HAS_LIGHTGBM and hasattr(model, "feature_name"):
+        # LightGBM Booster - wrap it for sklearn compatibility
+        model_for_pdp = _LightGBMWrapper(model, feature_names)
+    else:
+        # sklearn model (RandomForest, etc.)
+        model_for_pdp = model
+
+    pdp_results = {}
+
+    for feature in top_features:
+        if feature not in X_encoded.columns:
+            continue
+
+        feature_idx = list(X_encoded.columns).index(feature)
+
+        try:
+            # Compute partial dependence
+            pdp_result = partial_dependence(
+                model_for_pdp,
+                X_encoded,
+                features=[feature_idx],
+                kind="average",
+                grid_resolution=grid_resolution,
+            )
+
+            grid_values = pdp_result["grid_values"][0]
+            avg_predictions = pdp_result["average"][0]
+
+            # Determine feature type
+            is_categorical = feature in categorical_cols
+
+            # For categorical features, map encoded values back to labels
+            if is_categorical and feature in label_encoders:
+                le = label_encoders[feature]
+                # Get unique encoded values that appear in grid
+                unique_encoded = np.unique(grid_values.astype(int))
+                # Only include values that are valid for inverse transform
+                valid_mask = unique_encoded < len(le.classes_)
+                if valid_mask.any():
+                    valid_encoded = unique_encoded[valid_mask]
+                    labels = le.inverse_transform(valid_encoded)
+                    # Filter grid and predictions to valid values
+                    mask = np.isin(grid_values.astype(int), valid_encoded)
+                    grid_values = labels.tolist()
+                    avg_predictions = avg_predictions[mask].tolist()
+                else:
+                    grid_values = grid_values.tolist()
+                    avg_predictions = avg_predictions.tolist()
+            else:
+                grid_values = grid_values.tolist()
+                avg_predictions = avg_predictions.tolist()
+
+            # Get importance info
+            importance_rank = int(top_importance.loc[feature, "rank"]) if feature in top_importance.index else 0
+            importance_value = float(top_importance.loc[feature, "importance"]) if feature in top_importance.index else 0.0
+
+            pdp_results[feature] = {
+                "grid_values": grid_values,
+                "avg_predictions": avg_predictions,
+                "feature_type": "categorical" if is_categorical else "numeric",
+                "importance_rank": importance_rank,
+                "importance_value": importance_value,
+            }
+
+        except Exception as e:
+            logger.debug(f"PDP computation failed for feature '{feature}': {e}")
+            continue
+
+    return pdp_results
+
+
+# -----------------------------------------------------------------------------
 # Heterogeneous Treatment Effects
 # -----------------------------------------------------------------------------
 
@@ -813,12 +1411,14 @@ def estimate_heterogeneous_effects(
         logger.debug(f"Insufficient treatment balance for HTE ({treatment_col})")
         return HeterogeneousEffects(treatment=treatment_col, llm_model=llm_model)
 
-    # Encode features
+    # Encode features and store mappings for decoding subgroup labels
     X = df_clean[feature_cols].copy()
-    categorical_cols = X.select_dtypes(include=["object", "category"]).columns
+    categorical_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
+    label_encoders: Dict[str, LabelEncoder] = {}
     for col in categorical_cols:
         le = LabelEncoder()
         X[col] = le.fit_transform(X[col].astype(str))
+        label_encoders[col] = le
     X = X.fillna(0)
 
     T = T_raw
@@ -877,8 +1477,18 @@ def estimate_heterogeneous_effects(
             for val in unique_vals:
                 mask = X.iloc[:, top_mod_idx] == val
                 cate_sub = cate[mask]
+
+                # Decode label to original value for display
+                if top_mod in label_encoders:
+                    try:
+                        original_label = label_encoders[top_mod].inverse_transform([int(val)])[0]
+                    except (ValueError, IndexError):
+                        original_label = str(val)
+                else:
+                    original_label = str(val)
+
                 subgroup_data.append({
-                    "subgroup": f"{top_mod}={val}",
+                    "subgroup": f"{top_mod}={original_label}",
                     "cate": np.mean(cate_sub),
                     "ci_lower": np.percentile(cate_sub, 2.5),
                     "ci_upper": np.percentile(cate_sub, 97.5),
@@ -1211,6 +1821,7 @@ class MitigationAnalyzer:
         self.text_features_df = text_features_df
 
         self.results = MitigationAnalysisResults()
+        self.preflight: Optional[PreFlightDiagnostics] = None
 
     def run(
         self,
@@ -1220,6 +1831,23 @@ class MitigationAnalyzer:
         """Run full mitigation effectiveness analysis."""
 
         logger.info("Starting mitigation effectiveness analysis...")
+
+        # 0. Run pre-flight checks to determine model selection strategy
+        logger.info("Running pre-flight diagnostics...")
+        self.preflight = run_preflight_checks(
+            self.baseline_df,
+            self.neutralized_df,
+            self.personas_df,
+            self.persona_decisions_df,
+            self.complaints_df,
+            models,
+        )
+        self.results.preflight_diagnostics = self.preflight
+
+        # Log pre-flight summary
+        if self.preflight.summary_messages:
+            for msg in self.preflight.summary_messages:
+                logger.info(f"  {msg}")
 
         # 1. Select golden example (shared across models)
         logger.info("Selecting golden example...")
@@ -1327,21 +1955,53 @@ class MitigationAnalyzer:
 
         results.append(lgb_result)
 
-        # Fit mixed-effects model (if complaint grouping available)
+        # Fit statistical model based on pre-flight decision
         if "case_id" in feature_df.columns and len(feature_df["case_id"].unique()) > 10:
+            # Get pre-flight decision for this model
+            preflight_decision = self._get_preflight_decision(model, "tier_delta")
+            recommended_model = preflight_decision.recommended_model if preflight_decision else "mixed_effects"
+
             # Select numeric features only for formula
             numeric_cols = feature_df[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
             if numeric_cols:
-                me_result = fit_mixed_effects_model(
-                    feature_df.dropna(subset=numeric_cols + ["tier_delta"]),
-                    "tier_delta",
-                    numeric_cols[:10],  # Limit features
-                    "case_id",
-                    model,
-                )
-                results.append(me_result)
+                if recommended_model == "ols":
+                    # Pre-flight determined OLS is appropriate - call directly
+                    me_result = fit_ols_model(
+                        feature_df.dropna(subset=numeric_cols + ["tier_delta"]),
+                        "tier_delta",
+                        numeric_cols[:10],
+                        model,
+                    )
+                elif recommended_model == "skip":
+                    # Pre-flight determined to skip this analysis
+                    logger.info(f"Skipping statistical model for {model} per pre-flight check")
+                    me_result = None
+                else:
+                    # Use mixed-effects (default or recommended)
+                    me_result = fit_mixed_effects_model(
+                        feature_df.dropna(subset=numeric_cols + ["tier_delta"]),
+                        "tier_delta",
+                        numeric_cols[:10],  # Limit features
+                        "case_id",
+                        model,
+                    )
+
+                if me_result is not None:
+                    results.append(me_result)
 
         return results
+
+    def _get_preflight_decision(
+        self, model: str, target: str
+    ) -> Optional[ModelSelectionDecision]:
+        """Get the pre-flight model selection decision for a model/target pair."""
+        if self.preflight is None:
+            return None
+        decisions = self.preflight.model_decisions.get(model, [])
+        for d in decisions:
+            if d.target == target:
+                return d
+        return None
 
     def _analyze_causal_persona(self, model: str) -> List[ModelFitResults]:
         """Analyze causal persona effects for a single model."""

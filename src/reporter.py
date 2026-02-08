@@ -95,6 +95,107 @@ def _flag_bg(flag: str) -> str:
     return FLAG_BG.get(flag, "#f9f9f9")
 
 
+def _build_tier_transition_matrix(tier_changes: Dict[str, int]) -> str:
+    """
+    Build a 2D tier transition matrix table from tier_changes dict.
+
+    tier_changes is formatted as {"1→2": count, "2→3": count, ...}
+    Output is an HTML table with rows = original tier, columns = neutralized tier.
+    """
+    if not tier_changes:
+        return "<p>No tier changes recorded.</p>"
+
+    # Parse transitions to extract tiers and counts
+    transitions: Dict[tuple, int] = {}
+    all_tiers: set = set()
+
+    for key, count in tier_changes.items():
+        # Handle both arrow formats: → and ->
+        if "→" in key:
+            parts = key.split("→")
+        elif "->" in key:
+            parts = key.split("->")
+        else:
+            continue
+
+        if len(parts) != 2:
+            continue
+
+        try:
+            from_tier = int(parts[0].strip())
+            to_tier = int(parts[1].strip())
+            transitions[(from_tier, to_tier)] = count
+            all_tiers.add(from_tier)
+            all_tiers.add(to_tier)
+        except ValueError:
+            continue
+
+    if not transitions:
+        return "<p>No valid tier transitions found.</p>"
+
+    # Sort tiers for consistent display
+    sorted_tiers = sorted(all_tiers)
+
+    # Build HTML table
+    parts: List[str] = []
+    parts.append('<table class="tier-transition-matrix">')
+    parts.append("<thead><tr>")
+    parts.append('<th class="corner-cell">Original \\ Neutralized</th>')
+    for to_tier in sorted_tiers:
+        parts.append(f"<th>Tier {to_tier}</th>")
+    parts.append("<th>Total</th>")
+    parts.append("</tr></thead>")
+
+    parts.append("<tbody>")
+    grand_total = 0
+
+    for from_tier in sorted_tiers:
+        parts.append("<tr>")
+        parts.append(f"<th>Tier {from_tier}</th>")
+        row_total = 0
+
+        for to_tier in sorted_tiers:
+            count = transitions.get((from_tier, to_tier), 0)
+            row_total += count
+
+            # Highlight diagonal (no change) vs off-diagonal (change)
+            if from_tier == to_tier:
+                cell_class = "no-change"
+            elif to_tier > from_tier:
+                cell_class = "upgrade"  # tier increased (usually worse outcome)
+            else:
+                cell_class = "downgrade"  # tier decreased (usually better outcome)
+
+            if count > 0:
+                parts.append(f'<td class="{cell_class}">{count}</td>')
+            else:
+                parts.append('<td class="zero">-</td>')
+
+        parts.append(f"<td class=\"row-total\">{row_total}</td>")
+        parts.append("</tr>")
+        grand_total += row_total
+
+    # Column totals row
+    parts.append('<tr class="col-totals">')
+    parts.append("<th>Total</th>")
+    for to_tier in sorted_tiers:
+        col_total = sum(transitions.get((f, to_tier), 0) for f in sorted_tiers)
+        parts.append(f"<td>{col_total}</td>")
+    parts.append(f"<td class=\"grand-total\">{grand_total}</td>")
+    parts.append("</tr>")
+
+    parts.append("</tbody></table>")
+
+    # Add legend
+    parts.append('<div class="tier-matrix-legend">')
+    parts.append('<span class="legend-item"><span class="legend-box no-change"></span> No change</span>')
+    parts.append('<span class="legend-item"><span class="legend-box upgrade"></span> Tier increased</span>')
+    parts.append('<span class="legend-item"><span class="legend-box downgrade"></span> Tier decreased</span>')
+    parts.append("</div>")
+
+    return "\n".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # Chart generators
 # ---------------------------------------------------------------------------
@@ -775,6 +876,74 @@ tr:hover {{ background: #f8f9fa; }}
 .metric-card .value {{ font-size: 1.6rem; font-weight: 700; color: #3498db; }}
 .metric-card .label {{ font-size: 0.8rem; color: #7f8c8d; margin-top: 4px; }}
 
+/* Tier transition matrix */
+.tier-transition-matrix {{
+    border-collapse: collapse;
+    margin: 15px 0;
+    font-size: 0.9rem;
+}}
+.tier-transition-matrix th, .tier-transition-matrix td {{
+    border: 1px solid #dee2e6;
+    padding: 8px 12px;
+    text-align: center;
+    min-width: 60px;
+}}
+.tier-transition-matrix thead th {{
+    background: #f8f9fa;
+    font-weight: 600;
+}}
+.tier-transition-matrix tbody th {{
+    background: #f8f9fa;
+    font-weight: 600;
+    text-align: right;
+}}
+.tier-transition-matrix .corner-cell {{
+    font-size: 0.75rem;
+    color: #666;
+    text-align: center;
+}}
+.tier-transition-matrix .no-change {{
+    background: #d4edda;
+    font-weight: 600;
+}}
+.tier-transition-matrix .upgrade {{
+    background: #f8d7da;
+}}
+.tier-transition-matrix .downgrade {{
+    background: #cce5ff;
+}}
+.tier-transition-matrix .zero {{
+    color: #ccc;
+}}
+.tier-transition-matrix .row-total, .tier-transition-matrix .col-totals td {{
+    background: #f8f9fa;
+    font-weight: 600;
+}}
+.tier-transition-matrix .grand-total {{
+    background: #e9ecef;
+    font-weight: 700;
+}}
+.tier-matrix-legend {{
+    margin-top: 10px;
+    font-size: 0.8rem;
+    color: #666;
+}}
+.tier-matrix-legend .legend-item {{
+    margin-right: 20px;
+    display: inline-flex;
+    align-items: center;
+}}
+.tier-matrix-legend .legend-box {{
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    margin-right: 5px;
+    border: 1px solid #ccc;
+}}
+.tier-matrix-legend .legend-box.no-change {{ background: #d4edda; }}
+.tier-matrix-legend .legend-box.upgrade {{ background: #f8d7da; }}
+.tier-matrix-legend .legend-box.downgrade {{ background: #cce5ff; }}
+
 /* Executive summary section cards */
 .exec-card {{
     background: white;
@@ -812,6 +981,17 @@ tr:hover {{ background: #f8f9fa; }}
 .muted {{ color: #95a5a6; font-size: 0.85rem; }}
 .note {{ background: #eaf6ff; border-left: 4px solid #3498db; padding: 10px 15px; margin: 10px 0; border-radius: 0 4px 4px 0; font-size: 0.9rem; }}
 .warning {{ background: #fef5e7; border-left: 4px solid #f39c12; padding: 10px 15px; margin: 10px 0; border-radius: 0 4px 4px 0; font-size: 0.9rem; }}
+
+/* Alert boxes for diagnostics */
+.alert {{ padding: 12px 16px; margin: 10px 0; border-radius: 4px; font-size: 0.9rem; }}
+.alert strong {{ display: block; margin-bottom: 6px; }}
+.alert ul {{ margin: 8px 0 8px 20px; }}
+.alert li {{ margin: 4px 0; }}
+.alert p {{ margin: 6px 0; }}
+.alert-info {{ background: #eaf6ff; border-left: 4px solid #3498db; color: #2c3e50; }}
+.alert-warning {{ background: #fef5e7; border-left: 4px solid #f39c12; color: #856404; }}
+.alert-danger {{ background: #fdedec; border-left: 4px solid #e74c3c; color: #721c24; }}
+.alert-success {{ background: #eafaf1; border-left: 4px solid #27ae60; color: #155724; }}
 
 .table-scroll {{ overflow-x: auto; max-height: 600px; overflow-y: auto; }}
 
@@ -1065,10 +1245,14 @@ def _build_tab_executive_summary(
     # Per-model key findings
     for model in models:
         model_res = analysis_results.get(model, {})
-        if not model_res:
-            continue
-
         parts.append(f"<h3>Model: {html.escape(model)}</h3>")
+
+        if not model_res:
+            parts.append('<div class="alert alert-warning">')
+            parts.append("<strong>No analysis results available.</strong> ")
+            parts.append("The LLM inference or analysis step may have failed.")
+            parts.append("</div>")
+            continue
 
         # Dimension flags table
         dim_flags = _get_dimension_flags(model_res, materiality_threshold)
@@ -1152,22 +1336,42 @@ def _build_tab_executive_summary(
     return "\n".join(parts)
 
 
-def _build_tab_disparate_impact(
+def _build_tab_disparate_impact_association(
     analysis_results: Dict[str, Any],
     complaints: List[Complaint],
     models: List[str],
     materiality_threshold: float,
     text_features_df: Optional[pd.DataFrame],
 ) -> str:
-    """Build the Disparate Impact tab HTML."""
+    """Build the Disparate Impact - Association tab HTML.
+
+    This tab analyzes associations between persona labels derived from the
+    original complaint text and the remedy tier recommendations for that
+    same original text. It includes chi-squared tests, logistic regression,
+    and adverse impact ratio (AIR) analysis.
+    """
     parts: List[str] = []
-    parts.append("<h2>Disparate Impact Analysis</h2>")
+    parts.append("<h2>Disparate Impact - Association Analysis</h2>")
+    parts.append('<p class="note">This analysis examines the <em>association</em> between '
+                 'perceived demographic characteristics (persona labels estimated from original text) '
+                 'and remedy tier outcomes assigned to those same original complaints. '
+                 'While associations may indicate potential bias, they do not establish causation.</p>')
 
     for model in models:
         model_res = analysis_results.get(model, {})
-        if not model_res:
-            continue
         parts.append(f"<h3>Model: {html.escape(model)}</h3>")
+
+        if not model_res:
+            parts.append('<div class="alert alert-warning">')
+            parts.append(f'<strong>No analysis results available for this model.</strong>')
+            parts.append("<p>This can happen when:</p><ul>")
+            parts.append("<li>The LLM inference step failed or was skipped</li>")
+            parts.append("<li>No valid decisions were extracted from model responses</li>")
+            parts.append("<li>A critical error occurred during Step 2 or Step 3</li>")
+            parts.append("</ul>")
+            parts.append("<p>Check the experiment log for error details.</p>")
+            parts.append("</div>")
+            continue
 
         # --- Correlation Analysis ---
         parts.append('<div class="collapsible">')
@@ -1175,6 +1379,12 @@ def _build_tab_disparate_impact(
         parts.append('<div class="collapsible-body">')
 
         corr = model_res.get("correlation", {})
+        if not corr:
+            parts.append('<div class="alert alert-info">')
+            parts.append("<strong>Correlation analysis not available.</strong> ")
+            parts.append("Step 3 may have been skipped or encountered errors.")
+            parts.append("</div>")
+
         overall_chi2 = corr.get("overall_chi2", {})
         if overall_chi2:
             parts.append('<table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>')
@@ -1295,12 +1505,55 @@ def _build_tab_disparate_impact(
 
         parts.append("</div></div>")
 
+    return "\n".join(parts)
+
+
+def _build_tab_disparate_impact_causal(
+    analysis_results: Dict[str, Any],
+    models: List[str],
+) -> str:
+    """Build the Disparate Impact - Causal tab HTML.
+
+    This tab analyzes how rewriting complaints in different persona styles
+    changes the tier recommendations (matched-guise experiment). It establishes
+    causation by comparing outcomes for the same complaint rewritten in
+    different demographic styles.
+    """
+    parts: List[str] = []
+    parts.append("<h2>Disparate Impact - Causal Analysis</h2>")
+    parts.append('<p class="note">This analysis establishes <em>causation</em> through a matched-guise experiment. '
+                 'Each original complaint is rewritten in 36 different persona styles, and the LLM assigns '
+                 'remedy tiers to each variant. Because the underlying complaint is identical, any systematic '
+                 'differences in outcomes can be attributed to the linguistic style rather than complaint content.</p>')
+
+    for model in models:
+        model_res = analysis_results.get(model, {})
+        parts.append(f"<h3>Model: {html.escape(model)}</h3>")
+
+        if not model_res:
+            parts.append('<div class="alert alert-warning">')
+            parts.append(f'<strong>No analysis results available for this model.</strong>')
+            parts.append("<p>This can happen when:</p><ul>")
+            parts.append("<li>The LLM inference step failed or was skipped</li>")
+            parts.append("<li>No valid decisions were extracted from model responses</li>")
+            parts.append("<li>A critical error occurred during Step 4 or Step 5</li>")
+            parts.append("</ul>")
+            parts.append("<p>Check the experiment log for error details.</p>")
+            parts.append("</div>")
+            continue
+
         # --- Causal Analysis ---
         parts.append('<div class="collapsible">')
-        parts.append('<div class="collapsible-header">Causal Analysis (Matched-Guise)</div>')
+        parts.append('<div class="collapsible-header">Matched-Guise Experiment Results</div>')
         parts.append('<div class="collapsible-body">')
 
         causal = model_res.get("causal", {})
+        if not causal:
+            parts.append('<div class="alert alert-info">')
+            parts.append("<strong>Causal analysis not available.</strong> ")
+            parts.append("Steps 4-5 (matched-guise experiment) may have been skipped or --causal-sample-pct was set to 0.")
+            parts.append("</div>")
+
         friedman = causal.get("friedman", {})
         if friedman:
             parts.append(f'<p>Friedman test: statistic = {_fmt(friedman.get("statistic"))}, p = {_fmt(friedman.get("p_value"))}</p>')
@@ -1340,6 +1593,12 @@ def _build_tab_disparate_impact(
         parts.append('<div class="collapsible-body">')
 
         mit = model_res.get("mitigation", {})
+        if not mit:
+            parts.append('<div class="alert alert-info">')
+            parts.append("<strong>Mitigation analysis not available.</strong> ")
+            parts.append("Steps 6-7 (language neutralization) may have been skipped.")
+            parts.append("</div>")
+
         mcnemar_pp = mit.get("mcnemar_pre_post", {})
         if mcnemar_pp:
             parts.append(f'<p>McNemar pre/post: statistic = {_fmt(mcnemar_pp.get("statistic"))}, p = {_fmt(mcnemar_pp.get("p_value"))}</p>')
@@ -1357,14 +1616,11 @@ def _build_tab_disparate_impact(
         if paired_chart:
             parts.append(f'<div class="chart-container"><img src="data:image/png;base64,{paired_chart}" alt="Pre/post neutralization AIR"></div>')
 
-        # Tier changes
+        # Tier changes - render as 2D transition matrix
         tc = mit.get("tier_changes", {})
         if tc:
             parts.append("<h4>Tier Change Summary</h4>")
-            parts.append('<table><thead><tr><th>Transition</th><th>Count</th></tr></thead><tbody>')
-            for transition, count in sorted(tc.items()):
-                parts.append(f"<tr><td>{html.escape(transition)}</td><td>{count}</td></tr>")
-            parts.append("</tbody></table>")
+            parts.append(_build_tier_transition_matrix(tc))
 
         parts.append("</div></div>")
 
@@ -1384,9 +1640,14 @@ def _build_tab_process_discrimination(
 
     for model in models:
         model_res = analysis_results.get(model, {})
-        if not model_res:
-            continue
         parts.append(f"<h3>Model: {html.escape(model)}</h3>")
+
+        if not model_res:
+            parts.append('<div class="alert alert-warning">')
+            parts.append("<strong>No results available for this model.</strong> ")
+            parts.append("The LLM inference step may have failed or been skipped.")
+            parts.append("</div>")
+            continue
 
         # --- Information Request Rates ---
         parts.append('<div class="collapsible">')
@@ -1501,7 +1762,11 @@ def _build_tab_text_features(
     parts.append("<h2>Text Feature Analysis</h2>")
 
     if text_features_df is None or text_features_df.empty:
-        parts.append('<p class="warning">No text feature data available.</p>')
+        parts.append('<div class="alert alert-info">')
+        parts.append("<strong>No text feature data available.</strong> ")
+        parts.append("Text feature extraction may have been skipped or failed. ")
+        parts.append("Check that NLTK and fasttext dependencies are installed.")
+        parts.append("</div>")
         return "\n".join(parts)
 
     # Summary stats
@@ -1577,6 +1842,475 @@ def _build_tab_text_features(
     else:
         parts.append('<p class="muted">Insufficient data for topic-persona heatmap.</p>')
 
+    parts.append("</div></div>")
+
+    return "\n".join(parts)
+
+
+def _build_tab_text_rewriting(
+    analysis_results: Dict[str, Any],
+) -> str:
+    """Build the Text Rewriting Analysis tab HTML.
+
+    Shows how text characteristics change when complaints are rewritten
+    to different persona styles, with statistical tests and effect sizes.
+    """
+    parts: List[str] = []
+    parts.append("<h2>Text Rewriting Analysis</h2>")
+    parts.append(
+        "<p>This analysis compares text characteristics before and after persona-style rewriting. "
+        "It reveals how readability, sentiment, vocabulary, and other linguistic features change "
+        "when the same complaint is expressed in different persona styles.</p>"
+    )
+
+    rewriting_data = analysis_results.get("text_rewriting", {})
+    if not rewriting_data or rewriting_data.get("error"):
+        error_msg = rewriting_data.get("error", "No rewriting analysis available") if rewriting_data else "No data"
+        parts.append('<div class="alert alert-warning">')
+        parts.append(f"<strong>Text rewriting analysis not available.</strong> {html.escape(str(error_msg))}")
+        parts.append("</div>")
+        return "\n".join(parts)
+
+    # Summary cards
+    n_orig = rewriting_data.get("n_original", 0)
+    n_rew = rewriting_data.get("n_rewritten", 0)
+    n_personas = rewriting_data.get("n_personas", 0)
+    sig_features = rewriting_data.get("significant_features", [])
+    n_sig = len(sig_features)
+    n_total = len(rewriting_data.get("overall_comparisons", []))
+
+    parts.append('<div class="summary-cards" style="display:flex;gap:1em;flex-wrap:wrap;margin-bottom:1.5em;">')
+
+    parts.append(f'''
+    <div class="summary-card" style="background:#3498db20;border:2px solid #3498db;padding:1em;border-radius:8px;min-width:120px;text-align:center;">
+        <div style="font-size:2em;font-weight:bold;color:#3498db">{n_orig}</div>
+        <div style="color:#3498db">Original Texts</div>
+    </div>
+    ''')
+
+    parts.append(f'''
+    <div class="summary-card" style="background:#9b59b620;border:2px solid #9b59b6;padding:1em;border-radius:8px;min-width:120px;text-align:center;">
+        <div style="font-size:2em;font-weight:bold;color:#9b59b6">{n_rew}</div>
+        <div style="color:#9b59b6">Rewritten Texts</div>
+    </div>
+    ''')
+
+    parts.append(f'''
+    <div class="summary-card" style="background:#27ae6020;border:2px solid #27ae60;padding:1em;border-radius:8px;min-width:120px;text-align:center;">
+        <div style="font-size:2em;font-weight:bold;color:#27ae60">{n_personas}</div>
+        <div style="color:#27ae60">Persona Styles</div>
+    </div>
+    ''')
+
+    sig_color = "#e74c3c" if n_sig > 0 else "#27ae60"
+    parts.append(f'''
+    <div class="summary-card" style="background:{sig_color}20;border:2px solid {sig_color};padding:1em;border-radius:8px;min-width:150px;text-align:center;">
+        <div style="font-size:2em;font-weight:bold;color:{sig_color}">{n_sig}/{n_total}</div>
+        <div style="color:{sig_color}">Features Changed</div>
+    </div>
+    ''')
+
+    parts.append("</div>")
+
+    if sig_features:
+        parts.append(f'<p><strong>Significantly changed features (FDR-corrected):</strong> {", ".join(sig_features)}</p>')
+
+    # Overall Comparison Table
+    overall_comparisons = rewriting_data.get("overall_comparisons", [])
+    if overall_comparisons:
+        parts.append('<div class="collapsible">')
+        parts.append('<div class="collapsible-header">Overall: Original vs. All Rewrites</div>')
+        parts.append('<div class="collapsible-body">')
+
+        parts.append(
+            "<p>Paired comparison of text features: original complaint text vs. mean of all rewritten versions "
+            "for that complaint. Effect sizes (Cohen's d) indicate practical significance.</p>"
+        )
+
+        parts.append('<div class="table-scroll">')
+        parts.append('<table class="sortable"><thead><tr>')
+        parts.append('<th>Feature</th>')
+        parts.append('<th>Original Mean (SD)</th>')
+        parts.append('<th>Rewritten Mean (SD)</th>')
+        parts.append('<th>Change</th>')
+        parts.append('<th>% Change</th>')
+        parts.append("<th>Cohen's d [95% CI]</th>")
+        parts.append('<th>p-value</th>')
+        parts.append('<th>Sig (FDR)</th>')
+        parts.append('</tr></thead><tbody>')
+
+        # Sort by effect size
+        sorted_comps = sorted(overall_comparisons, key=lambda x: abs(x.get("cohens_d", 0)), reverse=True)
+
+        for comp in sorted_comps:
+            feat_label = html.escape(comp.get("feature_label", comp.get("feature", "")))
+            orig_mean = comp.get("original_mean", 0)
+            orig_std = comp.get("original_std", 0)
+            rew_mean = comp.get("rewritten_mean", 0)
+            rew_std = comp.get("rewritten_std", 0)
+            diff = comp.get("mean_difference", 0)
+            pct = comp.get("pct_change", 0)
+            d = comp.get("cohens_d", 0)
+            d_lo = comp.get("cohens_d_ci_lower", 0)
+            d_hi = comp.get("cohens_d_ci_upper", 0)
+            pval = comp.get("t_pvalue", 1.0)
+            sig_fdr = comp.get("is_significant_fdr", False)
+
+            # Color coding for effect size
+            if abs(d) >= 0.8:
+                d_color = "#e74c3c"  # Large
+                d_label = "large"
+            elif abs(d) >= 0.5:
+                d_color = "#e67e22"  # Medium
+                d_label = "medium"
+            elif abs(d) >= 0.2:
+                d_color = "#f1c40f"  # Small
+                d_label = "small"
+            else:
+                d_color = "#95a5a6"  # Negligible
+                d_label = "negligible"
+
+            sig_icon = "✓" if sig_fdr else ""
+            sig_style = 'style="color:#27ae60;font-weight:bold;"' if sig_fdr else ""
+
+            diff_sign = "+" if diff > 0 else ""
+            pct_sign = "+" if pct > 0 else ""
+
+            parts.append('<tr>')
+            parts.append(f'<td><strong>{feat_label}</strong></td>')
+            parts.append(f'<td>{orig_mean:.2f} ({orig_std:.2f})</td>')
+            parts.append(f'<td>{rew_mean:.2f} ({rew_std:.2f})</td>')
+            parts.append(f'<td>{diff_sign}{diff:.2f}</td>')
+            parts.append(f'<td>{pct_sign}{pct:.1f}%</td>')
+            parts.append(f'<td style="color:{d_color};font-weight:bold;" title="{d_label} effect">{d:.3f} [{d_lo:.2f}, {d_hi:.2f}]</td>')
+            parts.append(f'<td>{pval:.4f}</td>')
+            parts.append(f'<td {sig_style}>{sig_icon}</td>')
+            parts.append('</tr>')
+
+        parts.append('</tbody></table>')
+        parts.append('</div>')
+
+        # Effect size interpretation guide
+        parts.append(
+            '<p class="muted" style="margin-top:1em;">'
+            '<strong>Effect size interpretation:</strong> '
+            '<span style="color:#e74c3c;">|d| >= 0.8 = large</span>, '
+            '<span style="color:#e67e22;">|d| >= 0.5 = medium</span>, '
+            '<span style="color:#f1c40f;">|d| >= 0.2 = small</span>, '
+            '<span style="color:#95a5a6;">|d| < 0.2 = negligible</span>'
+            '</p>'
+        )
+
+        parts.append("</div></div>")
+
+    # Per-Persona Profiles
+    persona_profiles = rewriting_data.get("persona_profiles", {})
+    if persona_profiles:
+        parts.append('<div class="collapsible collapsed">')
+        parts.append('<div class="collapsible-header">Per-Persona Feature Profiles</div>')
+        parts.append('<div class="collapsible-body">')
+
+        parts.append(
+            "<p>Text feature statistics for each persona style. Click on a persona to see "
+            "how its text differs from original complaints.</p>"
+        )
+
+        # Create nested collapsibles for each persona
+        for persona_label, profile in sorted(persona_profiles.items()):
+            n_samples = profile.get("n_samples", 0)
+            comparisons = profile.get("comparisons", [])
+
+            parts.append('<div class="collapsible collapsed">')
+            parts.append(f'<div class="collapsible-header">{html.escape(persona_label)} (n={n_samples})</div>')
+            parts.append('<div class="collapsible-body">')
+
+            if comparisons:
+                # Find top 3 significant changes
+                sig_comps = [c for c in comparisons if c.get("is_significant_fdr")]
+                top_changes = sorted(sig_comps, key=lambda x: abs(x.get("cohens_d", 0)), reverse=True)[:3]
+
+                if top_changes:
+                    parts.append("<p><strong>Key differences from original:</strong></p><ul>")
+                    for comp in top_changes:
+                        feat = comp.get("feature_label", comp.get("feature", ""))
+                        d = comp.get("cohens_d", 0)
+                        pct = comp.get("pct_change", 0)
+                        direction = "higher" if pct > 0 else "lower"
+                        parts.append(f'<li>{html.escape(feat)}: {abs(pct):.1f}% {direction} (d={d:.2f})</li>')
+                    parts.append("</ul>")
+                else:
+                    parts.append("<p><em>No statistically significant differences from original text.</em></p>")
+
+                # Small table of means
+                parts.append('<table class="compact"><thead><tr><th>Feature</th><th>Mean</th><th>vs Original</th></tr></thead><tbody>')
+                feature_means = profile.get("feature_means", {})
+                for comp in comparisons[:8]:  # Top 8 features
+                    feat = comp.get("feature", "")
+                    feat_label = comp.get("feature_label", feat)
+                    mean_val = feature_means.get(feat, 0)
+                    diff = comp.get("mean_difference", 0)
+                    diff_sign = "+" if diff > 0 else ""
+                    sig = "**" if comp.get("is_significant_fdr") else ""
+                    parts.append(f'<tr><td>{html.escape(feat_label)}</td><td>{mean_val:.2f}</td><td>{diff_sign}{diff:.2f}{sig}</td></tr>')
+                parts.append('</tbody></table>')
+                parts.append('<p class="muted">** = significant after FDR correction</p>')
+            else:
+                parts.append("<p><em>No comparison data available.</em></p>")
+
+            parts.append("</div></div>")
+
+        parts.append("</div></div>")
+
+    # Dimension Effects
+    dimension_effects = rewriting_data.get("dimension_effects", [])
+    if dimension_effects:
+        parts.append('<div class="collapsible collapsed">')
+        parts.append('<div class="collapsible-header">Persona Dimension Effects</div>')
+        parts.append('<div class="collapsible-body">')
+
+        parts.append(
+            "<p>How does changing a single persona dimension (age, education, etc.) affect text features? "
+            "This analysis compares persona pairs that differ in only one dimension.</p>"
+        )
+
+        # Group by dimension
+        dim_groups: Dict[str, List] = {}
+        for effect in dimension_effects:
+            dim = effect.get("dimension", "")
+            if dim not in dim_groups:
+                dim_groups[dim] = []
+            dim_groups[dim].append(effect)
+
+        dim_display = {
+            "age": "Age",
+            "geographic": "Geographic",
+            "education": "Education",
+            "socioeconomic": "Socioeconomic",
+        }
+
+        for dim, effects in dim_groups.items():
+            dim_label = dim_display.get(dim, dim.title())
+            parts.append(f'<h4>{html.escape(dim_label)}</h4>')
+
+            for effect in effects:
+                from_val = effect.get("from_value", "")
+                to_val = effect.get("to_value", "")
+                largest_feat = effect.get("largest_effect_feature", "")
+                largest_effect = effect.get("largest_effect_size", 0)
+
+                parts.append(f'<p><strong>{html.escape(from_val)} -> {html.escape(to_val)}:</strong> ')
+                parts.append(f'Largest effect on {html.escape(largest_feat)} ({largest_effect:+.2f})</p>')
+
+                # Show top effects
+                feature_effects = effect.get("feature_effects", {})
+                if feature_effects:
+                    sorted_effects = sorted(feature_effects.items(), key=lambda x: abs(x[1]), reverse=True)[:5]
+                    parts.append('<ul class="compact">')
+                    for feat, eff in sorted_effects:
+                        direction = "^" if eff > 0 else "v"
+                        parts.append(f'<li>{html.escape(feat)}: {direction} {abs(eff):.2f}</li>')
+                    parts.append('</ul>')
+
+        parts.append("</div></div>")
+
+    # Key insights summary
+    if overall_comparisons:
+        parts.append('<div class="collapsible">')
+        parts.append('<div class="collapsible-header">Key Insights</div>')
+        parts.append('<div class="collapsible-body">')
+
+        # Find largest effects
+        large_effects = [c for c in overall_comparisons if abs(c.get("cohens_d", 0)) >= 0.5]
+        if large_effects:
+            parts.append("<h4>Large Effect Sizes (|d| >= 0.5)</h4><ul>")
+            for comp in sorted(large_effects, key=lambda x: abs(x.get("cohens_d", 0)), reverse=True):
+                feat = comp.get("feature_label", comp.get("feature", ""))
+                d = comp.get("cohens_d", 0)
+                pct = comp.get("pct_change", 0)
+                direction = "increases" if pct > 0 else "decreases"
+                parts.append(f'<li><strong>{html.escape(feat)}</strong> {direction} by {abs(pct):.1f}% (d={d:.2f})</li>')
+            parts.append("</ul>")
+        else:
+            parts.append("<p>No features showed large effect sizes (|d| >= 0.5) from rewriting.</p>")
+
+        # Interpretation
+        if sig_features:
+            parts.append("<h4>Interpretation</h4>")
+            parts.append(
+                "<p>When complaints are rewritten into different persona styles, the following text "
+                f"characteristics change significantly: <strong>{', '.join(sig_features[:5])}</strong>. "
+                "This indicates that persona-style rewriting materially alters the linguistic properties "
+                "of complaint text, which may influence LLM decision-making.</p>"
+            )
+        else:
+            parts.append("<h4>Interpretation</h4>")
+            parts.append(
+                "<p>No text features showed statistically significant changes after FDR correction. "
+                "This suggests that persona-style rewriting preserves most measurable linguistic "
+                "properties, and any decision differences may stem from subtler stylistic cues.</p>"
+            )
+
+        parts.append("</div></div>")
+
+    return "\n".join(parts)
+
+
+def _build_tab_persona_analysis(
+    analysis_results: Dict[str, Any],
+    models: List[str],
+) -> str:
+    """Build the Persona Analysis tab HTML.
+
+    Shows LightGBM model results for predicting persona dimension values
+    from text features, including feature importance, partial dependence
+    plots, and linguistic summary sentences.
+    """
+    parts: List[str] = []
+    parts.append("<h2>Persona Linguistic Analysis</h2>")
+    parts.append("<p>This analysis identifies which text features the LLM uses to classify complaints "
+                 "into each persona dimension value. For each persona value, a LightGBM classifier "
+                 "predicts that persona vs. all others based on text features extracted from the "
+                 "original complaint text.</p>")
+
+    persona_data = analysis_results.get("persona_analysis", {})
+    if not persona_data or persona_data.get("error"):
+        error_msg = persona_data.get("error", "Unknown error") if persona_data else "No data"
+        parts.append('<div class="alert alert-warning">')
+        parts.append(f"<strong>Persona analysis not available.</strong> {html.escape(str(error_msg))}")
+        parts.append("</div>")
+        return "\n".join(parts)
+
+    # Dimension display names
+    dim_display = {
+        "age": "Age",
+        "geographic": "Geographic Location",
+        "education": "Education Level",
+        "socioeconomic": "Socioeconomic Status",
+        "gender": "Gender",
+        "esl": "Language Background",
+    }
+
+    # Process each model
+    for model in models:
+        model_data = persona_data.get(model, {})
+        dimensions = model_data.get("dimensions", {})
+
+        if not dimensions:
+            parts.append(f'<div class="collapsible">')
+            parts.append(f'<div class="collapsible-header">{html.escape(model)}</div>')
+            parts.append('<div class="collapsible-body">')
+            parts.append('<p class="muted">No persona analysis available for this model.</p>')
+            parts.append("</div></div>")
+            continue
+
+        parts.append(f'<div class="collapsible">')
+        parts.append(f'<div class="collapsible-header">{html.escape(model)}</div>')
+        parts.append('<div class="collapsible-body">')
+
+        # Process each dimension
+        for dim, values_data in dimensions.items():
+            dim_name = dim_display.get(dim, dim.replace("_", " ").title())
+
+            parts.append(f'<div class="collapsible">')
+            parts.append(f'<div class="collapsible-header">{html.escape(dim_name)}</div>')
+            parts.append('<div class="collapsible-body">')
+
+            # Process each value within dimension
+            for value, value_data in values_data.items():
+                n_samples = value_data.get("n_samples", 0)
+                n_total = value_data.get("n_total", 0)
+                prevalence = value_data.get("prevalence", 0)
+                auc = value_data.get("auc")
+                summary = value_data.get("summary", "")
+                top_features = value_data.get("top_features", [])
+                pdp_charts = value_data.get("pdp_charts", [])
+
+                # Value header with metrics
+                parts.append(f'<div class="persona-value-section" style="margin-bottom:24px;padding:16px;background:#f8f9fa;border-radius:8px;">')
+                parts.append(f'<h4 style="margin-top:0;color:#2c3e50;">{html.escape(value.replace("_", " ").title())}</h4>')
+
+                # Metrics row
+                parts.append('<div class="metrics-row" style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;">')
+                parts.append(f'<div class="metric-card" style="background:white;padding:8px 16px;border-radius:4px;">')
+                parts.append(f'<div class="value" style="font-size:1.2em;font-weight:bold;">{n_samples:,}</div>')
+                parts.append(f'<div class="label" style="font-size:0.8em;color:#666;">Samples</div></div>')
+                parts.append(f'<div class="metric-card" style="background:white;padding:8px 16px;border-radius:4px;">')
+                parts.append(f'<div class="value" style="font-size:1.2em;font-weight:bold;">{prevalence:.1%}</div>')
+                parts.append(f'<div class="label" style="font-size:0.8em;color:#666;">Prevalence</div></div>')
+                if auc is not None:
+                    auc_color = "#27ae60" if auc > 0.7 else "#f39c12" if auc > 0.6 else "#95a5a6"
+                    parts.append(f'<div class="metric-card" style="background:white;padding:8px 16px;border-radius:4px;">')
+                    parts.append(f'<div class="value" style="font-size:1.2em;font-weight:bold;color:{auc_color};">{auc:.3f}</div>')
+                    parts.append(f'<div class="label" style="font-size:0.8em;color:#666;">AUC</div></div>')
+                parts.append('</div>')
+
+                # Summary sentence
+                if summary:
+                    parts.append(f'<div class="summary-sentence" style="font-style:italic;color:#34495e;margin:12px 0;padding:12px;background:white;border-left:4px solid #3498db;border-radius:4px;">')
+                    parts.append(html.escape(summary))
+                    parts.append('</div>')
+
+                # Top features table
+                if top_features:
+                    parts.append('<h5 style="margin-top:16px;margin-bottom:8px;">Top 3 Predictive Text Features</h5>')
+                    parts.append('<table style="width:100%;max-width:600px;">')
+                    parts.append('<thead><tr><th>Rank</th><th>Feature</th><th>Importance</th></tr></thead>')
+                    parts.append('<tbody>')
+                    for i, feat in enumerate(top_features[:3], 1):
+                        feat_name = feat.get("feature_display", feat.get("feature", ""))
+                        importance = feat.get("importance", 0)
+                        # Create a mini bar chart
+                        max_imp = max(f.get("importance", 0) for f in top_features) if top_features else 1
+                        bar_width = int(100 * importance / max_imp) if max_imp > 0 else 0
+                        parts.append(f'<tr>')
+                        parts.append(f'<td style="width:40px;text-align:center;">{i}</td>')
+                        parts.append(f'<td>{html.escape(feat_name)}</td>')
+                        parts.append(f'<td style="width:180px;">')
+                        parts.append(f'<div style="display:flex;align-items:center;gap:8px;">')
+                        parts.append(f'<div style="background:#3498db;height:12px;width:{bar_width}px;border-radius:2px;"></div>')
+                        parts.append(f'<span style="font-size:0.9em;">{importance:.1f}</span>')
+                        parts.append('</div></td>')
+                        parts.append('</tr>')
+                    parts.append('</tbody></table>')
+
+                # PDP charts
+                if pdp_charts:
+                    parts.append('<h5 style="margin-top:16px;margin-bottom:8px;">Partial Dependence Plots</h5>')
+                    parts.append('<div class="pdp-grid" style="display:flex;flex-wrap:wrap;gap:16px;">')
+                    for pdp in pdp_charts[:3]:
+                        chart_b64 = pdp.get("chart_b64", "")
+                        feat_display = pdp.get("feature_display", "")
+                        if chart_b64:
+                            parts.append(f'<div class="pdp-chart" style="text-align:center;">')
+                            parts.append(f'<img src="data:image/png;base64,{chart_b64}" alt="PDP for {html.escape(feat_display)}" style="max-width:300px;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.1);">')
+                            parts.append('</div>')
+                    parts.append('</div>')
+
+                parts.append('</div>')  # end persona-value-section
+
+            parts.append("</div></div>")  # end dimension collapsible
+
+        parts.append("</div></div>")  # end model collapsible
+
+    # Add interpretation guide
+    parts.append('<div class="collapsible">')
+    parts.append('<div class="collapsible-header">Interpretation Guide</div>')
+    parts.append('<div class="collapsible-body">')
+    parts.append('<dl style="margin:0;">')
+    parts.append('<dt style="font-weight:bold;margin-top:12px;">Feature Importance</dt>')
+    parts.append('<dd style="margin-left:20px;">Measures how much each text feature contributes to predicting a persona value. '
+                 'Higher values indicate stronger predictive power. Based on LightGBM gain importance.</dd>')
+    parts.append('<dt style="font-weight:bold;margin-top:12px;">Partial Dependence Plot (PDP)</dt>')
+    parts.append('<dd style="margin-left:20px;">Shows the marginal effect of a feature on the predicted probability. '
+                 'Upward slopes indicate higher feature values increase the probability of that persona; '
+                 'downward slopes indicate the opposite.</dd>')
+    parts.append('<dt style="font-weight:bold;margin-top:12px;">AUC (Area Under ROC Curve)</dt>')
+    parts.append('<dd style="margin-left:20px;">Model performance metric. AUC > 0.7 suggests good discrimination; '
+                 '0.6-0.7 is moderate; < 0.6 indicates weak predictive power from text features alone.</dd>')
+    parts.append('<dt style="font-weight:bold;margin-top:12px;">Summary Sentence</dt>')
+    parts.append('<dd style="margin-left:20px;">Auto-generated description of how the top features characterize '
+                 'text assigned to this persona value.</dd>')
+    parts.append('</dl>')
     parts.append("</div></div>")
 
     return "\n".join(parts)
@@ -4052,8 +4786,17 @@ def _build_tab_repeated_measures(
         "(E)&nbsp;nonparametric repeated-measures tests (Friedman, Cochran&rsquo;s Q).</p>"
     )
 
+    if not rm:
+        parts.append('<div class="alert alert-info">')
+        parts.append("<strong>Repeated-measures analysis not available.</strong> ")
+        parts.append("The causal sample (Steps 4-5) may have been skipped or too small for this analysis.")
+        parts.append("</div>")
+        return "\n".join(parts)
+
     if rm.get("skipped"):
-        parts.append(f'<p class="warning">Repeated-measures analysis skipped: {html.escape(str(rm.get("reason", "")))}</p>')
+        parts.append('<div class="alert alert-warning">')
+        parts.append(f'<strong>Repeated-measures analysis skipped:</strong> {html.escape(str(rm.get("reason", "")))}')
+        parts.append("</div>")
         return "\n".join(parts)
 
     # Data summary
@@ -4353,6 +5096,117 @@ def _render_coefficient_table(
 # ---------------------------------------------------------------------------
 
 
+def _build_preflight_diagnostics_section(
+    preflight: Dict[str, Any],
+    models: List[str],
+) -> str:
+    """Build the pre-flight diagnostics section for mitigation analysis."""
+    parts: List[str] = []
+
+    # Check if there are any issues worth showing
+    summary_messages = preflight.get("summary_messages", [])
+    model_decisions = preflight.get("model_decisions", {})
+    n_checks_failed = preflight.get("n_checks_failed", 0)
+
+    # Determine overall status
+    has_issues = n_checks_failed > 0 or any(
+        d.get("recommended_model") in ("ols", "skip")
+        for decisions in model_decisions.values()
+        for d in decisions
+    )
+
+    if not has_issues:
+        # No issues to report - skip the section
+        return ""
+
+    # Build collapsible section
+    parts.append('<div class="collapsible">')
+    parts.append('<div class="collapsible-header" style="background:#fef9e7;">')
+    parts.append('<span style="color:#f39c12;">&#9888;</span> Pre-flight Model Selection Diagnostics')
+    parts.append('</div>')
+    parts.append('<div class="collapsible-body">')
+
+    parts.append(
+        '<p class="note" style="background:#fef9e7;padding:10px;border-radius:5px;">'
+        "Pre-flight checks analyze your data structure before model fitting to select "
+        "the most appropriate statistical methods. This avoids wasted computation and "
+        "ensures reliable results.</p>"
+    )
+
+    # Summary messages
+    if summary_messages:
+        parts.append("<h4>Summary</h4>")
+        parts.append("<ul>")
+        for msg in summary_messages:
+            parts.append(f"<li>{html.escape(msg)}</li>")
+        parts.append("</ul>")
+
+    # Per-model decisions table
+    parts.append("<h4>Model Selection Decisions</h4>")
+    parts.append('<table class="sortable"><thead><tr>')
+    parts.append("<th>LLM Model</th><th>Target</th><th>Selected Method</th><th>Reason</th>")
+    parts.append("</tr></thead><tbody>")
+
+    for model in models:
+        decisions = model_decisions.get(model, [])
+        for d in decisions:
+            recommended = d.get("recommended_model", "unknown")
+            reason = d.get("reason", "")
+            target = d.get("target", "")
+
+            # Color-code the method
+            if recommended == "mixed_effects":
+                method_cell = '<span style="color:#27ae60;">Mixed Effects</span>'
+            elif recommended == "ols":
+                method_cell = '<span style="color:#f39c12;">OLS Regression</span>'
+            elif recommended == "skip":
+                method_cell = '<span style="color:#e74c3c;">Skipped</span>'
+            else:
+                method_cell = html.escape(recommended)
+
+            parts.append("<tr>")
+            parts.append(f"<td>{html.escape(model)}</td>")
+            parts.append(f"<td>{html.escape(target)}</td>")
+            parts.append(f"<td>{method_cell}</td>")
+            parts.append(f"<td>{html.escape(reason)}</td>")
+            parts.append("</tr>")
+
+    parts.append("</tbody></table>")
+
+    # Detailed checks (collapsed)
+    parts.append('<details style="margin-top:15px;">')
+    parts.append('<summary style="cursor:pointer;color:#666;">View detailed check results</summary>')
+    parts.append('<div style="margin-top:10px;">')
+
+    for model in models:
+        decisions = model_decisions.get(model, [])
+        for d in decisions:
+            checks = d.get("checks", [])
+            if checks:
+                parts.append(f"<h5>{html.escape(model)} - {html.escape(d.get('target', ''))}</h5>")
+                parts.append("<ul>")
+                for check in checks:
+                    passed = check.get("passed", False)
+                    icon = "&#10003;" if passed else "&#10007;"
+                    color = "#27ae60" if passed else "#e74c3c"
+                    parts.append(
+                        f'<li><span style="color:{color};">{icon}</span> '
+                        f"<strong>{html.escape(check.get('check_name', ''))}</strong>: "
+                        f"{html.escape(check.get('message', ''))}"
+                    )
+                    recommendation = check.get("recommendation", "")
+                    if recommendation:
+                        parts.append(f"<br><em style='color:#666;'>{html.escape(recommendation)}</em>")
+                    parts.append("</li>")
+                parts.append("</ul>")
+
+    parts.append("</div></details>")
+
+    parts.append("</div></div>")  # Close collapsible body and div
+
+    return "\n".join(parts)
+
+
 def _build_tab_mitigation_effectiveness(
     analysis_results: Dict[str, Any],
     models: List[str],
@@ -4369,9 +5223,24 @@ def _build_tab_mitigation_effectiveness(
         "individual complaints, enabling targeted mitigation strategies.</p>"
     )
 
+    # ---- Pre-flight Diagnostics ----
+    preflight = me.get("preflight_diagnostics")
+    if preflight:
+        parts.append(_build_preflight_diagnostics_section(preflight, models))
+
     if not me or me.get("error"):
-        error_msg = me.get("error", "Analysis not available") if me else "Analysis not available"
-        parts.append(f'<p class="warning">Mitigation effectiveness analysis: {html.escape(str(error_msg))}</p>')
+        error_msg = me.get("error", "") if me else ""
+        parts.append('<div class="alert alert-warning">')
+        parts.append("<strong>Mitigation effectiveness analysis not available.</strong>")
+        if error_msg:
+            parts.append(f"<p>Error: {html.escape(str(error_msg))}</p>")
+        parts.append("<p>This analysis requires:</p><ul>")
+        parts.append("<li>Successful neutralization results (Step 7)</li>")
+        parts.append("<li>Causal persona rewriting results (Steps 4-5)</li>")
+        parts.append("<li>Text features extraction</li>")
+        parts.append("</ul>")
+        parts.append("<p>Check the experiment log for details.</p>")
+        parts.append("</div>")
         return "\n".join(parts)
 
     # ---- Golden Example ----
@@ -4657,6 +5526,44 @@ def _build_tab_mitigation_effectiveness(
             parts.append("</div>")
 
         parts.append("</div></div>")
+    else:
+        # Show diagnostic when SHAP examples are unavailable
+        parts.append('<div class="collapsible collapsed">')
+        parts.append('<div class="collapsible-header">Worked Examples with SHAP Explanations</div>')
+        parts.append('<div class="collapsible-body">')
+        parts.append('<div class="alert alert-info">')
+        parts.append("<strong>SHAP examples not available.</strong> This can happen when:")
+        parts.append("<ul>")
+        parts.append("<li>No LightGBM model was successfully trained (required for SHAP values)</li>")
+        parts.append("<li>The causal sample was too small to generate meaningful SHAP explanations</li>")
+        parts.append("<li>Feature extraction encountered too much missing data (&gt;50% NaN)</li>")
+        parts.append("<li>SHAP values array length didn't match feature DataFrame length</li>")
+        parts.append("</ul>")
+
+        # Show what models were available
+        neut_models = me.get("neutralization_models", {})
+        causal_models = me.get("causal_persona_models", {})
+        if neut_models or causal_models:
+            parts.append("<p><strong>Available model fits:</strong></p><ul>")
+            for model, fits in neut_models.items():
+                if fits:
+                    types = [f.get("model_type", "unknown") for f in fits]
+                    has_shap = any(f.get("shap_values") for f in fits)
+                    shap_status = "✓ SHAP" if has_shap else "✗ no SHAP"
+                    parts.append(f"<li>Neutralization ({html.escape(model)}): {', '.join(types)} — {shap_status}</li>")
+            for model, fits in causal_models.items():
+                if fits:
+                    types = [f.get("model_type", "unknown") for f in fits]
+                    has_shap = any(f.get("shap_values") for f in fits)
+                    shap_status = "✓ SHAP" if has_shap else "✗ no SHAP"
+                    parts.append(f"<li>Causal Persona ({html.escape(model)}): {', '.join(types)} — {shap_status}</li>")
+            parts.append("</ul>")
+        else:
+            parts.append("<p><em>No model fits recorded in analysis results.</em></p>")
+
+        parts.append("<p>Check the experiment log for detailed diagnostics.</p>")
+        parts.append("</div>")
+        parts.append("</div></div>")
 
     # ---- Feature Importance Agreement ----
     agreement = me.get("feature_importance_agreement", {})
@@ -4676,6 +5583,184 @@ def _build_tab_mitigation_effectiveness(
         parts.append("</tbody></table>")
         parts.append("</div></div>")
 
+    return "\n".join(parts)
+
+
+def _build_tab_diagnostics(analysis_results: Dict[str, Any]) -> str:
+    """Build the Diagnostics tab showing all errors, warnings, and fallback actions."""
+    parts: List[str] = []
+
+    parts.append("<h2>Experiment Diagnostics</h2>")
+    parts.append("<p>This tab lists all errors, warnings, and fallback actions taken during the experiment.</p>")
+
+    # Get diagnostics from analysis_results
+    diagnostics = analysis_results.get("diagnostics", {})
+
+    if not diagnostics or diagnostics.get("total_count", 0) == 0:
+        parts.append('<div class="alert alert-success">')
+        parts.append("<strong>No issues detected.</strong> The experiment completed without errors or warnings.")
+        parts.append("</div>")
+        return "\n".join(parts)
+
+    # Summary cards
+    total = diagnostics.get("total_count", 0)
+    level_counts = diagnostics.get("level_counts", {})
+    with_fallback = diagnostics.get("with_fallback", 0)
+    without_fallback = diagnostics.get("without_fallback", 0)
+
+    n_errors = level_counts.get("error", 0)
+    n_warnings = level_counts.get("warning", 0)
+    n_infos = level_counts.get("info", 0)
+
+    parts.append('<div class="summary-cards" style="display:flex;gap:1em;flex-wrap:wrap;margin-bottom:1.5em;">')
+
+    # Error card
+    error_color = "#e74c3c" if n_errors > 0 else "#95a5a6"
+    parts.append(f'''
+    <div class="summary-card" style="background:{error_color}20;border:2px solid {error_color};padding:1em;border-radius:8px;min-width:120px;text-align:center;">
+        <div style="font-size:2em;font-weight:bold;color:{error_color}">{n_errors}</div>
+        <div style="color:{error_color}">Errors</div>
+    </div>
+    ''')
+
+    # Warning card
+    warning_color = "#e67e22" if n_warnings > 0 else "#95a5a6"
+    parts.append(f'''
+    <div class="summary-card" style="background:{warning_color}20;border:2px solid {warning_color};padding:1em;border-radius:8px;min-width:120px;text-align:center;">
+        <div style="font-size:2em;font-weight:bold;color:{warning_color}">{n_warnings}</div>
+        <div style="color:{warning_color}">Warnings</div>
+    </div>
+    ''')
+
+    # Info card
+    info_color = "#3498db" if n_infos > 0 else "#95a5a6"
+    parts.append(f'''
+    <div class="summary-card" style="background:{info_color}20;border:2px solid {info_color};padding:1em;border-radius:8px;min-width:120px;text-align:center;">
+        <div style="font-size:2em;font-weight:bold;color:{info_color}">{n_infos}</div>
+        <div style="color:{info_color}">Info</div>
+    </div>
+    ''')
+
+    # Fallback card
+    parts.append(f'''
+    <div class="summary-card" style="background:#27ae6020;border:2px solid #27ae60;padding:1em;border-radius:8px;min-width:150px;text-align:center;">
+        <div style="font-size:2em;font-weight:bold;color:#27ae60">{with_fallback}</div>
+        <div style="color:#27ae60">With Fallback</div>
+    </div>
+    ''')
+
+    # No fallback card
+    no_fallback_color = "#e74c3c" if without_fallback > 0 else "#95a5a6"
+    parts.append(f'''
+    <div class="summary-card" style="background:{no_fallback_color}20;border:2px solid {no_fallback_color};padding:1em;border-radius:8px;min-width:150px;text-align:center;">
+        <div style="font-size:2em;font-weight:bold;color:{no_fallback_color}">{without_fallback}</div>
+        <div style="color:{no_fallback_color}">No Fallback</div>
+    </div>
+    ''')
+
+    parts.append("</div>")
+
+    # Category breakdown
+    category_counts = diagnostics.get("category_counts", {})
+    if category_counts and any(v > 0 for v in category_counts.values()):
+        parts.append('<div class="collapsible">')
+        parts.append('<div class="collapsible-header">Issues by Category</div>')
+        parts.append('<div class="collapsible-body">')
+        parts.append('<table><thead><tr><th>Category</th><th>Count</th></tr></thead><tbody>')
+
+        category_labels = {
+            "model_fit": "Model Fitting",
+            "data_quality": "Data Quality",
+            "llm_api": "LLM API",
+            "dependency": "Dependencies",
+            "computation": "Computation",
+            "validation": "Validation",
+            "io": "File I/O",
+            "other": "Other",
+        }
+
+        for cat, count in sorted(category_counts.items(), key=lambda x: -x[1]):
+            if count > 0:
+                label = category_labels.get(cat, cat.replace("_", " ").title())
+                parts.append(f'<tr><td>{html.escape(label)}</td><td>{count}</td></tr>')
+
+        parts.append("</tbody></table>")
+        parts.append("</div></div>")
+
+    # Errors section
+    errors = diagnostics.get("errors", [])
+    if errors:
+        parts.append('<div class="collapsible">')
+        parts.append(f'<div class="collapsible-header" style="background:#fdecea;border-left:4px solid #e74c3c;">Errors ({len(errors)})</div>')
+        parts.append('<div class="collapsible-body">')
+        parts.append(_build_diagnostic_table(errors, "error"))
+        parts.append("</div></div>")
+
+    # Warnings section
+    warnings_list = diagnostics.get("warnings", [])
+    if warnings_list:
+        parts.append('<div class="collapsible collapsed">')
+        parts.append(f'<div class="collapsible-header" style="background:#fef5e7;border-left:4px solid #e67e22;">Warnings ({len(warnings_list)})</div>')
+        parts.append('<div class="collapsible-body">')
+        parts.append(_build_diagnostic_table(warnings_list, "warning"))
+        parts.append("</div></div>")
+
+    # Info section
+    infos = diagnostics.get("infos", [])
+    if infos:
+        parts.append('<div class="collapsible collapsed">')
+        parts.append(f'<div class="collapsible-header" style="background:#ebf5fb;border-left:4px solid #3498db;">Info ({len(infos)})</div>')
+        parts.append('<div class="collapsible-body">')
+        parts.append(_build_diagnostic_table(infos, "info"))
+        parts.append("</div></div>")
+
+    return "\n".join(parts)
+
+
+def _build_diagnostic_table(entries: List[Dict[str, Any]], level: str) -> str:
+    """Build a table of diagnostic entries."""
+    parts: List[str] = []
+
+    parts.append('''
+    <table style="width:100%;border-collapse:collapse;">
+    <thead>
+        <tr>
+            <th style="text-align:left;padding:8px;border-bottom:2px solid #ddd;">Module</th>
+            <th style="text-align:left;padding:8px;border-bottom:2px solid #ddd;">Category</th>
+            <th style="text-align:left;padding:8px;border-bottom:2px solid #ddd;">Message</th>
+            <th style="text-align:left;padding:8px;border-bottom:2px solid #ddd;">Fallback Action</th>
+        </tr>
+    </thead>
+    <tbody>
+    ''')
+
+    for entry in entries:
+        module = html.escape(entry.get("module", "unknown"))
+        category = html.escape(entry.get("category", "other").replace("_", " ").title())
+        message = html.escape(entry.get("message", ""))
+        fallback = entry.get("fallback_action")
+
+        if fallback:
+            fallback_html = f'<span style="color:#27ae60;">✓ {html.escape(fallback)}</span>'
+        else:
+            fallback_html = '<span style="color:#e74c3c;">✗ None</span>'
+
+        # Truncate long messages
+        if len(message) > 200:
+            message_display = message[:200] + "..."
+        else:
+            message_display = message
+
+        parts.append(f'''
+        <tr style="border-bottom:1px solid #eee;">
+            <td style="padding:8px;vertical-align:top;"><code>{module}</code></td>
+            <td style="padding:8px;vertical-align:top;">{category}</td>
+            <td style="padding:8px;vertical-align:top;">{message_display}</td>
+            <td style="padding:8px;vertical-align:top;">{fallback_html}</td>
+        </tr>
+        ''')
+
+    parts.append("</tbody></table>")
     return "\n".join(parts)
 
 
@@ -4718,9 +5803,12 @@ def generate_report(
             analysis_results, complaints, models,
             num_complaints, seed, materiality_threshold, timestamp,
         )
-        tab_disparate = _build_tab_disparate_impact(
+        tab_disparate_assoc = _build_tab_disparate_impact_association(
             analysis_results, complaints, models,
             materiality_threshold, text_features_df,
+        )
+        tab_disparate_causal = _build_tab_disparate_impact_causal(
+            analysis_results, models,
         )
         tab_process = _build_tab_process_discrimination(
             analysis_results, models,
@@ -4728,6 +5816,7 @@ def generate_report(
         tab_text = _build_tab_text_features(
             analysis_results, text_features_df, models,
         )
+        tab_text_rewriting = _build_tab_text_rewriting(analysis_results)
         tab_model = _build_tab_model_comparison(
             analysis_results, models, materiality_threshold,
         )
@@ -4739,6 +5828,8 @@ def generate_report(
         tab_repeated = _build_tab_repeated_measures(analysis_results, models)
         tab_sparsity = _build_tab_sparsity(analysis_results, models)
         tab_mitigation_eff = _build_tab_mitigation_effectiveness(analysis_results, models)
+        tab_persona = _build_tab_persona_analysis(analysis_results, models)
+        tab_diagnostics = _build_tab_diagnostics(analysis_results)
 
     # Assemble the body
     body_parts: List[str] = []
@@ -4756,15 +5847,19 @@ def generate_report(
     tabs = [
         ("tab-biz-exec", "Executive Summary"),
         ("tab-exec", "Technical Summary"),
-        ("tab-disparate", "Disparate Impact"),
+        ("tab-disparate-assoc", "Disparate Impact - Association"),
+        ("tab-disparate-causal", "Disparate Impact - Causal"),
         ("tab-process", "Process Discrimination"),
         ("tab-text", "Text Features"),
+        ("tab-text-rewriting", "Text Rewriting"),
+        ("tab-persona", "Persona Analysis"),
         ("tab-model", "Model Comparison"),
         ("tab-severity", "Severity Analysis"),
         ("tab-repeated", "Repeated Measures"),
         ("tab-sparsity", "Sparsity Analysis"),
         ("tab-mitigation-eff", "Mitigation Effectiveness"),
         ("tab-detailed", "Detailed Results"),
+        ("tab-diagnostics", "Diagnostics"),
     ]
     for i, (tid, label) in enumerate(tabs):
         active = " active" if i == 0 else ""
@@ -4775,15 +5870,19 @@ def generate_report(
     tab_contents = [
         ("tab-biz-exec", tab_biz_exec),
         ("tab-exec", tab_exec),
-        ("tab-disparate", tab_disparate),
+        ("tab-disparate-assoc", tab_disparate_assoc),
+        ("tab-disparate-causal", tab_disparate_causal),
         ("tab-process", tab_process),
         ("tab-text", tab_text),
+        ("tab-text-rewriting", tab_text_rewriting),
+        ("tab-persona", tab_persona),
         ("tab-model", tab_model),
         ("tab-severity", tab_severity),
         ("tab-repeated", tab_repeated),
         ("tab-sparsity", tab_sparsity),
         ("tab-mitigation-eff", tab_mitigation_eff),
         ("tab-detailed", tab_detailed),
+        ("tab-diagnostics", tab_diagnostics),
     ]
     for i, (tid, content) in enumerate(tab_contents):
         active = " active" if i == 0 else ""

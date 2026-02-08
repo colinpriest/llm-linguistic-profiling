@@ -3,10 +3,18 @@
 Provides caching for severity amplification and Bayesian robustness analyses
 which involve many bootstrap iterations or MCMC sampling.
 
-Cache keys are computed from:
-- DataFrame content hashes (case_ids, key columns, shape)
-- Analysis parameters (n_boot, seed, models)
-- Code version (via manual versioning)
+**Two-tier caching strategy:**
+
+1. **High-level cache** - Caches entire analysis results (e.g., severity_analysis).
+   Keys are based on DataFrame CONTENT (case_ids + relevant column values), not
+   shape. This means adding/removing columns that aren't used in the analysis
+   won't invalidate the cache.
+
+2. **Operation-level cache** - Caches individual expensive operations (bootstrap,
+   ANOVA). Even if the high-level cache misses, inner operations can still hit
+   if the specific input values match. This handles minor data instabilities
+   (e.g., 39999 vs 40000 rows) by caching at the granularity of individual
+   computations rather than the entire analysis.
 
 Results are stored as JSON files in cache/analysis/{analysis_type}/.
 """
@@ -20,50 +28,110 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
+
 # Increment when analysis logic changes to invalidate cached results
 _ANALYSIS_VERSIONS: Dict[str, str] = {
-    "severity_analysis": "1.0",
+    "severity_analysis": "1.1",  # v1.1: content-based hashing (not shape-based)
     "bayes_robustness": "1.1",  # v1.1: ordinal models use softplus cutpoint reparameterization
     "repeated_measures": "1.0",  # v1.0: includes model diagnostics
     "correlation_analysis": "1.0",  # v1.0: includes model diagnostics
 }
 
+# Columns that are relevant for each analysis type (used for content-based hashing)
+_ANALYSIS_RELEVANT_COLUMNS: Dict[str, List[str]] = {
+    "severity_analysis": [
+        "case_id", "model", "tier", "confidence", "monetary_severity",
+        "issue_severity", "persona_label", "age", "geographic", "education",
+        "socioeconomic", "product_category", "issue_category",
+    ],
+    "bayes_robustness": [
+        "case_id", "model", "tier", "persona_label", "age", "geographic",
+        "education", "socioeconomic",
+    ],
+    "repeated_measures": [
+        "case_id", "model", "tier", "variant", "persona_label",
+    ],
+    "correlation_analysis": [
+        "case_id", "model", "tier", "persona_label", "age", "geographic",
+        "education", "socioeconomic", "gender", "esl",
+    ],
+}
 
-def _hash_dataframe(df: Optional[pd.DataFrame], name: str = "") -> str:
-    """Compute a stable hash of a DataFrame's content.
 
-    Hashes: shape, column names, sorted case_ids (if present), and
-    a sample of numeric columns for collision resistance.
+def _hash_dataframe(
+    df: Optional[pd.DataFrame],
+    name: str = "",
+    relevant_columns: Optional[List[str]] = None,
+) -> str:
+    """Compute a stable content-based hash of a DataFrame.
+
+    **Content-based hashing**: Hashes the actual VALUES in relevant columns,
+    not the shape. This means:
+    - Adding/removing columns not in `relevant_columns` won't change the hash
+    - Row count differences only matter if they affect the content
+
+    Parameters
+    ----------
+    df : DataFrame to hash
+    name : Name for the hash component (for debugging)
+    relevant_columns : Columns to include in hash. If None, uses all columns.
+        Columns not present in the DataFrame are silently ignored.
+
+    Returns
+    -------
+    Hash string in format "{name}:{hash}"
     """
     if df is None or len(df) == 0:
         return f"{name}:empty"
 
-    parts = [
-        f"shape:{df.shape[0]}x{df.shape[1]}",
-        f"cols:{','.join(sorted(df.columns))}",
-    ]
+    # Determine which columns to hash
+    if relevant_columns is not None:
+        # Only hash columns that exist in both the DataFrame and the relevant list
+        cols_to_hash = [c for c in relevant_columns if c in df.columns]
+    else:
+        cols_to_hash = list(df.columns)
 
-    # Include sorted case_ids for determinism
-    if "case_id" in df.columns:
+    if not cols_to_hash:
+        return f"{name}:no_relevant_cols"
+
+    parts = []
+
+    # Hash case_ids (if present) - the foundation of content identity
+    if "case_id" in cols_to_hash:
         case_ids = sorted(df["case_id"].dropna().unique().tolist())
-        parts.append(f"cases:{len(case_ids)}:{hashlib.md5(str(case_ids).encode()).hexdigest()[:16]}")
+        # Include count AND hash of case_ids for both debugging and collision resistance
+        parts.append(f"n_cases:{len(case_ids)}")
+        parts.append(f"case_hash:{hashlib.md5(str(case_ids).encode()).hexdigest()[:16]}")
 
-    # Include tier distribution if present (captures outcome changes)
-    if "tier" in df.columns:
-        tier_counts = df["tier"].value_counts().sort_index().to_dict()
-        parts.append(f"tiers:{tier_counts}")
+    # Hash value distributions for categorical columns
+    categorical_cols = ["model", "tier", "confidence", "monetary_severity", "issue_severity",
+                        "age", "geographic", "education", "socioeconomic", "gender", "esl",
+                        "persona_label", "variant", "product_category", "issue_category"]
+    for col in categorical_cols:
+        if col in cols_to_hash and col in df.columns:
+            value_counts = df[col].value_counts().sort_index().to_dict()
+            # Convert any non-string keys to strings for consistent hashing
+            value_counts_str = {str(k): v for k, v in value_counts.items()}
+            parts.append(f"{col}:{value_counts_str}")
 
-    # Include model list if present
-    if "model" in df.columns:
-        models = sorted(df["model"].dropna().unique().tolist())
-        parts.append(f"models:{models}")
+    # For truly content-based hashing, include a sample of row hashes
+    # This catches cases where values change even if distributions look the same
+    if "case_id" in df.columns and len(df) > 0:
+        # Sort by case_id for determinism, take every Nth row for efficiency
+        sample_size = min(100, len(df))
+        sample_indices = np.linspace(0, len(df) - 1, sample_size, dtype=int)
+        df_sorted = df.sort_values("case_id").reset_index(drop=True)
+        sample_df = df_sorted.iloc[sample_indices][cols_to_hash]
+        sample_str = sample_df.to_json(orient="records")
+        parts.append(f"sample:{hashlib.md5(sample_str.encode()).hexdigest()[:16]}")
 
     content = "|".join(parts)
     return f"{name}:{hashlib.blake2b(content.encode(), digest_size=16).hexdigest()}"
@@ -75,17 +143,23 @@ def _compute_cache_key(
     params: Dict[str, Any],
     debug: bool = False,
 ) -> str:
-    """Compute a cache key from DataFrames and parameters."""
+    """Compute a content-based cache key from DataFrames and parameters.
+
+    Uses content-based hashing: only columns relevant to the analysis type
+    are included in the hash. This prevents cache invalidation when
+    unrelated columns change.
+    """
     version = _ANALYSIS_VERSIONS.get(analysis_type, "1.0")
+    relevant_cols = _ANALYSIS_RELEVANT_COLUMNS.get(analysis_type)
 
     parts = [f"v:{version}"]
 
-    # Hash each DataFrame
+    # Hash each DataFrame using content-based hashing
     for name, df in sorted(dataframes.items()):
-        df_hash = _hash_dataframe(df, name)
+        df_hash = _hash_dataframe(df, name, relevant_columns=relevant_cols)
         parts.append(df_hash)
         if debug:
-            logger.info("  Cache key component [%s]: %s", name, df_hash[:60])
+            logger.info("  Cache key component [%s]: %s", name, df_hash[:80])
 
     # Include parameters
     for key, value in sorted(params.items()):
@@ -294,3 +368,252 @@ def get_analysis_cache(cache_dir: str = "./cache") -> AnalysisCache:
     if _analysis_cache is None:
         _analysis_cache = AnalysisCache(cache_dir)
     return _analysis_cache
+
+
+# ---------------------------------------------------------------------------
+# Operation-Level Cache (Tier 2)
+# ---------------------------------------------------------------------------
+
+
+class OperationCache:
+    """Granular cache for individual expensive operations.
+
+    Unlike AnalysisCache which caches entire analysis results, OperationCache
+    caches individual operations (bootstrap, ANOVA, etc.) based on their
+    specific input values. This provides cache hits even when:
+    - The high-level cache misses due to minor data changes
+    - Different analyses share common computations
+
+    Cache keys are computed from the actual input VALUES, not DataFrame shapes.
+    This means a bootstrap computation for the same set of case_ids and tier
+    values will hit the cache even if the parent DataFrame has extra rows.
+
+    Example usage:
+        op_cache = get_operation_cache()
+
+        # Wrap an expensive function
+        @op_cache.cached("amplification_bootstrap")
+        def compute_amplification(df, metric, model, n_boot, seed):
+            # expensive bootstrap computation
+            return result
+
+        # Or use explicit get/put
+        key = op_cache.compute_key("my_op", df, {"n_boot": 1000})
+        result = op_cache.get("my_op", key)
+        if result is None:
+            result = expensive_computation()
+            op_cache.put("my_op", key, result)
+    """
+
+    VERSION = "1.0"
+
+    def __init__(self, cache_dir: str = "./cache") -> None:
+        self.cache_dir = Path(cache_dir) / "operations"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._hits = 0
+        self._misses = 0
+
+    def compute_key(
+        self,
+        operation: str,
+        df: Optional[pd.DataFrame],
+        params: Dict[str, Any],
+        columns: Optional[List[str]] = None,
+    ) -> str:
+        """Compute a cache key from DataFrame content and parameters.
+
+        Parameters
+        ----------
+        operation : Name of the operation (e.g., "amplification_bootstrap")
+        df : Input DataFrame
+        params : Operation parameters
+        columns : Columns to include in hash. If None, uses common columns.
+
+        Returns
+        -------
+        Cache key string
+        """
+        parts = [f"v:{self.VERSION}", f"op:{operation}"]
+
+        # Hash DataFrame content
+        if df is not None and len(df) > 0:
+            default_cols = ["case_id", "model", "tier", "persona_label",
+                            "monetary_severity", "issue_severity"]
+            cols = columns if columns is not None else default_cols
+            available_cols = [c for c in cols if c in df.columns]
+
+            if available_cols:
+                # Hash based on sorted values in relevant columns
+                subset = df[available_cols].copy()
+                if "case_id" in subset.columns:
+                    subset = subset.sort_values("case_id")
+
+                # Create a content hash
+                content = subset.to_json(orient="records")
+                content_hash = hashlib.blake2b(content.encode(), digest_size=16).hexdigest()
+                parts.append(f"data:{len(df)}:{content_hash}")
+            else:
+                parts.append(f"data:{len(df)}:no_cols")
+        else:
+            parts.append("data:empty")
+
+        # Hash parameters
+        for key, value in sorted(params.items()):
+            if isinstance(value, (list, tuple)):
+                parts.append(f"p:{key}:{','.join(map(str, value))}")
+            else:
+                parts.append(f"p:{key}:{value}")
+
+        combined = "|".join(parts)
+        return hashlib.blake2b(combined.encode(), digest_size=20).hexdigest()
+
+    def get(self, operation: str, key: str) -> Optional[Dict[str, Any]]:
+        """Look up a cached operation result."""
+        path = self._path(operation, key)
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                self._hits += 1
+                return data.get("result")
+            except (json.JSONDecodeError, KeyError):
+                self._delete_path(path)
+        self._misses += 1
+        return None
+
+    def put(
+        self,
+        operation: str,
+        key: str,
+        result: Any,
+    ) -> None:
+        """Store an operation result in cache."""
+        path = self._path(operation, key)
+        entry = {
+            "operation": operation,
+            "cache_key": key,
+            "version": self.VERSION,
+            "result": result,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        payload = json.dumps(entry, ensure_ascii=False, default=_json_default)
+
+        # Atomic write
+        tmp_path = path.with_suffix(f"{path.suffix}.{uuid.uuid4().hex}.tmp")
+        tmp_path.write_text(payload, encoding="utf-8")
+        os.replace(tmp_path, path)
+
+    def cached(
+        self,
+        operation: str,
+        columns: Optional[List[str]] = None,
+        param_keys: Optional[List[str]] = None,
+    ) -> Callable[[Callable[..., T]], Callable[..., T]]:
+        """Decorator to cache function results based on input DataFrame and params.
+
+        Parameters
+        ----------
+        operation : Name for this operation in the cache
+        columns : DataFrame columns to include in cache key
+        param_keys : Function argument names to include in cache key params
+
+        Example
+        -------
+        @op_cache.cached("bootstrap_ci", columns=["case_id", "tier"], param_keys=["n_boot", "seed"])
+        def bootstrap_ci(df, n_boot=1000, seed=42):
+            # expensive computation
+            return result
+        """
+        def decorator(func: Callable[..., T]) -> Callable[..., T]:
+            import functools
+            import inspect
+
+            @functools.wraps(func)
+            def wrapper(*args: Any, **kwargs: Any) -> T:
+                # Get function signature to map args to names
+                sig = inspect.signature(func)
+                bound = sig.bind(*args, **kwargs)
+                bound.apply_defaults()
+
+                # Extract DataFrame (assumed to be first positional arg)
+                df = None
+                for name, value in bound.arguments.items():
+                    if isinstance(value, pd.DataFrame):
+                        df = value
+                        break
+
+                # Build params dict from specified keys
+                params = {}
+                if param_keys:
+                    for key in param_keys:
+                        if key in bound.arguments:
+                            params[key] = bound.arguments[key]
+
+                # Compute cache key and check cache
+                cache_key = self.compute_key(operation, df, params, columns)
+                cached_result = self.get(operation, cache_key)
+                if cached_result is not None:
+                    return cached_result
+
+                # Compute and cache
+                result = func(*args, **kwargs)
+                self.put(operation, cache_key, result)
+                return result
+
+            return wrapper
+        return decorator
+
+    def clear(self, operation: Optional[str] = None) -> int:
+        """Delete cached operation results. Returns count deleted."""
+        count = 0
+        if operation:
+            op_dir = self.cache_dir / operation
+            if op_dir.exists():
+                for f in op_dir.iterdir():
+                    if f.is_file() and f.suffix == ".json":
+                        f.unlink()
+                        count += 1
+        else:
+            for op_dir in self.cache_dir.iterdir():
+                if op_dir.is_dir():
+                    for f in op_dir.iterdir():
+                        if f.is_file() and f.suffix == ".json":
+                            f.unlink()
+                            count += 1
+        return count
+
+    @property
+    def hits(self) -> int:
+        return self._hits
+
+    @property
+    def misses(self) -> int:
+        return self._misses
+
+    def stats_summary(self) -> str:
+        total = self._hits + self._misses
+        if total == 0:
+            return "Operation cache: no lookups yet"
+        return f"Operation cache: {self._hits} hits, {self._misses} misses ({self._hits / total:.0%} hit rate)"
+
+    def _path(self, operation: str, key: str) -> Path:
+        op_dir = self.cache_dir / operation
+        op_dir.mkdir(parents=True, exist_ok=True)
+        return op_dir / f"{key}.json"
+
+    def _delete_path(self, path: Path) -> None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+# Global operation cache instance
+_operation_cache: Optional[OperationCache] = None
+
+
+def get_operation_cache(cache_dir: str = "./cache") -> OperationCache:
+    """Get or create the global operation cache instance."""
+    global _operation_cache
+    if _operation_cache is None:
+        _operation_cache = OperationCache(cache_dir)
+    return _operation_cache
