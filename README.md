@@ -46,11 +46,27 @@ Two additional dimensions (gender and ESL status) are estimated from text but no
 pip install -r requirements.txt
 ```
 
+For reproducibility, a pinned `requirements.lock` is provided (generated from `pip freeze`) and can be used to install exact versions:
+
+```bash
+pip install -r requirements.lock
+```
+
 Create a `.env` file in the project root:
 
 ```
 OPENAI_API_KEY=sk-...
 ```
+
+### Fasttext language model (explicit download)
+
+The language-detection step uses the fasttext `lid.176.ftz` model. To avoid a silent runtime download during the first pipeline run, you can pre-download it explicitly:
+
+```bash
+python -c "from src.data_loader import ensure_fasttext_model; ensure_fasttext_model()"
+```
+
+This will store the model at `./data/lid.176.ftz`.
 
 ### Data
 
@@ -120,6 +136,7 @@ The experiment produces:
 - **CSV files** — Raw results for outcome decisions, persona estimates, text features, dollar amounts
 - **JSON files** — Complete analysis results and repair statistics
 - **Log file** — Full experiment log with timestamps
+- **Token usage log** (`token-usage/token_usage_{timestamp}.json`) — Aggregated prompt/completion tokens and estimated cost by model
 
 ## Project Structure
 

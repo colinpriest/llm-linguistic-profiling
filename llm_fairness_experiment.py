@@ -197,6 +197,20 @@ def main() -> None:
     )
     logger.info("HTML report generated: %s", report_path)
 
+    usage_log_path = experiment.llm.write_usage_log(
+        output_dir=Path("token-usage"),
+        run_metadata={
+            "timestamp": experiment.timestamp,
+            "models": args.models,
+            "num_complaints": args.num_complaints,
+            "threads": args.threads,
+            "seed": args.seed,
+            "data_path": args.data_path,
+            "cache_dir": args.cache_dir,
+        },
+    )
+    logger.info("Token usage log written: %s", usage_log_path)
+
     # Generate worked examples report
     from src.worked_examples import generate_worked_examples
 
