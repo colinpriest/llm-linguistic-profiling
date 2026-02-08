@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _ft_model = None
+FASTTEXT_MODEL_PATH = Path(__file__).parent.parent / "data" / "lid.176.ftz"
 
 
 def _get_fasttext_model():
@@ -37,17 +38,16 @@ def _get_fasttext_model():
         import fasttext
         import urllib.request
 
-        model_path = Path(__file__).parent.parent / "data" / "lid.176.ftz"
-        if not model_path.exists():
-            _download_fasttext_model(model_path)
+        if not FASTTEXT_MODEL_PATH.exists():
+            _download_fasttext_model(FASTTEXT_MODEL_PATH)
         try:
-            _ft_model = fasttext.load_model(str(model_path))
+            _ft_model = fasttext.load_model(str(FASTTEXT_MODEL_PATH))
         except Exception as exc:
             logger.warning("Fasttext model load failed (%s); re-downloading...", exc)
-            if model_path.exists():
-                model_path.unlink()
-            _download_fasttext_model(model_path)
-            _ft_model = fasttext.load_model(str(model_path))
+            if FASTTEXT_MODEL_PATH.exists():
+                FASTTEXT_MODEL_PATH.unlink()
+            _download_fasttext_model(FASTTEXT_MODEL_PATH)
+            _ft_model = fasttext.load_model(str(FASTTEXT_MODEL_PATH))
     return _ft_model
 
 
@@ -66,6 +66,12 @@ def _download_fasttext_model(model_path: Path) -> None:
         if tmp_path.exists():
             tmp_path.unlink()
         raise
+
+
+def ensure_fasttext_model() -> Path:
+    """Explicitly download (if needed) and return the fasttext model path."""
+    _get_fasttext_model()
+    return FASTTEXT_MODEL_PATH
 
 
 def _detect_lang_batch(texts: List[str]) -> List[str]:

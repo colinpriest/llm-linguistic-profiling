@@ -6,6 +6,7 @@ responses from every model, including reasoning models (GPT-5, o-series).
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from concurrent.futures import (
@@ -17,6 +18,7 @@ from concurrent.futures import (
 )
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from threading import Lock
 from typing import Any, Callable, Dict, List, Optional, Type
 
@@ -28,6 +30,7 @@ from tqdm import tqdm
 
 from src.cache import ResponseCache
 from src.schemas import LLMConfig, LLMRequest, LLMResponse, RepairStats
+from src.token_usage import estimate_cost, PRICING_PER_1M_TOKENS
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +87,54 @@ class LLMClient:
         # Deferred warnings (logged after tqdm completes to avoid breaking progress bar)
         self._deferred_warnings: List[str] = []
 
+        # Token usage tracking (thread-safe)
+        self._usage_lock = Lock()
+        self._usage_by_model: Dict[str, Dict[str, int]] = {}
+
     # ------------------------------------------------------------------
     # Single request (with retry)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_usage(validated_obj: Any) -> Optional[Dict[str, int]]:
+        """Extract usage info from an instructor response, if available."""
+        raw_response = getattr(validated_obj, "_raw_response", None)
+        if raw_response is None:
+            raw_response = getattr(validated_obj, "raw_response", None)
+        if raw_response is None and hasattr(validated_obj, "__dict__"):
+            raw_response = validated_obj.__dict__.get("_raw_response")
+
+        usage = None
+        if raw_response is not None:
+            usage = getattr(raw_response, "usage", None)
+            if usage is None and isinstance(raw_response, dict):
+                usage = raw_response.get("usage")
+
+        if usage is None:
+            return None
+
+        if isinstance(usage, dict):
+            prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+            completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+        else:
+            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        }
+
+    def _record_usage(self, model: str, prompt_tokens: int, completion_tokens: int) -> None:
+        with self._usage_lock:
+            stats = self._usage_by_model.setdefault(
+                model,
+                {"requests": 0, "prompt_tokens": 0, "completion_tokens": 0},
+            )
+            stats["requests"] += 1
+            stats["prompt_tokens"] += prompt_tokens
+            stats["completion_tokens"] += completion_tokens
 
     def _call_once(
         self,
@@ -147,6 +195,12 @@ class LLMClient:
                     else str(validated_obj)
                 )
 
+                usage = self._extract_usage(validated_obj)
+                prompt_tokens = usage["prompt_tokens"] if usage else 0
+                completion_tokens = usage["completion_tokens"] if usage else 0
+                if usage:
+                    self._record_usage(request.model, prompt_tokens, completion_tokens)
+
                 return LLMResponse(
                     request_id=request.request_id,
                     case_id=request.case_id,
@@ -157,8 +211,8 @@ class LLMClient:
                     response_parsed=validated_obj,
                     error_message=None,
                     latency_ms=latency_ms,
-                    tokens_prompt=0,
-                    tokens_completion=0,
+                    tokens_prompt=prompt_tokens,
+                    tokens_completion=completion_tokens,
                     timestamp=datetime.now(),
                     attempt_number=attempt,
                     repair_applied=False,
@@ -482,6 +536,65 @@ class LLMClient:
         self._flush_deferred_warnings()
 
         return [r for r in responses if r is not None]
+
+    # ------------------------------------------------------------------
+    # Token usage reporting
+    # ------------------------------------------------------------------
+
+    def usage_summary(self) -> Dict[str, Any]:
+        """Return aggregated token usage and estimated cost totals."""
+        with self._usage_lock:
+            per_model = {
+                model: stats.copy() for model, stats in self._usage_by_model.items()
+            }
+
+        totals = {"requests": 0, "prompt_tokens": 0, "completion_tokens": 0}
+        total_cost = 0.0
+        cost_known = False
+
+        for model, stats in per_model.items():
+            prompt_tokens = stats["prompt_tokens"]
+            completion_tokens = stats["completion_tokens"]
+            totals["requests"] += stats["requests"]
+            totals["prompt_tokens"] += prompt_tokens
+            totals["completion_tokens"] += completion_tokens
+
+            estimated_cost, pricing = estimate_cost(model, prompt_tokens, completion_tokens)
+            if estimated_cost is not None and pricing is not None:
+                stats["estimated_cost_usd"] = round(estimated_cost, 6)
+                stats["pricing_per_1m"] = {
+                    "prompt": pricing.prompt_per_1m,
+                    "completion": pricing.completion_per_1m,
+                }
+                total_cost += estimated_cost
+                cost_known = True
+            else:
+                stats["estimated_cost_usd"] = None
+                stats["pricing_per_1m"] = None
+
+        totals["total_tokens"] = totals["prompt_tokens"] + totals["completion_tokens"]
+        totals["estimated_cost_usd"] = round(total_cost, 6) if cost_known else None
+
+        return {
+            "totals": totals,
+            "per_model": per_model,
+            "pricing_reference": {
+                model: {"prompt": pricing.prompt_per_1m, "completion": pricing.completion_per_1m}
+                for model, pricing in PRICING_PER_1M_TOKENS.items()
+            },
+        }
+
+    def write_usage_log(self, output_dir: Path, run_metadata: Dict[str, Any]) -> Path:
+        """Persist token usage and cost estimates to a JSON log."""
+        output_dir.mkdir(parents=True, exist_ok=True)
+        summary = self.usage_summary()
+        payload = {
+            "metadata": run_metadata,
+            "usage": summary,
+        }
+        output_path = output_dir / f"token_usage_{run_metadata.get('timestamp', 'unknown')}.json"
+        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return output_path
 
     def _flush_deferred_warnings(self) -> None:
         """Log any warnings that were deferred during batch execution."""
