@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from src.estimable import NE, NEValue, is_estimable
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,27 +31,28 @@ logger = logging.getLogger(__name__)
 # Formatting helpers
 # ------------------------------------------------------------------
 
-def _fmt_prop(v: float) -> str:
+def _fmt_prop(v: Any) -> str:
     """Format a proportion to 3 decimal places."""
-    if not np.isfinite(v):
+    if not is_estimable(v):
         return "---"
-    return f"{v:.3f}"
+    return f"{float(v):.3f}"
 
 
-def _fmt_pval(v: float) -> str:
+def _fmt_pval(v: Any) -> str:
     """Format a p-value: 2 sig figs, scientific if <1e-3."""
-    if not np.isfinite(v):
+    if not is_estimable(v):
         return "---"
-    if v < 1e-3:
-        return f"{v:.2e}"
-    return f"{v:.4f}"
+    fv = float(v)
+    if fv < 1e-3:
+        return f"{fv:.2e}"
+    return f"{fv:.4f}"
 
 
-def _fmt_effect(v: float) -> str:
+def _fmt_effect(v: Any) -> str:
     """Format an effect size to 3 decimal places."""
-    if not np.isfinite(v):
+    if not is_estimable(v):
         return "---"
-    return f"{v:.3f}"
+    return f"{float(v):.3f}"
 
 
 def _fmt_int(v) -> str:
@@ -60,11 +63,11 @@ def _fmt_int(v) -> str:
         return str(v)
 
 
-def _fmt_pct(v: float, decimals: int = 1) -> str:
+def _fmt_pct(v: Any, decimals: int = 1) -> str:
     """Format a percentage."""
-    if not np.isfinite(v):
+    if not is_estimable(v):
         return "---"
-    return f"{v:.{decimals}f}%"
+    return f"{float(v):.{decimals}f}%"
 
 
 def _escape_latex(s: str) -> str:
@@ -309,16 +312,17 @@ class TableGenerator:
                     dim_data[metric] = dd
 
             # Extract disparity metrics
+            ne_amp = NE.missing_data(context=f"amp {dim}")
             amp = dim_data.get("issue_severity", {}).get("amplification", {})
-            max_min = amp.get("bias_high", float("nan")) if amp else float("nan")
-            sd = amp.get("bias_low", float("nan")) if amp else float("nan")
-            ci_lo = amp.get("ci_lower", float("nan")) if amp else float("nan")
-            ci_hi = amp.get("ci_upper", float("nan")) if amp else float("nan")
+            max_min = amp.get("bias_high", ne_amp) if amp else ne_amp
+            sd = amp.get("bias_low", ne_amp) if amp else ne_amp
+            ci_lo = amp.get("ci_lower", ne_amp) if amp else ne_amp
+            ci_hi = amp.get("ci_upper", ne_amp) if amp else ne_amp
 
             # Interaction p from GEE (confirmatory)
             gee = self.ar.get("severity", {}).get("gee_interactions_tier2", {})
             gee_dim = gee.get("issue_severity", {}).get(model, {}).get(dim, {})
-            int_p = gee_dim.get("interaction_p", float("nan")) if not gee_dim.get("skipped") else float("nan")
+            int_p = gee_dim.get("interaction_p", ne_amp) if not gee_dim.get("skipped") else NE.skipped("GEE skipped")
 
             rows.append((
                 dim.capitalize(),
@@ -333,11 +337,19 @@ class TableGenerator:
         full_int = interactions_t2.get("issue_severity", {}).get(model, {})
         full_amp = full_int.get("amplification", {})
 
+        ne_full = NE.missing_data(context="full grid amp")
+        if full_amp:
+            bias_hi = full_amp.get("bias_high", ne_full)
+            bias_lo = full_amp.get("bias_low", ne_full)
+            gap = bias_hi - bias_lo if is_estimable(bias_hi) and is_estimable(bias_lo) else ne_full
+        else:
+            gap = ne_full
+            bias_hi = ne_full
         rows.append((
             "Full persona grid",
-            _fmt_effect(full_amp.get("bias_high", float("nan")) - full_amp.get("bias_low", float("nan"))) if full_amp else "---",
-            _fmt_effect(full_amp.get("bias_high", float("nan"))) if full_amp else "---",
-            f"[{_fmt_effect(full_amp.get('ci_lower', float('nan')))}, {_fmt_effect(full_amp.get('ci_upper', float('nan')))}]" if full_amp else "---",
+            _fmt_effect(gap) if full_amp else "---",
+            _fmt_effect(bias_hi) if full_amp else "---",
+            f"[{_fmt_effect(full_amp.get('ci_lower', ne_full))}, {_fmt_effect(full_amp.get('ci_upper', ne_full))}]" if full_amp else "---",
             "---",
         ))
 
@@ -363,36 +375,37 @@ class TableGenerator:
         neutralized_rates = mitigation.get("neutralized_rates", {})
         variance_change = mitigation.get("variance_change", {})
 
-        baseline_sd = variance_change.get("baseline_sd", float("nan"))
-        neutralized_sd = variance_change.get("neutralized_sd", float("nan"))
-        pct_change = variance_change.get("pct_change", float("nan"))
+        ne_vc = NE.missing_data(context="variance change")
+        baseline_sd = variance_change.get("baseline_sd", ne_vc)
+        neutralized_sd = variance_change.get("neutralized_sd", ne_vc)
+        pct_change = variance_change.get("pct_change", ne_vc)
 
         rows.append((
             "Tier 2 disparity (SD)",
             _fmt_effect(baseline_sd),
             _fmt_effect(neutralized_sd),
-            _fmt_effect(neutralized_sd - baseline_sd) if np.isfinite(baseline_sd) and np.isfinite(neutralized_sd) else "---",
-            _fmt_pct(pct_change) if np.isfinite(pct_change) else "---",
-            "Reduced" if np.isfinite(pct_change) and pct_change < -5 else
-            "Eliminated" if np.isfinite(pct_change) and pct_change < -95 else
-            "Increased" if np.isfinite(pct_change) and pct_change > 5 else "Unchanged",
+            _fmt_effect(neutralized_sd - baseline_sd) if is_estimable(baseline_sd) and is_estimable(neutralized_sd) else "---",
+            _fmt_pct(pct_change) if is_estimable(pct_change) else "---",
+            "Reduced" if is_estimable(pct_change) and pct_change < -5 else
+            "Eliminated" if is_estimable(pct_change) and pct_change < -95 else
+            "Increased" if is_estimable(pct_change) and pct_change > 5 else "Unchanged",
         ))
 
         # Process friction
         proc_mit = model_r.get("process_mitigation", {})
         proc_vc = proc_mit.get("variance_change", {})
-        proc_baseline_sd = proc_vc.get("baseline_sd", float("nan"))
-        proc_neut_sd = proc_vc.get("neutralized_sd", float("nan"))
-        proc_pct = proc_vc.get("pct_change", float("nan"))
+        proc_baseline_sd = proc_vc.get("baseline_sd", ne_vc)
+        proc_neut_sd = proc_vc.get("neutralized_sd", ne_vc)
+        proc_pct = proc_vc.get("pct_change", ne_vc)
 
         rows.append((
             "Friction disparity (SD)",
             _fmt_effect(proc_baseline_sd),
             _fmt_effect(proc_neut_sd),
-            _fmt_effect(proc_neut_sd - proc_baseline_sd) if np.isfinite(proc_baseline_sd) and np.isfinite(proc_neut_sd) else "---",
-            _fmt_pct(proc_pct) if np.isfinite(proc_pct) else "---",
-            "Reduced" if np.isfinite(proc_pct) and proc_pct < -5 else
-            "Increased" if np.isfinite(proc_pct) and proc_pct > 5 else "Unchanged",
+            _fmt_effect(proc_neut_sd - proc_baseline_sd) if is_estimable(proc_baseline_sd) and is_estimable(proc_neut_sd) else "---",
+            _fmt_pct(proc_pct) if is_estimable(proc_pct) else "---",
+            "Reduced" if is_estimable(proc_pct) and proc_pct < -5 else
+            "Increased" if is_estimable(proc_pct) and proc_pct > 5 else "Unchanged",
         ))
 
         df = pd.DataFrame(rows, columns=["Metric", "Baseline", "Neutralised", "Delta", "% Change", "Verdict"])
@@ -413,19 +426,20 @@ class TableGenerator:
         miss_diag = severity.get("missingness_diagnostic", {})
 
         rows = []
+        ne_amp_t6 = NE.missing_data(context="amplification table")
         for dim in ["age", "geographic", "education", "socioeconomic"]:
             gee_dim = gee.get(dim, {})
-            int_p = gee_dim.get("interaction_p", float("nan")) if not gee_dim.get("skipped") else float("nan")
+            int_p = gee_dim.get("interaction_p", ne_amp_t6) if not gee_dim.get("skipped") else NE.skipped("GEE skipped")
             n_obs = gee_dim.get("n_obs", 0) if not gee_dim.get("skipped") else 0
 
             # Amplification from ANOVA tier2
             amp = interactions_t2.get("amplification", {})
-            bias_low = amp.get("bias_low", float("nan"))
-            bias_high = amp.get("bias_high", float("nan"))
-            A = bias_high - bias_low if np.isfinite(bias_high) and np.isfinite(bias_low) else float("nan")
-            R = amp.get("point", float("nan"))
-            ci_lo = amp.get("ci_lower", float("nan"))
-            ci_hi = amp.get("ci_upper", float("nan"))
+            bias_low = amp.get("bias_low", ne_amp_t6)
+            bias_high = amp.get("bias_high", ne_amp_t6)
+            A = bias_high - bias_low if is_estimable(bias_high) and is_estimable(bias_low) else ne_amp_t6
+            R = amp.get("point", ne_amp_t6)
+            ci_lo = amp.get("ci_lower", ne_amp_t6)
+            ci_hi = amp.get("ci_upper", ne_amp_t6)
 
             # Coverage for monetary
             coverage = ""
@@ -511,13 +525,14 @@ class TableGenerator:
         sorted_pairs = sorted(pairwise, key=lambda x: x.get("abs_effect", 0), reverse=True)[:20]
 
         rows = []
+        ne_pair = NE.missing_data(context="pairwise comparison")
         for p in sorted_pairs:
             rows.append((
                 p.get("persona_1", ""),
                 p.get("persona_2", ""),
                 _fmt_effect(p.get("rate_1", 0) - p.get("rate_2", 0)),
-                _fmt_pval(p.get("p_value", float("nan"))),
-                _fmt_pval(p.get("p_adjusted", float("nan"))),
+                _fmt_pval(p.get("p_value", ne_pair)),
+                _fmt_pval(p.get("p_adjusted", ne_pair)),
             ))
 
         df = pd.DataFrame(rows, columns=["Persona 1", "Persona 2", "Risk Diff", "p-value", "BH q"])
@@ -539,6 +554,7 @@ class TableGenerator:
         chars = miss_diag.get("complaint_characteristics", {})
         rows = []
 
+        ne_test = NE.missing_data(context="missingness test")
         for test_name in ["issue_category", "product_category", "word_count", "tier_distribution", "mean_tier"]:
             test_data = chars.get(test_name, {})
             if not test_data:
@@ -546,9 +562,9 @@ class TableGenerator:
             rows.append((
                 test_name.replace("_", " ").title(),
                 test_data.get("test", "---"),
-                _fmt_effect(test_data.get("statistic", float("nan"))),
-                _fmt_pval(test_data.get("p_value", float("nan"))),
-                _fmt_effect(test_data.get("effect_size", float("nan"))),
+                _fmt_effect(test_data.get("statistic", ne_test)),
+                _fmt_pval(test_data.get("p_value", ne_test)),
+                _fmt_effect(test_data.get("effect_size", ne_test)),
             ))
 
         if not rows:
@@ -616,6 +632,7 @@ class TableGenerator:
         rows = []
 
         # IPW vs unweighted
+        ne_ipw_tbl = NE.missing_data(context="IPW table")
         if model_ipw and not model_ipw.get("skipped"):
             dims = model_ipw.get("dimensions", {})
             for dim, dim_r in dims.items():
@@ -623,10 +640,10 @@ class TableGenerator:
                 w = dim_r.get("weighted", {})
                 rows.append((
                     f"IPW: {dim}",
-                    _fmt_effect(uw.get("A", float("nan"))),
-                    _fmt_effect(w.get("A", float("nan"))),
-                    _fmt_pval(uw.get("interaction", {}).get("interaction", {}).get("p_value", float("nan"))),
-                    _fmt_pval(w.get("interaction", {}).get("interaction", {}).get("p_value", float("nan"))),
+                    _fmt_effect(uw.get("A", ne_ipw_tbl)),
+                    _fmt_effect(w.get("A", ne_ipw_tbl)),
+                    _fmt_pval(uw.get("interaction", {}).get("p_value", ne_ipw_tbl)),
+                    _fmt_pval(w.get("interaction", {}).get("p_value", ne_ipw_tbl)),
                     "Yes" if dim_r.get("material_change") else "No",
                 ))
 
@@ -641,8 +658,8 @@ class TableGenerator:
                 amp_t2 = anova_t2.get("amplification", {})
                 rows.append((
                     f"Alt endpoint: {metric} (tier vs tier2)",
-                    _fmt_effect(amp_tier.get("point", float("nan"))),
-                    _fmt_effect(amp_t2.get("point", float("nan"))),
+                    _fmt_effect(amp_tier.get("point", ne_ipw_tbl)),
+                    _fmt_effect(amp_t2.get("point", ne_ipw_tbl)),
                     "---", "---",
                     "Sensitivity",
                 ))
@@ -715,18 +732,19 @@ class TableGenerator:
             subset = metric_data.get("subset", "all")
             endpoint = "Y2 = 1[tier==2]" if model_type == "logistic" else "tier (ordinal)"
 
+            ne_bayes_amp = NE.missing_data(context="Bayes amp table")
             for dim, dim_data in amp.items():
                 rows.append((
                     f"{label} ({dim})",
                     metric.replace("_", " "),
                     subset,
                     endpoint,
-                    _fmt_effect(dim_data.get("A_mean", float("nan"))),
-                    _fmt_effect(dim_data.get("A_CrI_low", float("nan"))),
-                    _fmt_effect(dim_data.get("A_CrI_high", float("nan"))),
-                    _fmt_prop(dim_data.get("P_A_gt_0", float("nan"))),
-                    _fmt_effect(dim_data.get("D_low_mean", float("nan"))),
-                    _fmt_effect(dim_data.get("D_high_mean", float("nan"))),
+                    _fmt_effect(dim_data.get("A_mean", ne_bayes_amp)),
+                    _fmt_effect(dim_data.get("A_CrI_low", ne_bayes_amp)),
+                    _fmt_effect(dim_data.get("A_CrI_high", ne_bayes_amp)),
+                    _fmt_prop(dim_data.get("P_A_gt_0", ne_bayes_amp)),
+                    _fmt_effect(dim_data.get("D_low_mean", ne_bayes_amp)),
+                    _fmt_effect(dim_data.get("D_high_mean", ne_bayes_amp)),
                     status,
                 ))
 
@@ -776,10 +794,11 @@ class TableGenerator:
             t1 = band_data.get("P_tier1", {})
             t2 = band_data.get("P_tier2", {})
 
+            ne_cri = NE.missing_data(context="CrI")
             def _fmt_cri(d: dict) -> str:
-                m = d.get("mean", float("nan"))
-                lo = d.get("ci_low", float("nan"))
-                hi = d.get("ci_high", float("nan"))
+                m = d.get("mean", ne_cri)
+                lo = d.get("ci_low", ne_cri)
+                hi = d.get("ci_high", ne_cri)
                 return f"{_fmt_prop(m)} [{_fmt_prop(lo)}, {_fmt_prop(hi)}]"
 
             rows.append((sev_band.capitalize(), _fmt_cri(t0), _fmt_cri(t1), _fmt_cri(t2)))
@@ -817,9 +836,10 @@ class TableGenerator:
                 if not mt_data or mt_data.get("error"):
                     continue
                 diag = mt_data.get("diagnostics", {})
+                ne_diag_tbl = NE.missing_data(context="Bayes diag table")
                 rows.append((
                     mt_data.get("fit_id", f"{model_type}/{metric}"),
-                    _fmt_effect(diag.get("max_rhat", float("nan"))),
+                    _fmt_effect(diag.get("max_rhat", ne_diag_tbl)),
                     _fmt_int(diag.get("min_ess_bulk", 0)),
                     _fmt_int(diag.get("divergences", 0)),
                     _fmt_int(diag.get("treedepth_hits", 0)),

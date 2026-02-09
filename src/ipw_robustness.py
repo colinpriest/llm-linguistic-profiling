@@ -23,6 +23,8 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+from src.estimable import NE, NEValue, is_estimable
+
 logger = logging.getLogger(__name__)
 
 SEVERITY_LEVELS = ["low", "medium", "high"]
@@ -160,15 +162,15 @@ def _weighted_bias_at_level(
     persona_col: str,
     outcome_col: str,
     weight_col: str,
-) -> float:
+) -> Any:
     """Compute weighted SD of persona-level means at a severity level."""
     sub = df[df[severity_metric] == level]
     if len(sub) < 5:
-        return float("nan")
+        return NE.insufficient_n(n=len(sub), min_required=5, context=f"weighted bias {level}")
 
     # Weighted mean per persona
     grouped = sub.groupby(persona_col).apply(
-        lambda g: np.average(g[outcome_col], weights=g[weight_col]) if len(g) > 0 else float("nan"),
+        lambda g: np.average(g[outcome_col], weights=g[weight_col]) if len(g) > 0 else np.nan,
         include_groups=False,
     )
     grouped = grouped.dropna()
@@ -183,13 +185,13 @@ def _weighted_dim_bias_at_level(
     level: str,
     dimension: str,
     weight_col: str,
-) -> float:
+) -> Any:
     """Compute max-min gap of weighted dimension-level means at a severity level."""
     sub = df[df[severity_metric] == level]
     if len(sub) < 5:
-        return float("nan")
+        return NE.insufficient_n(n=len(sub), min_required=5, context=f"weighted dim bias {level}")
     grouped = sub.groupby(dimension).apply(
-        lambda g: np.average(g["tier"], weights=g[weight_col]) if len(g) > 0 else float("nan"),
+        lambda g: np.average(g["tier"], weights=g[weight_col]) if len(g) > 0 else np.nan,
         include_groups=False,
     )
     grouped = grouped.dropna()
@@ -240,9 +242,11 @@ def _weighted_interaction_test(
         ]:
             if label in table.index:
                 ss = max(0.0, float(table.loc[label, "sum_sq"]))
-                f_val = float(table.loc[label, "F"]) if "F" in table.columns else float("nan")
-                p_val = float(table.loc[label, "PR(>F)"]) if "PR(>F)" in table.columns else float("nan")
-                if np.isfinite(f_val) and f_val < 0:
+                f_val_raw = table.loc[label, "F"] if "F" in table.columns else None
+                p_val_raw = table.loc[label, "PR(>F)"] if "PR(>F)" in table.columns else None
+                f_val: Any = float(f_val_raw) if f_val_raw is not None and np.isfinite(float(f_val_raw)) else NE.missing_data(field="F", context=source)
+                p_val: Any = float(p_val_raw) if p_val_raw is not None and np.isfinite(float(p_val_raw)) else NE.missing_data(field="p", context=source)
+                if is_estimable(f_val) and f_val < 0:
                     f_val, p_val = 0.0, 1.0
                 eta_sq = ss / (ss + ss_resid) if (ss + ss_resid) > 0 else 0.0
                 result[source] = {"F": f_val, "p_value": p_val, "eta_sq_partial": eta_sq}
@@ -329,19 +333,33 @@ def ipw_amplification_analysis(
             bias_high_uw = _weighted_dim_bias_at_level(
                 model_df.assign(w=1.0), severity_metric, "high", dim, "w",
             )
-            A_uw = bias_high_uw - bias_low_uw if np.isfinite(bias_high_uw) and np.isfinite(bias_low_uw) else float("nan")
-            R_uw = (bias_high_uw / bias_low_uw) if (np.isfinite(bias_low_uw) and bias_low_uw > 0) else float("nan")
+            ne_missing = NE.missing_data(context=f"IPW {dim}")
+            A_uw = bias_high_uw - bias_low_uw if is_estimable(bias_high_uw) and is_estimable(bias_low_uw) else ne_missing
+            R_uw = (bias_high_uw / bias_low_uw) if (is_estimable(bias_low_uw) and bias_low_uw > 0) else (NE.zero_denominator(context="unweighted R") if is_estimable(bias_high_uw) else ne_missing)
 
             uw_interaction = _weighted_interaction_test(
                 model_df.assign(w=1.0), severity_metric, dim, "w",
             )
 
+            # Extract the interaction p-value from the nested structure
+            uw_int_pval = uw_interaction.get("interaction", {}).get("p_value", ne_missing)
+            uw_int_F = uw_interaction.get("interaction", {}).get("F", ne_missing)
+            uw_int_eta = uw_interaction.get("interaction", {}).get("eta_sq_partial", ne_missing)
+
             dim_result["unweighted"] = {
-                "bias_low": float(bias_low_uw) if np.isfinite(bias_low_uw) else float("nan"),
-                "bias_high": float(bias_high_uw) if np.isfinite(bias_high_uw) else float("nan"),
-                "A": float(A_uw) if np.isfinite(A_uw) else float("nan"),
-                "R": float(R_uw) if np.isfinite(R_uw) else float("nan"),
-                "interaction": uw_interaction,
+                "bias_low": float(bias_low_uw) if is_estimable(bias_low_uw) else bias_low_uw,
+                "bias_high": float(bias_high_uw) if is_estimable(bias_high_uw) else bias_high_uw,
+                "A": float(A_uw) if is_estimable(A_uw) else A_uw,
+                "R": float(R_uw) if is_estimable(R_uw) else R_uw,
+                # Reporter expects amplification.point
+                "amplification": {"point": float(R_uw) if is_estimable(R_uw) else R_uw},
+                # Reporter expects interaction.p_value (flattened)
+                "interaction": {
+                    "p_value": uw_int_pval,
+                    "F": uw_int_F,
+                    "eta_sq_partial": uw_int_eta,
+                },
+                "interaction_full": uw_interaction,  # Keep full structure for reference
             }
 
             # --- IPW-weighted ---
@@ -351,19 +369,32 @@ def ipw_amplification_analysis(
             bias_high_w = _weighted_dim_bias_at_level(
                 model_df, severity_metric, "high", dim, "ipw_weight",
             )
-            A_w = bias_high_w - bias_low_w if np.isfinite(bias_high_w) and np.isfinite(bias_low_w) else float("nan")
-            R_w = (bias_high_w / bias_low_w) if (np.isfinite(bias_low_w) and bias_low_w > 0) else float("nan")
+            A_w = bias_high_w - bias_low_w if is_estimable(bias_high_w) and is_estimable(bias_low_w) else ne_missing
+            R_w = (bias_high_w / bias_low_w) if (is_estimable(bias_low_w) and bias_low_w > 0) else (NE.zero_denominator(context="weighted R") if is_estimable(bias_high_w) else ne_missing)
 
             w_interaction = _weighted_interaction_test(
                 model_df, severity_metric, dim, "ipw_weight",
             )
 
+            # Extract the interaction p-value from the nested structure
+            w_int_pval = w_interaction.get("interaction", {}).get("p_value", ne_missing)
+            w_int_F = w_interaction.get("interaction", {}).get("F", ne_missing)
+            w_int_eta = w_interaction.get("interaction", {}).get("eta_sq_partial", ne_missing)
+
             dim_result["weighted"] = {
-                "bias_low": float(bias_low_w) if np.isfinite(bias_low_w) else float("nan"),
-                "bias_high": float(bias_high_w) if np.isfinite(bias_high_w) else float("nan"),
-                "A": float(A_w) if np.isfinite(A_w) else float("nan"),
-                "R": float(R_w) if np.isfinite(R_w) else float("nan"),
-                "interaction": w_interaction,
+                "bias_low": float(bias_low_w) if is_estimable(bias_low_w) else bias_low_w,
+                "bias_high": float(bias_high_w) if is_estimable(bias_high_w) else bias_high_w,
+                "A": float(A_w) if is_estimable(A_w) else A_w,
+                "R": float(R_w) if is_estimable(R_w) else R_w,
+                # Reporter expects amplification.point
+                "amplification": {"point": float(R_w) if is_estimable(R_w) else R_w},
+                # Reporter expects interaction.p_value (flattened)
+                "interaction": {
+                    "p_value": w_int_pval,
+                    "F": w_int_F,
+                    "eta_sq_partial": w_int_eta,
+                },
+                "interaction_full": w_interaction,  # Keep full structure for reference
             }
 
             # --- Bootstrap CIs (clustered by complaint) ---
@@ -378,7 +409,7 @@ def ipw_amplification_analysis(
                 # Unweighted bootstrap
                 bl_uw = _weighted_dim_bias_at_level(boot_df.assign(w=1.0), severity_metric, "low", dim, "w")
                 bh_uw = _weighted_dim_bias_at_level(boot_df.assign(w=1.0), severity_metric, "high", dim, "w")
-                if np.isfinite(bl_uw) and np.isfinite(bh_uw):
+                if is_estimable(bl_uw) and is_estimable(bh_uw):
                     boot_A_uw.append(bh_uw - bl_uw)
                     if bl_uw > 0:
                         boot_R_uw.append(bh_uw / bl_uw)
@@ -386,16 +417,17 @@ def ipw_amplification_analysis(
                 # Weighted bootstrap
                 bl_w = _weighted_dim_bias_at_level(boot_df, severity_metric, "low", dim, "ipw_weight")
                 bh_w = _weighted_dim_bias_at_level(boot_df, severity_metric, "high", dim, "ipw_weight")
-                if np.isfinite(bl_w) and np.isfinite(bh_w):
+                if is_estimable(bl_w) and is_estimable(bh_w):
                     boot_A_w.append(bh_w - bl_w)
                     if bl_w > 0:
                         boot_R_w.append(bh_w / bl_w)
 
-            def _ci(vals: list) -> Dict[str, float]:
+            def _ci(vals: list) -> Dict[str, Any]:
                 if len(vals) >= 10:
                     return {"ci_lower": float(np.percentile(vals, 2.5)),
                             "ci_upper": float(np.percentile(vals, 97.5))}
-                return {"ci_lower": float("nan"), "ci_upper": float("nan")}
+                return {"ci_lower": NE.insufficient_n(n=len(vals), min_required=10, context="bootstrap CI"),
+                        "ci_upper": NE.insufficient_n(n=len(vals), min_required=10, context="bootstrap CI")}
 
             dim_result["unweighted"]["A_ci"] = _ci(boot_A_uw)
             dim_result["unweighted"]["R_ci"] = _ci(boot_R_uw)
@@ -403,7 +435,7 @@ def ipw_amplification_analysis(
             dim_result["weighted"]["R_ci"] = _ci(boot_R_w)
 
             # Material change indicator
-            if np.isfinite(A_uw) and np.isfinite(A_w):
+            if is_estimable(A_uw) and is_estimable(A_w):
                 dim_result["material_change"] = abs(A_uw - A_w) > 0.5 * abs(A_uw) if A_uw != 0 else A_w != 0
             else:
                 dim_result["material_change"] = None

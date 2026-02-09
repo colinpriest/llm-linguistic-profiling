@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/schemas/panel_process_amplification.schema.json",
+  "title": "Process Fairness x Severity Amplification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["panel_id", "run_id", "rows"],
+  "properties": {
+    "panel_id": { "const": "panel_process_fairness_severity" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "rows": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["model", "metric", "low_rate", "high_rate", "status"],
+        "properties": {
+          "model": { "type": "string", "pattern": "^gpt-[a-z0-9\\-]+$" },
+          "metric": { "type": "string", "enum": ["monetary_severity", "issue_severity"] },
+          "low_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+          "high_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+          "ratio": { "type": ["number", "null"], "minimum": 0 },
+          "status": { "type": "string", "enum": ["ok", "ne"] },
+          "ne_reason_code": {
+            "type": "string",
+            "enum": ["ALL_ZERO_DENOMINATOR", "INSUFFICIENT_CELL_N", "ESTIMATION_FAILED"]
+          }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "status": { "const": "ok" } } },
+            "then": {
+              "required": ["ratio"],
+              "properties": {
+                "ratio": { "type": "number" },
+                "ne_reason_code": false
+              }
+            }
+          },
+          {
+            "if": { "properties": { "status": { "const": "ne" } } },
+            "then": {
+              "required": ["ne_reason_code"],
+              "properties": { "ratio": { "type": "null" } }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

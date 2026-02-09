@@ -1,0 +1,9 @@
+{
+  "ALL_ZERO_DENOMINATOR": "Not estimable: both reference and comparison rates are zero, so the ratio is undefined (0/0).",
+  "INSUFFICIENT_CELL_N": "Not estimable: one or more required cells are below the minimum sample-size threshold.",
+  "POSITIVE_OVERLAP_VIOLATION": "Not estimable: positivity/overlap assumption is violated for inverse-probability weighting.",
+  "FILTER_DROPPED_ALL_ROWS": "Not estimable: filtering removed all rows for this stratum.",
+  "ESTIMATION_FAILED": "Not estimable: model fitting did not converge to valid diagnostics.",
+  "MISSING_INPUTS": "Not estimable: one or more required input fields are missing.",
+  "SAMPLE_MISMATCH": "Interpret with caution: the sample used for this estimate does not match the panel's target subset."
+}

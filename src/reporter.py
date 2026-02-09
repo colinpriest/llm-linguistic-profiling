@@ -20,6 +20,10 @@ import pandas as pd  # noqa: E402
 import seaborn as sns  # noqa: E402
 
 from src.schemas import Complaint, ESTIMATE_DIMS, CAUSAL_DIMS, PERSONA_LABELS
+from src.estimable import (
+    NEValue, NE, NECode, is_estimable, get_ne_reason,
+    format_value, format_value_plain, collect_footnotes, make_footnote_row,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,22 +71,140 @@ def _safe_get(d: Any, *keys: str, default: Any = None) -> Any:
     return current
 
 
-def _fmt(val: Any, precision: int = 4) -> str:
-    """Format a numeric value for display."""
+# ---------------------------------------------------------------------------
+# NE-aware formatting functions
+# ---------------------------------------------------------------------------
+# These functions handle non-estimable values properly, displaying "—" with
+# optional footnote markers instead of raw "nan" or "N/A".
+
+# Collector for NE values encountered during rendering (reset per section)
+_ne_collector: List[NEValue] = []
+
+
+def _reset_ne_collector() -> None:
+    """Reset the NE value collector (call at start of each section)."""
+    global _ne_collector
+    _ne_collector = []
+
+
+def _get_collected_footnotes() -> str:
+    """Get HTML footnotes for all collected NE values."""
+    global _ne_collector
+    return collect_footnotes(_ne_collector)
+
+
+def _fmt(val: Any, precision: int = 4, collect: bool = True) -> str:
+    """Format a numeric value for display, handling NE values.
+
+    Parameters
+    ----------
+    val : Any
+        Value to format.
+    precision : int
+        Decimal places for float formatting.
+    collect : bool
+        If True, collect NE values for footnotes.
+
+    Returns
+    -------
+    str
+        Formatted string. Non-estimable values show as "—" with footnote marker.
+    """
+    global _ne_collector
+
+    # Handle NEValue explicitly
+    if isinstance(val, NEValue):
+        if collect:
+            _ne_collector.append(val)
+        return f"—<sup>{val.short_code}</sup>"
+
     if val is None:
-        return "N/A"
+        ne = NE.missing_data()
+        if collect:
+            _ne_collector.append(ne)
+        return f"—<sup>{ne.short_code}</sup>"
+
     if isinstance(val, float):
+        if not np.isfinite(val):
+            if np.isnan(val):
+                ne = NE.missing_data("value is NaN")
+            else:
+                ne = NE.numerical("overflow" if val > 0 else "underflow")
+            if collect:
+                _ne_collector.append(ne)
+            return f"—<sup>{ne.short_code}</sup>"
         if abs(val) < 0.0001 and val != 0:
             return f"{val:.2e}"
         return f"{val:.{precision}f}"
+
     return str(val)
 
 
-def _pct(val: Any) -> str:
+def _pct(val: Any, collect: bool = True) -> str:
+    """Format a percentage value, handling NE values."""
+    global _ne_collector
+
+    if isinstance(val, NEValue):
+        if collect:
+            _ne_collector.append(val)
+        return f"—<sup>{val.short_code}</sup>"
+
     if val is None:
-        return "N/A"
+        ne = NE.missing_data()
+        if collect:
+            _ne_collector.append(ne)
+        return f"—<sup>{ne.short_code}</sup>"
+
     try:
-        return f"{float(val) * 100:.1f}%"
+        fval = float(val)
+        if not np.isfinite(fval):
+            ne = NE.missing_data("value is NaN") if np.isnan(fval) else NE.numerical()
+            if collect:
+                _ne_collector.append(ne)
+            return f"—<sup>{ne.short_code}</sup>"
+        return f"{fval * 100:.1f}%"
+    except (TypeError, ValueError):
+        return str(val)
+
+
+def _fmtf(val: Any, spec: str = ".4f", collect: bool = True) -> str:
+    """Format a numeric value with custom format spec, handling NE values.
+
+    Parameters
+    ----------
+    val : Any
+        Value to format.
+    spec : str
+        Format specification (e.g., ".2f", ".3f").
+    collect : bool
+        If True, collect NE values for footnotes.
+
+    Returns
+    -------
+    str
+        Formatted string. Non-estimable values show as "—" with footnote marker.
+    """
+    global _ne_collector
+
+    if isinstance(val, NEValue):
+        if collect:
+            _ne_collector.append(val)
+        return f"—<sup>{val.short_code}</sup>"
+
+    if val is None:
+        ne = NE.missing_data()
+        if collect:
+            _ne_collector.append(ne)
+        return f"—<sup>{ne.short_code}</sup>"
+
+    try:
+        fval = float(val)
+        if not np.isfinite(fval):
+            ne = NE.missing_data("value is NaN") if np.isnan(fval) else NE.numerical()
+            if collect:
+                _ne_collector.append(ne)
+            return f"—<sup>{ne.short_code}</sup>"
+        return f"{fval:{spec}}"
     except (TypeError, ValueError):
         return str(val)
 
@@ -1978,12 +2100,12 @@ def _build_tab_text_rewriting(
 
             parts.append('<tr>')
             parts.append(f'<td><strong>{feat_label}</strong></td>')
-            parts.append(f'<td>{orig_mean:.2f} ({orig_std:.2f})</td>')
-            parts.append(f'<td>{rew_mean:.2f} ({rew_std:.2f})</td>')
-            parts.append(f'<td>{diff_sign}{diff:.2f}</td>')
-            parts.append(f'<td>{pct_sign}{pct:.1f}%</td>')
-            parts.append(f'<td style="color:{d_color};font-weight:bold;" title="{d_label} effect">{d:.3f} [{d_lo:.2f}, {d_hi:.2f}]</td>')
-            parts.append(f'<td>{pval:.4f}</td>')
+            parts.append(f'<td>{_fmtf(orig_mean, ".2f")} ({_fmtf(orig_std, ".2f")})</td>')
+            parts.append(f'<td>{_fmtf(rew_mean, ".2f")} ({_fmtf(rew_std, ".2f")})</td>')
+            parts.append(f'<td>{diff_sign}{_fmtf(diff, ".2f")}</td>')
+            parts.append(f'<td>{pct_sign}{_fmtf(pct, ".1f")}%</td>')
+            parts.append(f'<td style="color:{d_color};font-weight:bold;" title="{d_label} effect">{_fmtf(d, ".3f")} [{_fmtf(d_lo, ".2f")}, {_fmtf(d_hi, ".2f")}]</td>')
+            parts.append(f'<td>{_fmtf(pval, ".4f")}</td>')
             parts.append(f'<td {sig_style}>{sig_icon}</td>')
             parts.append('</tr>')
 
@@ -2036,7 +2158,7 @@ def _build_tab_text_rewriting(
                         d = comp.get("cohens_d", 0)
                         pct = comp.get("pct_change", 0)
                         direction = "higher" if pct > 0 else "lower"
-                        parts.append(f'<li>{html.escape(feat)}: {abs(pct):.1f}% {direction} (d={d:.2f})</li>')
+                        parts.append(f'<li>{html.escape(feat)}: {_fmtf(abs(pct), ".1f")}% {direction} (d={_fmtf(d, ".2f")})</li>')
                     parts.append("</ul>")
                 else:
                     parts.append("<p><em>No statistically significant differences from original text.</em></p>")
@@ -2051,7 +2173,7 @@ def _build_tab_text_rewriting(
                     diff = comp.get("mean_difference", 0)
                     diff_sign = "+" if diff > 0 else ""
                     sig = "**" if comp.get("is_significant_fdr") else ""
-                    parts.append(f'<tr><td>{html.escape(feat_label)}</td><td>{mean_val:.2f}</td><td>{diff_sign}{diff:.2f}{sig}</td></tr>')
+                    parts.append(f'<tr><td>{html.escape(feat_label)}</td><td>{_fmtf(mean_val, ".2f")}</td><td>{diff_sign}{_fmtf(diff, ".2f")}{sig}</td></tr>')
                 parts.append('</tbody></table>')
                 parts.append('<p class="muted">** = significant after FDR correction</p>')
             else:
@@ -2108,7 +2230,7 @@ def _build_tab_text_rewriting(
                     parts.append('<ul class="compact">')
                     for feat, eff in sorted_effects:
                         direction = "^" if eff > 0 else "v"
-                        parts.append(f'<li>{html.escape(feat)}: {direction} {abs(eff):.2f}</li>')
+                        parts.append(f'<li>{html.escape(feat)}: {direction} {_fmtf(abs(eff), ".2f")}</li>')
                     parts.append('</ul>')
 
         parts.append("</div></div>")
@@ -2128,7 +2250,7 @@ def _build_tab_text_rewriting(
                 d = comp.get("cohens_d", 0)
                 pct = comp.get("pct_change", 0)
                 direction = "increases" if pct > 0 else "decreases"
-                parts.append(f'<li><strong>{html.escape(feat)}</strong> {direction} by {abs(pct):.1f}% (d={d:.2f})</li>')
+                parts.append(f'<li><strong>{html.escape(feat)}</strong> {direction} by {_fmtf(abs(pct), ".1f")}% (d={_fmtf(d, ".2f")})</li>')
             parts.append("</ul>")
         else:
             parts.append("<p>No features showed large effect sizes (|d| >= 0.5) from rewriting.</p>")
@@ -2240,7 +2362,7 @@ def _build_tab_persona_analysis(
                 if auc is not None:
                     auc_color = "#27ae60" if auc > 0.7 else "#f39c12" if auc > 0.6 else "#95a5a6"
                     parts.append(f'<div class="metric-card" style="background:white;padding:8px 16px;border-radius:4px;">')
-                    parts.append(f'<div class="value" style="font-size:1.2em;font-weight:bold;color:{auc_color};">{auc:.3f}</div>')
+                    parts.append(f'<div class="value" style="font-size:1.2em;font-weight:bold;color:{auc_color};">{_fmtf(auc, ".3f")}</div>')
                     parts.append(f'<div class="label" style="font-size:0.8em;color:#666;">AUC</div></div>')
                 parts.append('</div>')
 
@@ -2268,7 +2390,7 @@ def _build_tab_persona_analysis(
                         parts.append(f'<td style="width:180px;">')
                         parts.append(f'<div style="display:flex;align-items:center;gap:8px;">')
                         parts.append(f'<div style="background:#3498db;height:12px;width:{bar_width}px;border-radius:2px;"></div>')
-                        parts.append(f'<span style="font-size:0.9em;">{importance:.1f}</span>')
+                        parts.append(f'<span style="font-size:0.9em;">{_fmtf(importance, ".1f")}</span>')
                         parts.append('</div></td>')
                         parts.append('</tr>')
                     parts.append('</tbody></table>')
@@ -2829,11 +2951,12 @@ def _chart_severity_main_effects(sev: Dict[str, Any], models: List[str]) -> Opti
         for mi, model in enumerate(models):
             model_data = metric_data.get(model, {})
             ci_data = model_data.get("ci_by_level", {})
-            means = [ci_data.get(l, {}).get("mean", float("nan")) for l in levels]
-            ci_lo = [ci_data.get(l, {}).get("ci_lower", float("nan")) for l in levels]
-            ci_hi = [ci_data.get(l, {}).get("ci_upper", float("nan")) for l in levels]
+            ne_ci = NE.missing_data(context="severity CI")
+            means = [ci_data.get(l, {}).get("mean", ne_ci) for l in levels]
+            ci_lo = [ci_data.get(l, {}).get("ci_lower", ne_ci) for l in levels]
+            ci_hi = [ci_data.get(l, {}).get("ci_upper", ne_ci) for l in levels]
 
-            valid = [i for i, m in enumerate(means) if np.isfinite(m)]
+            valid = [i for i, m in enumerate(means) if is_estimable(m)]
             if not valid:
                 continue
             vx = [x[i] for i in valid]
@@ -2903,12 +3026,13 @@ def _chart_model_amplification(sev: Dict[str, Any], models: List[str]) -> Option
     x = np.arange(len(models))
     width = 0.35
 
+    ne_amp = NE.missing_data(context="amplification ratio")
     m_ratios = [
-        _safe_get(mc, m, "monetary_severity_amplification", "point", default=float("nan"))
+        _safe_get(mc, m, "monetary_severity_amplification", "point", default=ne_amp)
         for m in models
     ]
     i_ratios = [
-        _safe_get(mc, m, "issue_severity_amplification", "point", default=float("nan"))
+        _safe_get(mc, m, "issue_severity_amplification", "point", default=ne_amp)
         for m in models
     ]
 
@@ -3051,6 +3175,9 @@ def _build_tab_severity(
     parts: List[str] = []
     sev = analysis_results.get("severity", {})
 
+    # Reset NE collector for this section
+    _reset_ne_collector()
+
     if not sev:
         parts.append("<h2>Severity Analysis</h2>")
         parts.append("<p>Severity analysis was not run. Ensure baseline decisions and persona estimates are available.</p>")
@@ -3132,8 +3259,8 @@ def _build_tab_severity(
     # Agreement stats
     agreement = _safe_get(desc, "agreement", default={})
     if agreement:
-        kappa = agreement.get("kappa", float("nan"))
-        interp = "High" if kappa > 0.6 else ("Moderate" if kappa > 0.4 else "Low")
+        kappa = agreement.get("kappa", NE.missing_data(context="kappa"))
+        interp = "High" if is_estimable(kappa) and kappa > 0.6 else ("Moderate" if is_estimable(kappa) and kappa > 0.4 else "Low")
         parts.append('<table><thead><tr><th>Agreement Metric</th><th>Value</th><th>Interpretation</th></tr></thead><tbody>')
         parts.append(f'<tr><td>Cohen\'s Kappa</td><td>{_fmt(kappa)}</td><td>{interp} agreement</td></tr>')
         parts.append(f'<tr><td>Spearman r</td><td>{_fmt(agreement.get("spearman_r"))}</td><td>p = {_fmt(agreement.get("spearman_p"))}</td></tr>')
@@ -3195,11 +3322,12 @@ def _build_tab_severity(
 
         def _miss_row(name: str, label: str, stat_key: str, p_key: str, effect_key: str, effect_label: str) -> str:
             d = chars.get(name, {})
+            ne_miss = NE.missing_data(context=f"missingness {name}")
             if d.get("error"):
                 return f'<tr><td>{label}</td><td colspan="4">Error</td></tr>'
-            stat_val = d.get(stat_key, d.get("chi2", float("nan")))
-            p_val = d.get(p_key, d.get("p_value", float("nan")))
-            eff = d.get(effect_key, d.get("cramers_v", float("nan")))
+            stat_val = d.get(stat_key, d.get("chi2", ne_miss))
+            p_val = d.get(p_key, d.get("p_value", ne_miss))
+            eff = d.get(effect_key, d.get("cramers_v", ne_miss))
             is_sig = name in sig_tests
             sig_style = ' style="color: #e74c3c; font-weight: bold;"' if is_sig else ""
             return (f'<tr{sig_style}><td>{label}</td>'
@@ -3242,8 +3370,8 @@ def _build_tab_severity(
                                  f'<td>{_fmt(s.get("bias_range"))}</td>'
                                  f'<td>{s.get("n_significant_pairs", 0)}</td></tr>')
                 # Ratio row
-                ratio = fc.get("bias_sd_ratio", float("nan"))
-                ratio_color = "#e74c3c" if np.isfinite(ratio) and abs(ratio - 1.0) > 0.2 else "#27ae60"
+                ratio = fc.get("bias_sd_ratio", NE.missing_data(context="bias SD ratio"))
+                ratio_color = "#e74c3c" if is_estimable(ratio) and abs(ratio - 1.0) > 0.2 else "#27ae60"
                 parts.append(f'<tr style="font-weight: bold;"><td>{html.escape(model)}</td>'
                              f'<td>Ratio (missing/present)</td><td></td>'
                              f'<td style="color: {ratio_color};">{_fmt(ratio, 2)}</td>'
@@ -3297,12 +3425,13 @@ def _build_tab_severity(
     # Key metric cards with traffic lights
     interactions = sev.get("interactions", {})
     parts.append('<div class="metrics-grid">')
+    ne_amp_val = NE.missing_data(context="amplification")
     for metric in ["monetary_severity", "issue_severity"]:
         for model in models:
             amp = _safe_get(interactions, metric, model, "amplification", default={})
-            ratio = amp.get("point", float("nan"))
-            ci_lo = amp.get("ci_lower", float("nan"))
-            ci_hi = amp.get("ci_upper", float("nan"))
+            ratio = amp.get("point", ne_amp_val)
+            ci_lo = amp.get("ci_lower", ne_amp_val)
+            ci_hi = amp.get("ci_upper", ne_amp_val)
             color, bg, label = _traffic_light(ratio)
             parts.append(f'<div class="metric-card" style="border-left: 4px solid {color}; background: {bg};">')
             parts.append(f'<div class="value" style="color: {color};">{_fmt(ratio, 2)}x</div>')
@@ -3335,15 +3464,16 @@ def _build_tab_severity(
             # Collect SDs for highlighting the max
             sds = {lvl: bias_data.get(lvl, {}).get("sd_across_personas", 0) for lvl in ["low", "medium", "high"]}
             max_sd_level = max(sds, key=lambda k: sds[k]) if any(sds.values()) else None
+            ne_bias = NE.missing_data(context="bias by severity")
             for level in ["low", "medium", "high"]:
                 bl = bias_data.get(level, {})
                 sl = se_data.get(level, {})
                 n = bl.get("n", 0)
-                sd = bl.get("sd_across_personas", float("nan"))
-                rng = bl.get("range", float("nan"))
-                mean_tier = means.get(level, float("nan"))
-                eta = sl.get("eta_sq_partial", float("nan"))
-                largest_d = sl.get("largest_pairwise_d", float("nan"))
+                sd = bl.get("sd_across_personas", ne_bias)
+                rng = bl.get("range", ne_bias)
+                mean_tier = means.get(level, ne_bias)
+                eta = sl.get("eta_sq_partial", ne_bias)
+                largest_d = sl.get("largest_pairwise_d", ne_bias)
                 n_sig = sl.get("n_significant", 0)
                 # Highlight the row with the highest bias
                 style = ' style="background:#fdecea;font-weight:bold;"' if level == max_sd_level else ""
@@ -3393,9 +3523,9 @@ def _build_tab_severity(
         for model in models:
             tw = _safe_get(interactions, metric, model, "two_way", default={})
             inter = tw.get("interaction", {})
-            p = inter.get("p_value", float("nan"))
+            p = inter.get("p_value", NE.missing_data(context="interaction p"))
             eta = inter.get("eta_sq_partial", 0)
-            if np.isfinite(p) and p < 0.05:
+            if is_estimable(p) and p < 0.05:
                 interp = "Significant"
                 row_style = ' style="background:#fdecea;"'
             else:
@@ -3446,12 +3576,13 @@ def _build_tab_severity(
 
         # Tier 2 metric cards
         parts.append('<div class="metrics-grid">')
+        ne_t2 = NE.missing_data(context="Tier 2 amplification")
         for metric in ["monetary_severity", "issue_severity"]:
             for model in models:
                 amp = _safe_get(interactions_t2, metric, model, "amplification", default={})
-                ratio = amp.get("point", float("nan"))
-                ci_lo = amp.get("ci_lower", float("nan"))
-                ci_hi = amp.get("ci_upper", float("nan"))
+                ratio = amp.get("point", ne_t2)
+                ci_lo = amp.get("ci_lower", ne_t2)
+                ci_hi = amp.get("ci_upper", ne_t2)
                 color, bg, label = _traffic_light(ratio)
                 parts.append(f'<div class="metric-card" style="border-left: 4px solid {color}; background: {bg};">')
                 parts.append(f'<div class="value" style="color: {color};">{_fmt(ratio, 2)}x</div>')
@@ -3486,14 +3617,15 @@ def _build_tab_severity(
                 se_data = mi.get("simple_effects", {})
                 sds_t2 = {lvl: bias_data.get(lvl, {}).get("sd_across_personas", 0) for lvl in ["low", "medium", "high"]}
                 max_sd_level = max(sds_t2, key=lambda k: sds_t2[k]) if any(sds_t2.values()) else None
+                ne_t2_bias = NE.missing_data(context="T2 bias by severity")
                 for level in ["low", "medium", "high"]:
                     bl = bias_data.get(level, {})
                     sl = se_data.get(level, {})
                     n = bl.get("n", 0)
-                    sd = bl.get("sd_across_personas", float("nan"))
-                    rng = bl.get("range", float("nan"))
-                    eta = sl.get("eta_sq_partial", float("nan"))
-                    largest_d = sl.get("largest_pairwise_d", float("nan"))
+                    sd = bl.get("sd_across_personas", ne_t2_bias)
+                    rng = bl.get("range", ne_t2_bias)
+                    eta = sl.get("eta_sq_partial", ne_t2_bias)
+                    largest_d = sl.get("largest_pairwise_d", ne_t2_bias)
                     n_sig = sl.get("n_significant", 0)
                     style = ' style="background:#fdecea;font-weight:bold;"' if level == max_sd_level else ""
                     parts.append(f'<tr{style}>')
@@ -3541,9 +3673,9 @@ def _build_tab_severity(
             for model in models:
                 tw = _safe_get(interactions_t2, metric, model, "two_way", default={})
                 inter = tw.get("interaction", {})
-                p = inter.get("p_value", float("nan"))
+                p = inter.get("p_value", NE.missing_data(context="T2 interaction p"))
                 eta = inter.get("eta_sq_partial", 0)
-                if np.isfinite(p) and p < 0.05:
+                if is_estimable(p) and p < 0.05:
                     interp = "Significant"
                     row_style = ' style="background:#fdecea;"'
                 else:
@@ -3582,7 +3714,17 @@ def _build_tab_severity(
                     parts.append(f'<td>{ld.get("n", 0)}</td></tr>')
         parts.append('</tbody></table>')
 
+    # Add footnotes for any NE values in this panel
+    footnotes = _get_collected_footnotes()
+    if footnotes:
+        parts.append(f'<div class="footnotes" style="margin-top:16px;padding:12px;background:#f8f9fa;'
+                     f'border-radius:4px;font-size:0.85em;color:#666;">'
+                     f'<strong>Notes:</strong> {footnotes}</div>')
+
     parts.append('</div></div>')
+
+    # Reset collector for next panel
+    _reset_ne_collector()
 
     # ── Panel 4: Model Comparison ──
     parts.append('<div class="collapsible">')
@@ -3651,7 +3793,7 @@ def _build_tab_severity(
     for metric in ["monetary_severity", "issue_severity"]:
         for model in models:
             pa = _safe_get(proc, metric, model, "process_amplification", default={})
-            ratio = pa.get("point", float("nan"))
+            ratio = pa.get("point", NE.missing_data(context="process amp"))
             color, _, label = _traffic_light(ratio)
             parts.append(f'<tr><td>{metric.replace("_"," ").title()}</td>')
             parts.append(f'<td>{html.escape(model)}</td>')
@@ -3697,10 +3839,11 @@ def _build_tab_severity(
                 verdict = comp.get("verdict", "N/A")
                 base_amp = ms.get("baseline", {}).get("amplification", {})
                 neut_amp = ms.get("neutralized", {}).get("amplification", {})
-                base_ratio = base_amp.get("point", float("nan"))
-                neut_ratio = neut_amp.get("point", float("nan"))
-                delta = comp.get("amplification_change", float("nan"))
-                pct = comp.get("amplification_pct_change", float("nan"))
+                ne_mit = NE.missing_data(context="mitigation amp")
+                base_ratio = base_amp.get("point", ne_mit)
+                neut_ratio = neut_amp.get("point", ne_mit)
+                delta = comp.get("amplification_change", ne_mit)
+                pct = comp.get("amplification_pct_change", ne_mit)
                 # Color by verdict
                 v_colors = {
                     "eliminated": ("#2ecc71", "#eafaf1"),
@@ -3715,7 +3858,7 @@ def _build_tab_severity(
                 parts.append(f'<div class="label">{metric.replace("_"," ").title()} ({model})</div>')
                 parts.append(f'<div style="font-size:0.8rem;">Baseline: {_fmt(base_ratio, 2)}x → '
                              f'Neutralized: {_fmt(neut_ratio, 2)}x</div>')
-                if np.isfinite(delta) and np.isfinite(pct):
+                if is_estimable(delta) and is_estimable(pct):
                     parts.append(f'<div style="font-size:0.8rem;">Delta: {delta:+.2f} ({pct:+.1f}%)</div>')
                 parts.append('</div>')
         parts.append('</div>')
@@ -3733,13 +3876,14 @@ def _build_tab_severity(
                 base_bias = ms.get("baseline", {}).get("bias", {})
                 neut_bias = ms.get("neutralized", {}).get("bias", {})
                 sd_changes = ms.get("comparison", {}).get("bias_sd_change_by_level", {})
+                ne_sd = NE.missing_data(context="bias SD change")
                 for level in ["low", "medium", "high"]:
-                    b_sd = base_bias.get(level, {}).get("sd_across_personas", float("nan"))
-                    n_sd = neut_bias.get(level, {}).get("sd_across_personas", float("nan"))
-                    d_sd = sd_changes.get(level, float("nan"))
-                    pct_chg = (d_sd / b_sd * 100) if np.isfinite(b_sd) and b_sd > 0 and np.isfinite(d_sd) else float("nan")
+                    b_sd = base_bias.get(level, {}).get("sd_across_personas", ne_sd)
+                    n_sd = neut_bias.get(level, {}).get("sd_across_personas", ne_sd)
+                    d_sd = sd_changes.get(level, ne_sd)
+                    pct_chg = (d_sd / b_sd * 100) if is_estimable(b_sd) and b_sd > 0 and is_estimable(d_sd) else NE.missing_data(context="bias pct change")
                     # Highlight rows where bias increased
-                    style = ' style="background:#fdedec;"' if np.isfinite(d_sd) and d_sd > 0.001 else ""
+                    style = ' style="background:#fdedec;"' if is_estimable(d_sd) and d_sd > 0.001 else ""
                     parts.append(f'<tr{style}>')
                     parts.append(f'<td>{metric.replace("_"," ").title()}</td>')
                     parts.append(f'<td>{html.escape(model)}</td><td>{level.title()}</td>')
@@ -3787,10 +3931,11 @@ def _build_tab_severity(
                     verdict = comp.get("verdict", "N/A")
                     base_amp = ms.get("baseline", {}).get("amplification", {})
                     neut_amp = ms.get("neutralized", {}).get("amplification", {})
-                    base_ratio = base_amp.get("point", float("nan"))
-                    neut_ratio = neut_amp.get("point", float("nan"))
-                    delta = comp.get("amplification_change", float("nan"))
-                    pct = comp.get("amplification_pct_change", float("nan"))
+                    ne_t2_mit = NE.missing_data(context="T2 mitigation amp")
+                    base_ratio = base_amp.get("point", ne_t2_mit)
+                    neut_ratio = neut_amp.get("point", ne_t2_mit)
+                    delta = comp.get("amplification_change", ne_t2_mit)
+                    pct = comp.get("amplification_pct_change", ne_t2_mit)
                     v_colors = {
                         "eliminated": ("#2ecc71", "#eafaf1"),
                         "reduced": ("#27ae60", "#eafaf1"),
@@ -3804,7 +3949,7 @@ def _build_tab_severity(
                     parts.append(f'<div class="label">Tier 2 Rate — {metric.replace("_"," ").title()} ({model})</div>')
                     parts.append(f'<div style="font-size:0.8rem;">Baseline: {_fmt(base_ratio, 2)}x → '
                                  f'Neutralized: {_fmt(neut_ratio, 2)}x</div>')
-                    if np.isfinite(delta) and np.isfinite(pct):
+                    if is_estimable(delta) and is_estimable(pct):
                         parts.append(f'<div style="font-size:0.8rem;">Delta: {delta:+.2f} ({pct:+.1f}%)</div>')
                     parts.append('</div>')
             parts.append('</div>')
@@ -3822,12 +3967,13 @@ def _build_tab_severity(
                     base_bias = ms.get("baseline", {}).get("bias", {})
                     neut_bias = ms.get("neutralized", {}).get("bias", {})
                     sd_changes = ms.get("comparison", {}).get("bias_sd_change_by_level", {})
+                    ne_t2_sd = NE.missing_data(context="T2 bias SD change")
                     for level in ["low", "medium", "high"]:
-                        b_sd = base_bias.get(level, {}).get("sd_across_personas", float("nan"))
-                        n_sd = neut_bias.get(level, {}).get("sd_across_personas", float("nan"))
-                        d_sd = sd_changes.get(level, float("nan"))
-                        pct_chg = (d_sd / b_sd * 100) if np.isfinite(b_sd) and b_sd > 0 and np.isfinite(d_sd) else float("nan")
-                        style = ' style="background:#fdedec;"' if np.isfinite(d_sd) and d_sd > 0.001 else ""
+                        b_sd = base_bias.get(level, {}).get("sd_across_personas", ne_t2_sd)
+                        n_sd = neut_bias.get(level, {}).get("sd_across_personas", ne_t2_sd)
+                        d_sd = sd_changes.get(level, ne_t2_sd)
+                        pct_chg = (d_sd / b_sd * 100) if is_estimable(b_sd) and b_sd > 0 and is_estimable(d_sd) else NE.missing_data(context="T2 pct change")
+                        style = ' style="background:#fdedec;"' if is_estimable(d_sd) and d_sd > 0.001 else ""
                         parts.append(f'<tr{style}>')
                         parts.append(f'<td>{metric.replace("_"," ").title()}</td>')
                         parts.append(f'<td>{html.escape(model)}</td><td>{level.title()}</td>')
@@ -3964,8 +4110,9 @@ def _build_tab_severity(
                     anova = ds.get("anova", {})
                     inter = anova.get("interaction", {})
                     amp = ds.get("amplification", {})
-                    p = inter.get("p_value", float("nan"))
-                    row_style = ' style="background:#fdecea;"' if np.isfinite(p) and p < 0.05 else ""
+                    ne_dim = NE.missing_data(context=f"dimension {dim}")
+                    p = inter.get("p_value", ne_dim)
+                    row_style = ' style="background:#fdecea;"' if is_estimable(p) and p < 0.05 else ""
                     parts.append(f'<tr{row_style}>')
                     parts.append(f'<td>{metric.replace("_"," ").title()}</td>')
                     parts.append(f'<td>{html.escape(model)}</td>')
@@ -3974,11 +4121,11 @@ def _build_tab_severity(
                     parts.append(f'<td>{_fmt(p)}</td>')
                     parts.append(f'<td>{_fmt(inter.get("eta_sq_partial"))}</td>')
                     parts.append(f'<td>{inter.get("eta_sq_interpretation", "")}</td>')
-                    ratio = amp.get("point", float("nan"))
+                    ratio = amp.get("point", ne_dim)
                     color, _, label = _traffic_light(ratio)
                     parts.append(f'<td style="color:{color};font-weight:bold;">{_fmt(ratio, 2)}x</td>')
-                    ci_lo = amp.get("ci_lower", float("nan"))
-                    ci_hi = amp.get("ci_upper", float("nan"))
+                    ci_lo = amp.get("ci_lower", ne_dim)
+                    ci_hi = amp.get("ci_upper", ne_dim)
                     parts.append(f'<td>[{_fmt(ci_lo, 2)}, {_fmt(ci_hi, 2)}]</td>')
                     parts.append(f'<td>{ds.get("min_cell_size", 0)}</td>')
                     parts.append('</tr>')
@@ -3994,13 +4141,14 @@ def _build_tab_severity(
                     if "error" in ds:
                         continue
                     amp = ds.get("amplification", {})
-                    ratio = amp.get("point", float("nan"))
+                    ne_dim_amp = NE.missing_data(context=f"dim amp {dim}")
+                    ratio = amp.get("point", ne_dim_amp)
                     color, bg, label = _traffic_light(ratio)
                     parts.append(f'<div class="metric-card" style="border-left: 4px solid {color}; background: {bg};">')
                     parts.append(f'<div class="value" style="color: {color};">{_fmt(ratio, 2)}x</div>')
                     parts.append(f'<div class="label">{dim.title()} ({model})</div>')
-                    ci_lo = amp.get("ci_lower", float("nan"))
-                    ci_hi = amp.get("ci_upper", float("nan"))
+                    ci_lo = amp.get("ci_lower", ne_dim_amp)
+                    ci_hi = amp.get("ci_upper", ne_dim_amp)
                     parts.append(f'<div style="font-size:0.8rem;">CI: [{_fmt(ci_lo, 2)}, {_fmt(ci_hi, 2)}] &mdash; {label}</div>')
                     parts.append('</div>')
         parts.append('</div>')
@@ -4033,11 +4181,12 @@ def _build_tab_severity(
                         parts.append(f'<tr><td>{metric.replace("_"," ").title()}</td>')
                         parts.append(f'<td>{html.escape(model)}</td><td>{level.title()}</td>')
                         vals = []
+                        ne_means = NE.missing_data(context="dim level means")
                         for dl in dim_levels:
-                            v = means.get(dl, float("nan"))
+                            v = means.get(dl, ne_means)
                             vals.append(v)
                             parts.append(f'<td>{_fmt(v, 3)}</td>')
-                        gap = max(vals) - min(vals) if vals and all(np.isfinite(v) for v in vals) else float("nan")
+                        gap = max(vals) - min(vals) if vals and all(is_estimable(v) for v in vals) else NE.missing_data(context="dim gap")
                         style = ' style="font-weight:bold;"' if level == "high" else ""
                         parts.append(f'<td{style}>{_fmt(gap, 3)}</td></tr>')
             parts.append('</tbody></table>')
@@ -4125,8 +4274,9 @@ def _build_tab_severity(
                     status = mdata.get("status", "N/A")
                     method = mdata.get("method", fallback)
                     diag = mdata.get("diagnostics", {})
-                    rhat = diag.get("max_rhat", float("nan"))
-                    ess = diag.get("min_ess_bulk", float("nan"))
+                    ne_diag = NE.missing_data(context="Bayes diagnostics")
+                    rhat = diag.get("max_rhat", ne_diag)
+                    ess = diag.get("min_ess_bulk", ne_diag)
                     div = diag.get("divergences", 0)
                     td = diag.get("treedepth_hits", 0)
 
@@ -4137,8 +4287,8 @@ def _build_tab_severity(
                         ' style="background:#fef9e7;"' if status == "WARN" else "")
 
                     # Highlight problematic diagnostics
-                    rhat_style = ' style="color:#e74c3c;font-weight:bold;"' if np.isfinite(rhat) and rhat > 1.01 else ""
-                    ess_style = ' style="color:#e74c3c;font-weight:bold;"' if np.isfinite(ess) and ess < 400 else ""
+                    rhat_style = ' style="color:#e74c3c;font-weight:bold;"' if is_estimable(rhat) and rhat > 1.01 else ""
+                    ess_style = ' style="color:#e74c3c;font-weight:bold;"' if is_estimable(ess) and ess < 400 else ""
                     div_style = ' style="color:#e74c3c;font-weight:bold;"' if div > 0 else ""
                     td_style = ' style="color:#f39c12;"' if td > 0 else ""
 
@@ -4222,12 +4372,13 @@ def _build_tab_severity(
                         if not dim_amp:
                             continue
 
-                        a_mean = dim_amp.get("A_mean", float("nan"))
-                        a_lo = dim_amp.get("A_CrI_low", float("nan"))
-                        a_hi = dim_amp.get("A_CrI_high", float("nan"))
-                        p_gt0 = dim_amp.get("P_A_gt_0", float("nan"))
-                        d_low = dim_amp.get("D_low_mean", float("nan"))
-                        d_high = dim_amp.get("D_high_mean", float("nan"))
+                        ne_bayes = NE.missing_data(context=f"Bayes amp {dim}")
+                        a_mean = dim_amp.get("A_mean", ne_bayes)
+                        a_lo = dim_amp.get("A_CrI_low", ne_bayes)
+                        a_hi = dim_amp.get("A_CrI_high", ne_bayes)
+                        p_gt0 = dim_amp.get("P_A_gt_0", ne_bayes)
+                        d_low = dim_amp.get("D_low_mean", ne_bayes)
+                        d_high = dim_amp.get("D_high_mean", ne_bayes)
 
                         # Highlight strong evidence of amplification
                         row_style = ""
@@ -4298,57 +4449,119 @@ def _build_tab_severity(
 
         for model in models:
             mr = ipw_rob.get(model, {})
-            if not mr:
-                continue
 
             parts.append(f'<h4>{html.escape(model)}</h4>')
-            parts.append('<table class="sortable"><thead><tr>')
+            parts.append('<table class="sortable" data-panel-id="panel12_ipw_robustness_monetary"><thead><tr>')
             parts.append('<th>Dimension</th><th>Unweighted Amp.</th><th>IPW-Weighted Amp.</th>')
             parts.append('<th>Delta</th><th>Unweighted p</th><th>IPW p</th><th>Verdict</th>')
             parts.append('</tr></thead><tbody>')
 
-            dims_data = mr.get("dimensions", {})
-            for dim in ["age", "geographic", "education", "socioeconomic"]:
-                dim_data = dims_data.get(dim, {})
-                if not dim_data:
-                    continue
+            # Collect NE values for footnotes
+            ne_values: List[NEValue] = []
+            rows_emitted = 0
 
-                uw = dim_data.get("unweighted", {})
-                wt = dim_data.get("weighted", {})
+            # Handle model-level issues
+            if not mr:
+                ne_val = NE.missing_data(f"no IPW data for {model}")
+                ne_values.append(ne_val)
+                ne_str, _ = format_value(ne_val, ".2f")
+                for dim in ["age", "geographic", "education", "socioeconomic"]:
+                    parts.append(f'<tr><td>{dim.title()}</td>')
+                    parts.append(f'<td>{ne_str}</td><td>{ne_str}</td><td>{ne_str}</td>')
+                    parts.append(f'<td>{ne_str}</td><td>{ne_str}</td>')
+                    parts.append('<td>NE</td></tr>')
+                    rows_emitted += 1
+            elif mr.get("skipped"):
+                reason = mr.get("reason", "skipped")
+                ne_val = NE.skipped(reason)
+                ne_values.append(ne_val)
+                ne_str, _ = format_value(ne_val, ".2f")
+                for dim in ["age", "geographic", "education", "socioeconomic"]:
+                    parts.append(f'<tr><td>{dim.title()}</td>')
+                    parts.append(f'<td>{ne_str}</td><td>{ne_str}</td><td>{ne_str}</td>')
+                    parts.append(f'<td>{ne_str}</td><td>{ne_str}</td>')
+                    parts.append(f'<td>Skipped: {html.escape(reason)}</td></tr>')
+                    rows_emitted += 1
+            else:
+                dims_data = mr.get("dimensions", {})
 
-                uw_amp = uw.get("amplification", {}).get("point", float("nan"))
-                wt_amp = wt.get("amplification", {}).get("point", float("nan"))
-                delta = wt_amp - uw_amp if np.isfinite(uw_amp) and np.isfinite(wt_amp) else float("nan")
+                # Always emit all 4 dimensions
+                for dim in ["age", "geographic", "education", "socioeconomic"]:
+                    dim_data = dims_data.get(dim, {})
 
-                uw_p = uw.get("interaction", {}).get("p_value", float("nan"))
-                wt_p = wt.get("interaction", {}).get("p_value", float("nan"))
+                    if not dim_data:
+                        # Dimension data missing - emit NE row
+                        ne_val = NE.missing_data(f"dimension '{dim}' not computed")
+                        ne_values.append(ne_val)
+                        ne_str, _ = format_value(ne_val, ".2f")
+                        parts.append(f'<tr><td>{dim.title()}</td>')
+                        parts.append(f'<td>{ne_str}</td><td>{ne_str}</td><td>{ne_str}</td>')
+                        parts.append(f'<td>{ne_str}</td><td>{ne_str}</td>')
+                        parts.append('<td>NE</td></tr>')
+                        rows_emitted += 1
+                        continue
 
-                # Verdict based on material change
-                if np.isfinite(delta):
-                    if abs(delta) > 0.5:
-                        verdict = '<span style="color:#e74c3c;font-weight:bold;">Material change</span>'
-                        row_bg = ' style="background:#fdedec;"'
-                    elif abs(delta) > 0.2:
-                        verdict = '<span style="color:#f39c12;">Moderate change</span>'
-                        row_bg = ' style="background:#fef9e7;"'
+                    uw = dim_data.get("unweighted", {})
+                    wt = dim_data.get("weighted", {})
+
+                    ne_ipw = NE.missing_data(context="IPW comparison")
+                    uw_amp = uw.get("amplification", {}).get("point", ne_ipw)
+                    wt_amp = wt.get("amplification", {}).get("point", ne_ipw)
+                    delta = wt_amp - uw_amp if is_estimable(uw_amp) and is_estimable(wt_amp) else ne_ipw
+
+                    uw_p = uw.get("interaction", {}).get("p_value", ne_ipw)
+                    wt_p = wt.get("interaction", {}).get("p_value", ne_ipw)
+
+                    # Format values, collecting NE reasons
+                    uw_amp_str, uw_amp_ne = format_value(uw_amp, ".2f")
+                    wt_amp_str, wt_amp_ne = format_value(wt_amp, ".2f")
+                    uw_p_str, uw_p_ne = format_value(uw_p, ".4f")
+                    wt_p_str, wt_p_ne = format_value(wt_p, ".4f")
+
+                    if uw_amp_ne:
+                        ne_values.append(uw_amp_ne)
+                    if wt_amp_ne:
+                        ne_values.append(wt_amp_ne)
+                    if uw_p_ne:
+                        ne_values.append(uw_p_ne)
+                    if wt_p_ne:
+                        ne_values.append(wt_p_ne)
+
+                    # Verdict based on material change
+                    if is_estimable(delta):
+                        if abs(delta) > 0.5:
+                            verdict = '<span style="color:#e74c3c;font-weight:bold;">Material change</span>'
+                            row_bg = ' style="background:#fdedec;"'
+                        elif abs(delta) > 0.2:
+                            verdict = '<span style="color:#f39c12;">Moderate change</span>'
+                            row_bg = ' style="background:#fef9e7;"'
+                        else:
+                            verdict = '<span style="color:#2ecc71;">Stable</span>'
+                            row_bg = ''
+                        delta_str = f'{delta:+.2f}'
                     else:
-                        verdict = '<span style="color:#2ecc71;">Stable</span>'
+                        verdict = '<span style="color:#999;">NE</span>'
                         row_bg = ''
-                else:
-                    verdict = 'N/A'
-                    row_bg = ''
+                        delta_str = '—'
 
-                parts.append(f'<tr{row_bg}>')
-                parts.append(f'<td>{dim.title()}</td>')
-                parts.append(f'<td>{_fmt(uw_amp, 2)}x</td>')
-                parts.append(f'<td>{_fmt(wt_amp, 2)}x</td>')
-                parts.append(f'<td>{_fmt(delta, 2):+}</td>' if np.isfinite(delta) else '<td>N/A</td>')
-                parts.append(f'<td>{_fmt(uw_p, 4)}</td>')
-                parts.append(f'<td>{_fmt(wt_p, 4)}</td>')
-                parts.append(f'<td>{verdict}</td>')
-                parts.append('</tr>')
+                    parts.append(f'<tr{row_bg}>')
+                    parts.append(f'<td>{dim.title()}</td>')
+                    parts.append(f'<td>{uw_amp_str}x</td>')
+                    parts.append(f'<td>{wt_amp_str}x</td>')
+                    parts.append(f'<td>{delta_str}</td>')
+                    parts.append(f'<td>{uw_p_str}</td>')
+                    parts.append(f'<td>{wt_p_str}</td>')
+                    parts.append(f'<td>{verdict}</td>')
+                    parts.append('</tr>')
+                    rows_emitted += 1
 
-            parts.append('</tbody></table>')
+            parts.append('</tbody>')
+
+            # Add footnotes if any NE values
+            if ne_values:
+                parts.append(make_footnote_row(ne_values, colspan=7))
+
+            parts.append('</table>')
 
         # Note about interpretation
         parts.append('<div style="background:#f8f9fa;border-left:4px solid #95a5a6;padding:12px;margin-top:15px;">')
@@ -4495,10 +4708,10 @@ def _build_tab_sparsity(
                 info = bair[persona]
                 ba = info.get("bayesian_air", {})
                 stab = ba.get("stability_g", "")
-                p_below = ba.get("p_below_threshold", float("nan"))
+                p_below = ba.get("p_below_threshold", NE.missing_data(context="p_below threshold"))
                 color = {"insufficient_support": "#e74c3c", "screening_only": "#e67e22", "reliable": "#2ecc71"}.get(stab, "#333")
                 # Color-code P(AIR<0.8) risk
-                if isinstance(p_below, float) and not np.isnan(p_below):
+                if is_estimable(p_below):
                     if p_below > 0.5:
                         risk_color = "#e74c3c"
                     elif p_below > 0.1:
@@ -4673,8 +4886,8 @@ def _build_tab_sparsity(
                     ba = info.get("bayesian_air", {})
                     stab = ba.get("stability_g", "")
                     color = {"insufficient_support": "#e74c3c", "screening_only": "#e67e22", "reliable": "#2ecc71"}.get(stab, "#333")
-                    p_below = ba.get("p_below_threshold", float("nan"))
-                    risk_str = _pct(p_below) if isinstance(p_below, float) and not np.isnan(p_below) else "N/A"
+                    p_below = ba.get("p_below_threshold", NE.missing_data(context="dim p_below"))
+                    risk_str = _pct(p_below) if is_estimable(p_below) else "N/A"
                     parts.append(
                         f'<tr><td>{html.escape(level)}</td>'
                         f'<td>{info.get("n", 0)}</td>'
@@ -4744,8 +4957,8 @@ def _build_tab_sparsity(
                 ba = info.get("bayesian_air", {})
                 stab = ba.get("stability_g", "")
                 color = {"insufficient_support": "#e74c3c", "screening_only": "#e67e22", "reliable": "#2ecc71"}.get(stab, "#333")
-                p_below = ba.get("p_below_threshold", float("nan"))
-                risk_str = _pct(p_below) if isinstance(p_below, float) and not np.isnan(p_below) else "N/A"
+                p_below = ba.get("p_below_threshold", NE.missing_data(context="proc p_below"))
+                risk_str = _pct(p_below) if is_estimable(p_below) else "N/A"
                 parts.append(
                     f'<tr><td>{html.escape(persona)}</td>'
                     f'<td>{info.get("n", 0)}</td>'
@@ -4963,7 +5176,7 @@ def _build_tab_repeated_measures(
             mi = lmm.get("model_info", {})
             parts.append(f'<p><strong>Method:</strong> {html.escape(mi.get("method", ""))}</p>')
             icc = lmm.get("icc", 0)
-            parts.append(f'<p><strong>ICC:</strong> {icc:.3f} &mdash; {html.escape(mi.get("icc_interpretation", ""))}</p>')
+            parts.append(f'<p><strong>ICC:</strong> {_fmtf(icc, ".3f")} &mdash; {html.escape(mi.get("icc_interpretation", ""))}</p>')
             _render_rm_model_diagnostics(parts, lmm)
             parts.append('<div class="metrics-grid">')
             parts.append(f'<div class="metric-card"><div class="value">{_fmt(lmm.get("random_effects_variance"))}</div><div class="label">Random Effect Var</div></div>')
@@ -5007,7 +5220,8 @@ def _build_tab_repeated_measures(
         lmm = pooled.get("linear_mixed_model", {})
         if lmm and not lmm.get("skipped"):
             icc = lmm.get("icc", 0)
-            parts.append(f'<p><strong>Pooled LMM ICC:</strong> {icc:.3f} ({icc*100:.1f}% of tier variance is between complaints)</p>')
+            icc_pct = icc * 100 if np.isfinite(icc) else 0
+            parts.append(f'<p><strong>Pooled LMM ICC:</strong> {_fmtf(icc, ".3f")} ({_fmtf(icc_pct, ".1f")}% of tier variance is between complaints)</p>')
             _render_coefficient_table(parts, lmm)
 
     return "\n".join(parts)
@@ -5072,8 +5286,8 @@ def _render_coefficient_table(
     parts.append("</tr></thead><tbody>")
 
     for name in coeffs:
-        p = pv.get(name, float("nan"))
-        sig_marker = " *" if isinstance(p, (int, float)) and p < 0.05 else ""
+        p = pv.get(name, NE.missing_data(context=f"logistic p-value {name}"))
+        sig_marker = " *" if is_estimable(p) and p < 0.05 else ""
         color = "#e74c3c" if sig_marker else "#2c3e50"
         ci_vals = ci.get(name, [])
         ci_str = f"[{_fmt(ci_vals[0])}, {_fmt(ci_vals[1])}]" if len(ci_vals) == 2 else "N/A"
