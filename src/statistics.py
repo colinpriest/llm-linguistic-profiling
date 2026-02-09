@@ -37,10 +37,14 @@ def is_material(air: float, threshold: float = 0.80) -> bool:
 
 def fdr_correction(p_values: List[float]) -> np.ndarray:
     """Benjamini-Hochberg FDR correction."""
-    from scipy.stats import false_discovery_control
     arr = np.array(p_values, dtype=float)
     if len(arr) == 0:
         return arr
+    try:
+        from scipy.stats import false_discovery_control
+    except (ImportError, AttributeError):
+        from statsmodels.stats.multitest import multipletests
+        return multipletests(arr, method="fdr_bh")[1]
     return false_discovery_control(arr, method="bh")
 
 

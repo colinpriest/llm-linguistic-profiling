@@ -68,6 +68,26 @@ python -c "from src.data_loader import ensure_fasttext_model; ensure_fasttext_mo
 
 This will store the model at `./data/lid.176.ftz`.
 
+#### Checksum verification (recommended)
+
+To enable checksum verification, provide the expected SHA-256 hash via either:
+
+* Environment variable `FASTTEXT_LID176_SHA256`, or
+* A sidecar file `./data/lid.176.ftz.sha256` containing the hash.
+
+Example manual download + verification:
+
+```bash
+curl -L -o data/lid.176.ftz \
+  https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz
+
+# Compare against the official hash, then set it for verification:
+sha256sum data/lid.176.ftz
+export FASTTEXT_LID176_SHA256="<expected_sha256>"
+```
+
+If the checksum is configured, the loader verifies the model on startup and after downloads.
+
 ### Data
 
 See [Data Source](#data-source) below for full details on the dataset, category mappings, and remedy tiers.
