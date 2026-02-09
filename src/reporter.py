@@ -140,6 +140,29 @@ def _fmt(val: Any, precision: int = 4, collect: bool = True) -> str:
     return str(val)
 
 
+def _fmt_ratio(val: Any, precision: int = 2, collect: bool = True) -> str:
+    """Format an amplification ratio with 'x' suffix only for estimable values.
+
+    Parameters
+    ----------
+    val : Any
+        Value to format (should be a ratio like 1.5).
+    precision : int
+        Decimal places for float formatting.
+    collect : bool
+        If True, collect NE values for footnotes.
+
+    Returns
+    -------
+    str
+        Formatted string. Estimable values show as "1.50x", NE values show as "—" with footnote.
+    """
+    if is_estimable(val):
+        return f"{_fmt(val, precision, collect)}x"
+    else:
+        return _fmt(val, precision, collect)
+
+
 def _pct(val: Any, collect: bool = True) -> str:
     """Format a percentage value, handling NE values."""
     global _ne_collector
@@ -3434,7 +3457,7 @@ def _build_tab_severity(
             ci_hi = amp.get("ci_upper", ne_amp_val)
             color, bg, label = _traffic_light(ratio)
             parts.append(f'<div class="metric-card" style="border-left: 4px solid {color}; background: {bg};">')
-            parts.append(f'<div class="value" style="color: {color};">{_fmt(ratio, 2)}x</div>')
+            parts.append(f'<div class="value" style="color: {color};">{_fmt_ratio(ratio, 2)}</div>')
             parts.append(f'<div class="label">{metric.replace("_"," ").title()} ({model})</div>')
             parts.append(f'<div style="font-size:0.8rem;">CI: [{_fmt(ci_lo, 2)}, {_fmt(ci_hi, 2)}] — {label}</div>')
             parts.append('</div>')
@@ -3585,7 +3608,7 @@ def _build_tab_severity(
                 ci_hi = amp.get("ci_upper", ne_t2)
                 color, bg, label = _traffic_light(ratio)
                 parts.append(f'<div class="metric-card" style="border-left: 4px solid {color}; background: {bg};">')
-                parts.append(f'<div class="value" style="color: {color};">{_fmt(ratio, 2)}x</div>')
+                parts.append(f'<div class="value" style="color: {color};">{_fmt_ratio(ratio, 2)}</div>')
                 parts.append(f'<div class="label">Tier 2 Rate — {metric.replace("_"," ").title()} ({model})</div>')
                 parts.append(f'<div style="font-size:0.8rem;">CI: [{_fmt(ci_lo, 2)}, {_fmt(ci_hi, 2)}] — {label}</div>')
                 parts.append('</div>')
@@ -3790,6 +3813,7 @@ def _build_tab_severity(
 
     proc = sev.get("process", {})
     parts.append('<table><thead><tr><th>Metric</th><th>Model</th><th>Process Amplification</th></tr></thead><tbody>')
+    proc_ne_values: List[NEValue] = []
     for metric in ["monetary_severity", "issue_severity"]:
         for model in models:
             pa = _safe_get(proc, metric, model, "process_amplification", default={})
@@ -3797,8 +3821,18 @@ def _build_tab_severity(
             color, _, label = _traffic_light(ratio)
             parts.append(f'<tr><td>{metric.replace("_"," ").title()}</td>')
             parts.append(f'<td>{html.escape(model)}</td>')
-            parts.append(f'<td style="color:{color};font-weight:bold;">{_fmt(ratio, 2)}x ({label})</td></tr>')
-    parts.append('</tbody></table>')
+            # Only show "x (label)" suffix for estimable values
+            if is_estimable(ratio):
+                parts.append(f'<td style="color:{color};font-weight:bold;">{_fmt_ratio(ratio, 2)} ({label})</td></tr>')
+            else:
+                ratio_str, ratio_ne = format_value(ratio, ".2f")
+                if ratio_ne:
+                    proc_ne_values.append(ratio_ne)
+                parts.append(f'<td style="color:{color};">{ratio_str}</td></tr>')
+    parts.append('</tbody>')
+    if proc_ne_values:
+        parts.append(make_footnote_row(proc_ne_values, colspan=3))
+    parts.append('</table>')
 
     # Consistency check
     consist = sev.get("consistency", {})
@@ -3856,8 +3890,8 @@ def _build_tab_severity(
                 parts.append(f'<div class="metric-card" style="border-left: 4px solid {color}; background: {bg};">')
                 parts.append(f'<div class="value" style="color: {color};">{verdict.upper()}</div>')
                 parts.append(f'<div class="label">{metric.replace("_"," ").title()} ({model})</div>')
-                parts.append(f'<div style="font-size:0.8rem;">Baseline: {_fmt(base_ratio, 2)}x → '
-                             f'Neutralized: {_fmt(neut_ratio, 2)}x</div>')
+                parts.append(f'<div style="font-size:0.8rem;">Baseline: {_fmt_ratio(base_ratio, 2)} → '
+                             f'Neutralized: {_fmt_ratio(neut_ratio, 2)}</div>')
                 if is_estimable(delta) and is_estimable(pct):
                     parts.append(f'<div style="font-size:0.8rem;">Delta: {delta:+.2f} ({pct:+.1f}%)</div>')
                 parts.append('</div>')
@@ -3947,8 +3981,8 @@ def _build_tab_severity(
                     parts.append(f'<div class="metric-card" style="border-left: 4px solid {color}; background: {bg};">')
                     parts.append(f'<div class="value" style="color: {color};">{verdict.upper()}</div>')
                     parts.append(f'<div class="label">Tier 2 Rate — {metric.replace("_"," ").title()} ({model})</div>')
-                    parts.append(f'<div style="font-size:0.8rem;">Baseline: {_fmt(base_ratio, 2)}x → '
-                                 f'Neutralized: {_fmt(neut_ratio, 2)}x</div>')
+                    parts.append(f'<div style="font-size:0.8rem;">Baseline: {_fmt_ratio(base_ratio, 2)} → '
+                                 f'Neutralized: {_fmt_ratio(neut_ratio, 2)}</div>')
                     if is_estimable(delta) and is_estimable(pct):
                         parts.append(f'<div style="font-size:0.8rem;">Delta: {delta:+.2f} ({pct:+.1f}%)</div>')
                     parts.append('</div>')
@@ -4123,7 +4157,7 @@ def _build_tab_severity(
                     parts.append(f'<td>{inter.get("eta_sq_interpretation", "")}</td>')
                     ratio = amp.get("point", ne_dim)
                     color, _, label = _traffic_light(ratio)
-                    parts.append(f'<td style="color:{color};font-weight:bold;">{_fmt(ratio, 2)}x</td>')
+                    parts.append(f'<td style="color:{color};font-weight:bold;">{_fmt_ratio(ratio, 2)}</td>')
                     ci_lo = amp.get("ci_lower", ne_dim)
                     ci_hi = amp.get("ci_upper", ne_dim)
                     parts.append(f'<td>[{_fmt(ci_lo, 2)}, {_fmt(ci_hi, 2)}]</td>')
@@ -4145,7 +4179,7 @@ def _build_tab_severity(
                     ratio = amp.get("point", ne_dim_amp)
                     color, bg, label = _traffic_light(ratio)
                     parts.append(f'<div class="metric-card" style="border-left: 4px solid {color}; background: {bg};">')
-                    parts.append(f'<div class="value" style="color: {color};">{_fmt(ratio, 2)}x</div>')
+                    parts.append(f'<div class="value" style="color: {color};">{_fmt_ratio(ratio, 2)}</div>')
                     parts.append(f'<div class="label">{dim.title()} ({model})</div>')
                     ci_lo = amp.get("ci_lower", ne_dim_amp)
                     ci_hi = amp.get("ci_upper", ne_dim_amp)
@@ -4527,6 +4561,10 @@ def _build_tab_severity(
                     if wt_p_ne:
                         ne_values.append(wt_p_ne)
 
+                    # Add 'x' suffix only for estimable amplification values
+                    uw_amp_display = f"{uw_amp_str}x" if not uw_amp_ne else uw_amp_str
+                    wt_amp_display = f"{wt_amp_str}x" if not wt_amp_ne else wt_amp_str
+
                     # Verdict based on material change
                     if is_estimable(delta):
                         if abs(delta) > 0.5:
@@ -4546,8 +4584,8 @@ def _build_tab_severity(
 
                     parts.append(f'<tr{row_bg}>')
                     parts.append(f'<td>{dim.title()}</td>')
-                    parts.append(f'<td>{uw_amp_str}x</td>')
-                    parts.append(f'<td>{wt_amp_str}x</td>')
+                    parts.append(f'<td>{uw_amp_display}</td>')
+                    parts.append(f'<td>{wt_amp_display}</td>')
                     parts.append(f'<td>{delta_str}</td>')
                     parts.append(f'<td>{uw_p_str}</td>')
                     parts.append(f'<td>{wt_p_str}</td>')
