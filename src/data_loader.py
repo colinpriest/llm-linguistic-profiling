@@ -29,6 +29,47 @@ logger = logging.getLogger(__name__)
 
 _ft_model = None
 FASTTEXT_MODEL_PATH = Path(__file__).parent.parent / "data" / "lid.176.ftz"
+FASTTEXT_SHA256_PATH = FASTTEXT_MODEL_PATH.with_suffix(".ftz.sha256")
+FASTTEXT_SHA256_ENV = "FASTTEXT_LID176_SHA256"
+
+
+def _read_expected_fasttext_hash() -> str | None:
+    """Return expected sha256 hash for the fasttext model, if provided."""
+    env_hash = os.getenv(FASTTEXT_SHA256_ENV, "").strip()
+    if env_hash:
+        return env_hash
+    if FASTTEXT_SHA256_PATH.exists():
+        return FASTTEXT_SHA256_PATH.read_text(encoding="utf-8").strip().split()[0]
+    return None
+
+
+def _sha256sum(path: Path) -> str:
+    """Compute sha256 checksum for a file."""
+    import hashlib
+
+    sha = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            sha.update(chunk)
+    return sha.hexdigest()
+
+
+def _verify_fasttext_model(model_path: Path) -> None:
+    """Verify the fasttext model checksum if expected hash is configured."""
+    expected = _read_expected_fasttext_hash()
+    if not expected:
+        logger.warning(
+            "Fasttext model checksum not configured. "
+            "Set %s or create %s to enable verification.",
+            FASTTEXT_SHA256_ENV,
+            FASTTEXT_SHA256_PATH.name,
+        )
+        return
+    actual = _sha256sum(model_path)
+    if actual != expected:
+        raise RuntimeError(
+            f"Fasttext model checksum mismatch: expected {expected}, got {actual}."
+        )
 
 
 def _get_fasttext_model():
@@ -40,6 +81,8 @@ def _get_fasttext_model():
 
         if not FASTTEXT_MODEL_PATH.exists():
             _download_fasttext_model(FASTTEXT_MODEL_PATH)
+        else:
+            _verify_fasttext_model(FASTTEXT_MODEL_PATH)
         try:
             _ft_model = fasttext.load_model(str(FASTTEXT_MODEL_PATH))
         except Exception as exc:
@@ -61,6 +104,7 @@ def _download_fasttext_model(model_path: Path) -> None:
             with open(tmp_path, "wb") as fh:
                 fh.write(response.read())
         os.replace(tmp_path, model_path)
+        _verify_fasttext_model(model_path)
         logger.info("Model saved to %s", model_path)
     except Exception:
         if tmp_path.exists():
@@ -326,6 +370,15 @@ def _load_step(data_path: str, step: int, suffix: str = "") -> pd.DataFrame:
 def _step_0_load(data_path: str) -> pd.DataFrame:
     """Load raw CSV and drop rows without narrative."""
     logger.info("[Data Clean] Loading raw CSV...")
+    required_cols = set(COLUMN_MAP.keys())
+    header = pd.read_csv(data_path, nrows=0)
+    missing = required_cols - set(header.columns)
+    if missing:
+        raise ValueError(
+            "CSV is missing required columns: "
+            f"{', '.join(sorted(missing))}. "
+            f"Found columns: {', '.join(sorted(header.columns))}"
+        )
     df = pd.read_csv(
         data_path,
         usecols=list(COLUMN_MAP.keys()),
