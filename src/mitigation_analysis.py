@@ -728,7 +728,7 @@ def fit_lightgbm_model(
         cv_results = lgb.cv(
             params,
             train_data,
-            num_boost_round=200,
+            num_boost_round=500,
             nfold=n_cv_folds,
             callbacks=[lgb.early_stopping(stopping_rounds=20)],
             return_cvbooster=False,

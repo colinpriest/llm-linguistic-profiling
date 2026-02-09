@@ -447,3 +447,152 @@ def ipw_amplification_analysis(
         result[model] = model_result
 
     return result
+
+
+# ------------------------------------------------------------------
+# Panel Payload Transformation
+# ------------------------------------------------------------------
+
+def ipw_to_panel_payload(
+    ipw_result: Dict[str, Any],
+    run_id: str,
+    models: List[str],
+) -> Dict[str, Any]:
+    """Transform raw IPW results into the panel schema format for validation.
+
+    Converts the nested IPW analysis structure into a flat rows-based format
+    that conforms to the panel12_ipw_robustness_monetary schema.
+
+    Parameters
+    ----------
+    ipw_result : Dict from ipw_amplification_analysis()
+    run_id : Experiment run identifier
+    models : List of model identifiers
+
+    Returns
+    -------
+    Dict conforming to panel_ipw_robustness.schema.json
+    """
+    from src.estimable import is_estimable
+
+    propensity_diag = ipw_result.get("propensity_diagnostics", {})
+    n_m1 = propensity_diag.get("n_M1", 0)
+    max_weight = propensity_diag.get("weight_range_M1", [0, 0])[1] if propensity_diag.get("weight_range_M1") else 0
+
+    # Determine positivity pass (weights not extreme)
+    # A max weight > 20 is concerning for positivity
+    positivity_pass = max_weight < 20 if max_weight > 0 else False
+
+    rows: List[Dict[str, Any]] = []
+    ne_summary: List[Dict[str, Any]] = []
+    diagnostics: List[Dict[str, Any]] = []
+
+    dimensions = ["age", "geographic", "education", "socioeconomic"]
+
+    for model in models:
+        model_data = ipw_result.get(model, {})
+
+        # Skip if model was skipped
+        if model_data.get("skipped"):
+            reason = model_data.get("reason", "unknown")
+            ne_summary.append({
+                "model": model,
+                "reason_code": "INSUFFICIENT_CELL_N",
+                "message": f"IPW analysis skipped: {reason}",
+            })
+            diagnostics.append({
+                "model": model,
+                "model_obs": 0,
+                "positivity_pass": False,
+                "max_weight": 0.0,
+                "rows_emitted": 0,
+                "ne_rows": 1,
+            })
+            continue
+
+        model_dims = model_data.get("dimensions", {})
+        # n_M1 is the count of complaints with amount present (for diagnostics.model_obs)
+        # n_observations may be larger if there are multiple persona variants per complaint
+        n_obs = n_m1  # Use complaint count for consistency with manifest
+        rows_emitted = 0
+        ne_rows = 0
+
+        for dim in dimensions:
+            dim_data = model_dims.get(dim, {})
+            weighted = dim_data.get("weighted", {})
+
+            # Extract the amplification ratio (R) from weighted results
+            R = weighted.get("R")
+            R_ci = weighted.get("R_ci", {})
+            ci_lower = R_ci.get("ci_lower")
+            ci_upper = R_ci.get("ci_upper")
+
+            # Extract interaction p-value
+            interaction = weighted.get("interaction", {})
+            p_value = interaction.get("p_value")
+
+            # Determine if this row is estimable
+            if is_estimable(R) and is_estimable(ci_lower) and is_estimable(ci_upper):
+                row = {
+                    "model": model,
+                    "dimension": dim,
+                    "status": "ok",
+                    "n_obs": n_obs,
+                    "estimate": float(R) if is_estimable(R) else None,
+                    "ci_low": float(ci_lower) if is_estimable(ci_lower) else None,
+                    "ci_high": float(ci_upper) if is_estimable(ci_upper) else None,
+                    "p_value": float(p_value) if is_estimable(p_value) else None,
+                    "q_value": None,  # BH correction applied elsewhere
+                }
+                rows.append(row)
+                rows_emitted += 1
+            else:
+                # Determine reason code based on the NEValue
+                reason_code = "ESTIMATION_FAILED"
+                if not is_estimable(R):
+                    ne_val = R
+                    if hasattr(ne_val, 'code'):
+                        code_name = ne_val.code.name if hasattr(ne_val.code, 'name') else str(ne_val.code)
+                        if "ZERO" in code_name.upper():
+                            reason_code = "ALL_ZERO_DENOMINATOR"
+                        elif "INSUFFICIENT" in code_name.upper():
+                            reason_code = "INSUFFICIENT_CELL_N"
+
+                row = {
+                    "model": model,
+                    "dimension": dim,
+                    "status": "ne",
+                    "n_obs": n_obs,
+                    "estimate": None,
+                    "ci_low": None,
+                    "ci_high": None,
+                    "p_value": None,
+                    "q_value": None,
+                    "ne_reason_code": reason_code,
+                }
+                rows.append(row)
+                ne_rows += 1
+
+        diagnostics.append({
+            "model": model,
+            "model_obs": n_obs,
+            "positivity_pass": positivity_pass,
+            "max_weight": float(max_weight),
+            "rows_emitted": rows_emitted,
+            "ne_rows": ne_rows,
+        })
+
+    payload = {
+        "panel_id": "panel12_ipw_robustness_monetary",
+        "run_id": run_id,
+        "severity_metric": "monetary_severity",
+        "subset": "amount_present",
+        "models": models,
+        "diagnostics": diagnostics,
+        "rows": rows,
+    }
+
+    if ne_summary:
+        payload["ne_summary"] = ne_summary
+
+    return payload

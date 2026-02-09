@@ -30,6 +30,7 @@ from scipy import stats as sp_stats
 
 from src.schemas import ESTIMATE_DIMS, CAUSAL_DIMS
 from src.statistics import adverse_impact_ratio, fdr_correction
+from src.estimable import NE, NEValue, is_estimable
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ def jeffreys_interval(successes: int, n: int, alpha: float = 0.05) -> Tuple[floa
 
 def annotated_rate(successes: int, n: int, alpha: float = 0.05) -> Dict[str, Any]:
     """Compute a rate with full support annotation (policy A)."""
-    rate = successes / n if n > 0 else float("nan")
+    rate: Any = successes / n if n > 0 else NE.zero_denominator("n=0 for rate")
     wilson_lo, wilson_hi = wilson_interval(successes, n, alpha)
     jeff_lo, jeff_hi = jeffreys_interval(successes, n, alpha)
     return {
@@ -183,11 +184,12 @@ def bayesian_air(
     # Avoid division by zero in samples
     valid = p_ref_samples > 0
     if valid.sum() < 100:
+        ne_insuff = NE.insufficient_n(n=int(valid.sum()), min_required=100, context="Bayesian AIR samples")
         return {
-            "median_air": float("nan"),
-            "ci_lower": float("nan"),
-            "ci_upper": float("nan"),
-            "p_below_threshold": float("nan"),
+            "median_air": ne_insuff,
+            "ci_lower": ne_insuff,
+            "ci_upper": ne_insuff,
+            "p_below_threshold": ne_insuff,
             "stability_g": _stability_flag(n_g),
             "stability_ref": _stability_flag(n_ref),
         }
@@ -326,26 +328,27 @@ def partial_pooling_model(
     grand_mean = float(model.fe_params.get("Intercept", model.fe_params.iloc[0]))
     pooled_rates: Dict[str, Dict[str, Any]] = {}
 
+    ne_missing_raw = NE.missing_data(context="pooled rates raw")
     for group_name, effects in re.items():
         re_val = float(effects.iloc[0]) if hasattr(effects, "iloc") else float(effects)
         pooled_rate = grand_mean + re_val
         raw = raw_rates.loc[group_name] if group_name in raw_rates.index else None
         pooled_rates[str(group_name)] = {
             "pooled_estimate": float(np.clip(pooled_rate, 0, 1)),
-            "raw_rate": float(raw["rate"]) if raw is not None else float("nan"),
+            "raw_rate": float(raw["rate"]) if raw is not None else ne_missing_raw,
             "raw_n": int(raw["n"]) if raw is not None else 0,
-            "shrinkage": float(raw["rate"] - np.clip(pooled_rate, 0, 1)) if raw is not None else float("nan"),
+            "shrinkage": float(raw["rate"] - np.clip(pooled_rate, 0, 1)) if raw is not None else ne_missing_raw,
             "stability": _stability_flag(int(raw["n"])) if raw is not None else "insufficient_support",
         }
 
     result["pooled_rates"] = pooled_rates
     result["grand_mean"] = grand_mean
-    result["random_effect_variance"] = float(model.cov_re.iloc[0, 0]) if hasattr(model.cov_re, "iloc") else float("nan")
+    result["random_effect_variance"] = float(model.cov_re.iloc[0, 0]) if hasattr(model.cov_re, "iloc") else NE.missing_data(context="RE variance")
     result["converged"] = True
 
     # Shrinkage summary: how much did small cells move?
     shrinkage_vals = [v["shrinkage"] for v in pooled_rates.values()
-                      if np.isfinite(v["shrinkage"])]
+                      if is_estimable(v["shrinkage"])]
     if shrinkage_vals:
         result["shrinkage_summary"] = {
             "mean_abs_shrinkage": float(np.mean(np.abs(shrinkage_vals))),
@@ -709,15 +712,16 @@ def run_sparsity_analysis(
                 # Compare pre vs post mitigation Bayesian AIR
                 pre_air = model_results.get("bayesian_air_persona", {})
                 mitigation_comparison: Dict[str, Any] = {}
+                ne_miti = NE.missing_data(context="mitigation comparison")
                 for persona in pre_air:
                     pre = pre_air[persona].get("bayesian_air", {})
                     post = neut_air.get(persona, {}).get("bayesian_air", {})
                     if pre and post:
                         mitigation_comparison[persona] = {
-                            "pre_median_air": pre.get("median_air", float("nan")),
-                            "post_median_air": post.get("median_air", float("nan")),
-                            "pre_p_below_08": pre.get("p_below_threshold", float("nan")),
-                            "post_p_below_08": post.get("p_below_threshold", float("nan")),
+                            "pre_median_air": pre.get("median_air", ne_miti),
+                            "post_median_air": post.get("median_air", ne_miti),
+                            "pre_p_below_08": pre.get("p_below_threshold", ne_miti),
+                            "post_p_below_08": post.get("p_below_threshold", ne_miti),
                             "pre_stability": pre.get("stability_g", "unknown"),
                             "post_stability": post.get("stability_g", "unknown"),
                         }

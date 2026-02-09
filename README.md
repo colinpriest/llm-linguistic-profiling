@@ -186,6 +186,16 @@ The experiment produces:
 │   ├── neutralize/
 │   └── dollar_extract/
 │
+├── contracts/                          # Validation contracts and schemas
+│   ├── reason_code_map.json            # Canonical NE reason codes
+│   ├── publication_manifest.json       # Expected counts for validation
+│   ├── validate_publication_clean.py   # Single-command CI gate
+│   ├── schemas/                        # JSON Schema definitions
+│   │   ├── panel_ipw_robustness.schema.json
+│   │   └── panel_process_amplification.schema.json
+│   └── validators/                     # Validation utilities
+│       └── render_contract.py
+│
 └── output/                             # Reports and artifacts (auto-created)
 ```
 
@@ -294,6 +304,94 @@ The cache is thread-safe (atomic writes via temp files + `os.replace`) and track
 Data pipeline steps are separately cached as parquet files in `data/.pipeline/`, invalidated on source CSV modification.
 
 Clear the cache with `--clear-cache` or delete the `./cache/` directory.
+
+## Publication Validation Gate
+
+A single-command CI gate validates publication artifacts before release:
+
+```bash
+python contracts/validate_publication_clean.py \
+  --payload-glob "artifacts/runs/*/analysis/panels/*.json" \
+  --html-glob "output/*.html" \
+  --tex-glob "artifacts/runs/*/analysis/tables/**/*.tex" \
+  --reason-map "contracts/reason_code_map.json" \
+  --schema-dir "contracts/schemas" \
+  --manifest "contracts/publication_manifest.json" \
+  --strict
+```
+
+To validate only the latest run (auto-detects most recent in `artifacts/runs/`):
+
+```bash
+python contracts/validate_publication_clean.py \
+  --latest \
+  --reason-map "contracts/reason_code_map.json" \
+  --schema-dir "contracts/schemas" \
+  --manifest "contracts/publication_manifest.json"
+```
+
+To validate a specific run by timestamp:
+
+```bash
+python contracts/validate_publication_clean.py \
+  --payload-glob "artifacts/runs/20260209_175353*/analysis/panels/*.json" \
+  --reason-map "contracts/reason_code_map.json" \
+  --schema-dir "contracts/schemas" \
+  --manifest "contracts/publication_manifest.json"
+```
+
+### Backfilling Panel Payloads
+
+For runs created before panel payload generation was added, use the backfill utility:
+
+```bash
+# Backfill all existing runs
+python contracts/backfill_panels.py --all
+
+# Backfill a specific run
+python contracts/backfill_panels.py --run-dir "artifacts/runs/20260209_175353__seed42__n20000__modelsgpt4omini-gpt5mini"
+```
+
+### Validation Checks
+
+| Check | Description |
+|-------|-------------|
+| **JSON Contract Compliance** | Strict parsing rejects NaN/Infinity; validates panel_id, rows structure |
+| **Semantic Row Rules** | `status=ok` requires numeric estimates; `status=ne/suppressed` requires reason codes |
+| **Forbidden Token Detection** | Scans JSON/HTML/LaTeX for `nan`, `inf`, `nanx`, `none` literals |
+| **Empty Table Detection** | Flags HTML tables with no body rows, LaTeX tabulars with no data rows |
+| **Reason Code Coverage** | Validates all `ne_reason_code` values against `contracts/reason_code_map.json` |
+| **JSON Schema Validation** | Optional validation against `contracts/schemas/*.schema.json` (requires `jsonschema` package) |
+| **Panel-Specific Rules** | IPW panel completeness (all models have rows or NE summary), process fairness ratio consistency |
+| **Manifest Consistency** | Optional count verification against `contracts/publication_manifest.json` |
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | PASS — no errors (warnings allowed unless `--strict`) |
+| 1 | FAIL — one or more blocking errors, or warnings with `--strict` |
+
+### CLI Options
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--payload-glob` | No | Glob pattern(s) for panel payload JSON files |
+| `--html-glob` | No | Glob pattern(s) for rendered HTML files |
+| `--tex-glob` | No | Glob pattern(s) for rendered LaTeX files |
+| `--reason-map` | Yes | Path to reason code map JSON |
+| `--schema-dir` | No | Directory containing JSON schemas |
+| `--manifest` | No | Path to publication manifest for count checks |
+| `--strict` | No | Treat warnings as errors |
+| `--latest` | No | Auto-select the most recent run in `artifacts/runs/` |
+
+### Supporting Files
+
+| File | Purpose |
+|------|---------|
+| `contracts/reason_code_map.json` | Canonical reason codes with human-readable descriptions |
+| `contracts/schemas/*.schema.json` | JSON Schema definitions for panel payloads |
+| `contracts/publication_manifest.json` | Expected model observation counts for consistency checks |
 
 ## Data Source
 

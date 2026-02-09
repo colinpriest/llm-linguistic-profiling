@@ -33,6 +33,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 import numpy as np
 import pandas as pd
 
+from src.estimable import NEValue
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -214,7 +216,7 @@ class AnalysisCache:
 
         if path.exists():
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
+                data = _json_loads_with_ne(path.read_text(encoding="utf-8"))
                 # Verify version matches
                 stored_version = data.get("analysis_version", "")
                 current_version = _ANALYSIS_VERSIONS.get(analysis_type, "1.0")
@@ -346,7 +348,16 @@ class AnalysisCache:
 
 
 def _json_default(obj: Any) -> Any:
-    """JSON serializer for numpy types."""
+    """JSON serializer for numpy types and NEValue."""
+    if isinstance(obj, NEValue):
+        # Serialize NEValue as a dict with special marker
+        return {
+            "__ne__": True,
+            "code": obj.code.value,
+            "detail": obj.detail,
+            "context": obj.context,
+            "description": obj.description,
+        }
     if isinstance(obj, (np.integer, np.floating)):
         return obj.item()
     if isinstance(obj, np.ndarray):
@@ -356,6 +367,28 @@ def _json_default(obj: Any) -> Any:
     if pd.isna(obj):
         return None
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _json_object_hook(obj: Dict[str, Any]) -> Any:
+    """JSON deserializer hook to reconstruct NEValue objects."""
+    if obj.get("__ne__") is True:
+        from src.estimable import NECode, NEValue as NEV
+        code_str = obj.get("code", "missing_data")
+        try:
+            code = NECode(code_str)
+        except ValueError:
+            code = NECode.MISSING_DATA
+        return NEV(
+            code=code,
+            detail=obj.get("detail"),
+            context=obj.get("context"),
+        )
+    return obj
+
+
+def _json_loads_with_ne(text: str) -> Any:
+    """Load JSON with NEValue reconstruction."""
+    return json.loads(text, object_hook=_json_object_hook)
 
 
 # Global instance (created lazily)
@@ -472,7 +505,7 @@ class OperationCache:
         path = self._path(operation, key)
         if path.exists():
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
+                data = _json_loads_with_ne(path.read_text(encoding="utf-8"))
                 self._hits += 1
                 return data.get("result")
             except (json.JSONDecodeError, KeyError):

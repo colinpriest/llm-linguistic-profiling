@@ -232,6 +232,38 @@ def _fmtf(val: Any, spec: str = ".4f", collect: bool = True) -> str:
         return str(val)
 
 
+def _sv(val: Any, default: float = 0) -> float:
+    """Safe sort value - convert to finite float for data-sort-value attributes.
+
+    NaN/inf values would render as 'nan'/'inf' strings in HTML, which fails
+    the publication validation gate. This function ensures sort values are
+    always finite floats.
+
+    Parameters
+    ----------
+    val : Any
+        Value to convert.
+    default : float
+        Value to use if input is None, NaN, inf, or not convertible.
+
+    Returns
+    -------
+    float
+        Finite float value safe for use in HTML attributes.
+    """
+    if val is None:
+        return default
+    if isinstance(val, NEValue):
+        return default
+    try:
+        fval = float(val)
+        if not np.isfinite(fval):
+            return default
+        return fval
+    except (TypeError, ValueError):
+        return default
+
+
 def _flag_color(flag: str) -> str:
     return FLAG_COLORS.get(flag, "#95a5a6")
 
@@ -1417,9 +1449,9 @@ def _build_tab_executive_summary(
             flag = row["flag"]
             parts.append(f'<tr class="flag-row-{flag}">')
             parts.append(f'<td>{row["dimension"]}</td>')
-            parts.append(f'<td data-sort-value="{row["p_value"] if row["p_value"] is not None else 999}">{_fmt(row["p_value"])}</td>')
-            parts.append(f'<td data-sort-value="{row["cramers_v"] if row["cramers_v"] is not None else 0}">{_fmt(row["cramers_v"])}</td>')
-            parts.append(f'<td data-sort-value="{row["min_air"]}">{_fmt(row["min_air"])}</td>')
+            parts.append(f'<td data-sort-value="{_sv(row["p_value"], 999)}">{_fmt(row["p_value"])}</td>')
+            parts.append(f'<td data-sort-value="{_sv(row["cramers_v"], 0)}">{_fmt(row["cramers_v"])}</td>')
+            parts.append(f'<td data-sort-value="{_sv(row["min_air"])}">{_fmt(row["min_air"])}</td>')
             parts.append(f'<td><span class="badge badge-{flag}">{flag}</span></td>')
             parts.append("</tr>")
 
@@ -1550,9 +1582,9 @@ def _build_tab_disparate_impact_association(
         for dim in ESTIMATE_DIMS:
             d = corr.get(f"{dim}_chi2", {})
             parts.append(f'<tr><td>{dim.capitalize()}</td>')
-            parts.append(f'<td data-sort-value="{d.get("chi2", 0)}">{_fmt(d.get("chi2"))}</td>')
-            parts.append(f'<td data-sort-value="{d.get("p_value", 1)}">{_fmt(d.get("p_value"))}</td>')
-            parts.append(f'<td data-sort-value="{d.get("cramers_v", 0)}">{_fmt(d.get("cramers_v"))}</td></tr>')
+            parts.append(f'<td data-sort-value="{_sv(d.get("chi2"), 0)}">{_fmt(d.get("chi2"))}</td>')
+            parts.append(f'<td data-sort-value="{_sv(d.get("p_value"), 1)}">{_fmt(d.get("p_value"))}</td>')
+            parts.append(f'<td data-sort-value="{_sv(d.get("cramers_v"), 0)}">{_fmt(d.get("cramers_v"))}</td></tr>')
         parts.append("</tbody></table>")
 
         # Logistic regression
@@ -1575,9 +1607,9 @@ def _build_tab_disparate_impact_association(
                     sig_class = ' style="font-weight:bold;"' if p is not None and p < 0.05 else ""
                     parts.append(f'<tr{sig_class}>')
                     parts.append(f'<td>{html.escape(str(k))}</td>')
-                    parts.append(f'<td data-sort-value="{coeffs[k]}">{_fmt(coeffs[k])}</td>')
-                    parts.append(f'<td data-sort-value="{p}">{_fmt(p)}</td>')
-                    parts.append(f'<td data-sort-value="{ors.get(k, 0)}">{_fmt(ors.get(k))}</td>')
+                    parts.append(f'<td data-sort-value="{_sv(coeffs[k])}">{_fmt(coeffs[k])}</td>')
+                    parts.append(f'<td data-sort-value="{_sv(p)}">{_fmt(p)}</td>')
+                    parts.append(f'<td data-sort-value="{_sv(ors.get(k), 0)}">{_fmt(ors.get(k))}</td>')
                     parts.append("</tr>")
                 parts.append("</tbody></table>")
 
@@ -1642,8 +1674,8 @@ def _build_tab_disparate_impact_association(
                 row_class = ' class="flag-row-BOTH"' if is_mat else ""
                 parts.append(f"<tr{row_class}>")
                 parts.append(f"<td>{html.escape(persona)}</td>")
-                parts.append(f'<td data-sort-value="{data.get("rate", 0)}">{_fmt(data.get("rate"))}</td>')
-                parts.append(f'<td data-sort-value="{data.get("air", 1)}">{_fmt(data.get("air"))}</td>')
+                parts.append(f'<td data-sort-value="{_sv(data.get("rate"), 0)}">{_fmt(data.get("rate"))}</td>')
+                parts.append(f'<td data-sort-value="{_sv(data.get("air"), 1)}">{_fmt(data.get("air"))}</td>')
                 parts.append(f'<td data-sort-value="{1 if is_mat else 0}">{"Yes" if is_mat else "No"}</td>')
                 parts.append("</tr>")
             parts.append("</tbody></table></div>")
@@ -1721,12 +1753,12 @@ def _build_tab_disparate_impact_causal(
             for persona, data in sorted(effects.items(), key=lambda x: x[1].get("diff_from_mean", 0)):
                 parts.append(f"<tr>")
                 parts.append(f"<td>{html.escape(persona)}</td>")
-                parts.append(f'<td data-sort-value="{data.get("rate", 0)}">{_fmt(data.get("rate"))}</td>')
-                parts.append(f'<td data-sort-value="{data.get("ci_lower", 0)}">{_fmt(data.get("ci_lower"))}</td>')
-                parts.append(f'<td data-sort-value="{data.get("ci_upper", 0)}">{_fmt(data.get("ci_upper"))}</td>')
+                parts.append(f'<td data-sort-value="{_sv(data.get("rate"), 0)}">{_fmt(data.get("rate"))}</td>')
+                parts.append(f'<td data-sort-value="{_sv(data.get("ci_lower"), 0)}">{_fmt(data.get("ci_lower"))}</td>')
+                parts.append(f'<td data-sort-value="{_sv(data.get("ci_upper"), 0)}">{_fmt(data.get("ci_upper"))}</td>')
                 diff = data.get("diff_from_mean", 0)
                 color = "#e74c3c" if diff < -0.05 else ("#2ecc71" if diff > 0.05 else "#2c3e50")
-                parts.append(f'<td data-sort-value="{diff}" style="color:{color}; font-weight:bold;">{_fmt(diff)}</td>')
+                parts.append(f'<td data-sort-value="{_sv(diff)}" style="color:{color}; font-weight:bold;">{_fmt(diff)}</td>')
                 parts.append("</tr>")
             parts.append("</tbody></table></div>")
 
@@ -1815,7 +1847,7 @@ def _build_tab_process_discrimination(
                 dim_rates = info_rates.get(dim, {})
                 for cat, rate in sorted(dim_rates.items()):
                     parts.append(f'<tr><td>{dim.capitalize()}</td><td>{html.escape(cat)}</td>')
-                    parts.append(f'<td data-sort-value="{rate}">{_fmt(rate)}</td></tr>')
+                    parts.append(f'<td data-sort-value="{_sv(rate)}">{_fmt(rate)}</td></tr>')
             parts.append("</tbody></table>")
 
         parts.append("</div></div>")
@@ -1857,7 +1889,7 @@ def _build_tab_process_discrimination(
             parts.append('<th>Mean Length <span class="sort-arrow">&#8597;</span></th>')
             parts.append("</tr></thead><tbody>")
             for persona, length in sorted_lengths:
-                parts.append(f'<tr><td>{html.escape(persona)}</td><td data-sort-value="{length}">{_fmt(length, 1)}</td></tr>')
+                parts.append(f'<tr><td>{html.escape(persona)}</td><td data-sort-value="{_sv(length)}">{_fmt(length, 1)}</td></tr>')
             parts.append("</tbody></table>")
 
         # ANOVA results
@@ -1934,7 +1966,7 @@ def _build_tab_text_features(
             parts.append(f"<tr><td><strong>{stat}</strong></td>")
             for col in desc.columns:
                 val = desc.loc[stat, col]
-                parts.append(f'<td data-sort-value="{val}">{_fmt(val, 3)}</td>')
+                parts.append(f'<td data-sort-value="{_sv(val)}">{_fmt(val, 3)}</td>')
             parts.append("</tr>")
         parts.append("</tbody></table></div>")
 
@@ -2775,8 +2807,8 @@ def _build_tab_detailed_results(
                 parts.append(f"<td>{html.escape(geo)}</td>")
                 parts.append(f"<td>{html.escape(edu)}</td>")
                 parts.append(f"<td>{html.escape(ses)}</td>")
-                parts.append(f'<td data-sort-value="{data.get("rate", 0)}">{_fmt(data.get("rate"))}</td>')
-                parts.append(f'<td data-sort-value="{data.get("air", 1)}">{_fmt(data.get("air"))}</td>')
+                parts.append(f'<td data-sort-value="{_sv(data.get("rate"), 0)}">{_fmt(data.get("rate"))}</td>')
+                parts.append(f'<td data-sort-value="{_sv(data.get("air"), 1)}">{_fmt(data.get("air"))}</td>')
                 parts.append(f'<td>{"Yes" if is_mat else "No"}</td>')
                 parts.append("</tr>")
 
@@ -2802,8 +2834,8 @@ def _build_tab_detailed_results(
                 row_class = f' class="flag-row-{"BOTH" if is_mat else "NONE"}"'
                 parts.append(f"<tr{row_class}>")
                 parts.append(f"<td>{html.escape(persona)}</td>")
-                parts.append(f'<td data-sort-value="{data.get("rate", 0)}">{_fmt(data.get("rate"))}</td>')
-                parts.append(f'<td data-sort-value="{data.get("air", 1)}">{_fmt(data.get("air"))}</td>')
+                parts.append(f'<td data-sort-value="{_sv(data.get("rate"), 0)}">{_fmt(data.get("rate"))}</td>')
+                parts.append(f'<td data-sort-value="{_sv(data.get("air"), 1)}">{_fmt(data.get("air"))}</td>')
                 parts.append(f'<td>{"Yes" if is_mat else "No"}</td>')
                 parts.append("</tr>")
 
@@ -2829,10 +2861,10 @@ def _build_tab_detailed_results(
                 color = "#e74c3c" if diff < -0.05 else ("#2ecc71" if diff > 0.05 else "#2c3e50")
                 parts.append(f"<tr>")
                 parts.append(f"<td>{html.escape(persona)}</td>")
-                parts.append(f'<td data-sort-value="{data.get("rate", 0)}">{_fmt(data.get("rate"))}</td>')
-                parts.append(f'<td data-sort-value="{data.get("ci_lower", 0)}">{_fmt(data.get("ci_lower"))}</td>')
-                parts.append(f'<td data-sort-value="{data.get("ci_upper", 0)}">{_fmt(data.get("ci_upper"))}</td>')
-                parts.append(f'<td data-sort-value="{diff}" style="color:{color};font-weight:bold;">{_fmt(diff)}</td>')
+                parts.append(f'<td data-sort-value="{_sv(data.get("rate"), 0)}">{_fmt(data.get("rate"))}</td>')
+                parts.append(f'<td data-sort-value="{_sv(data.get("ci_lower"), 0)}">{_fmt(data.get("ci_lower"))}</td>')
+                parts.append(f'<td data-sort-value="{_sv(data.get("ci_upper"), 0)}">{_fmt(data.get("ci_upper"))}</td>')
+                parts.append(f'<td data-sort-value="{_sv(diff)}" style="color:{color};font-weight:bold;">{_fmt(diff)}</td>')
                 parts.append("</tr>")
             parts.append("</tbody></table></div></div></div>")
 
@@ -2855,9 +2887,9 @@ def _build_tab_detailed_results(
                 color = "#2ecc71" if reduction > 0.5 else ("#f39c12" if reduction > 0 else "#e74c3c")
                 parts.append(f"<tr>")
                 parts.append(f"<td>{html.escape(persona)}</td>")
-                parts.append(f'<td data-sort-value="{data.get("orig_air", 1)}">{_fmt(data.get("orig_air"))}</td>')
-                parts.append(f'<td data-sort-value="{data.get("neut_air", 1)}">{_fmt(data.get("neut_air"))}</td>')
-                parts.append(f'<td data-sort-value="{reduction}" style="color:{color};font-weight:bold;">{_pct(reduction)}</td>')
+                parts.append(f'<td data-sort-value="{_sv(data.get("orig_air"), 1)}">{_fmt(data.get("orig_air"))}</td>')
+                parts.append(f'<td data-sort-value="{_sv(data.get("neut_air"), 1)}">{_fmt(data.get("neut_air"))}</td>')
+                parts.append(f'<td data-sort-value="{_sv(reduction)}" style="color:{color};font-weight:bold;">{_pct(reduction)}</td>')
                 parts.append("</tr>")
             parts.append("</tbody></table></div></div></div>")
 
@@ -3108,7 +3140,7 @@ def _chart_process_severity(sev: Dict[str, Any], models: List[str]) -> Optional[
 
 def _traffic_light(ratio: float) -> Tuple[str, str, str]:
     """Return (color_hex, bg_hex, label) for amplification ratio."""
-    if not np.isfinite(ratio):
+    if not is_estimable(ratio):
         return "#95a5a6", "#f0f0f0", "N/A"
     if ratio < 1.5:
         return "#2ecc71", "#eafaf1", "Minimal"
@@ -5332,11 +5364,11 @@ def _render_coefficient_table(
 
         parts.append("<tr>")
         parts.append(f"<td>{html.escape(str(name))}{sig_marker}</td>")
-        parts.append(f'<td data-sort-value="{coeffs[name]}">{_fmt(coeffs[name])}</td>')
-        parts.append(f'<td data-sort-value="{se.get(name, 0)}">{_fmt(se.get(name))}</td>')
+        parts.append(f'<td data-sort-value="{_sv(coeffs[name])}">{_fmt(coeffs[name])}</td>')
+        parts.append(f'<td data-sort-value="{_sv(se.get(name), 0)}">{_fmt(se.get(name))}</td>')
         if show_or:
-            parts.append(f'<td data-sort-value="{ors.get(name, 0)}">{_fmt(ors.get(name))}</td>')
-        parts.append(f'<td data-sort-value="{p}" style="color:{color}; font-weight:bold;">{_fmt(p)}</td>')
+            parts.append(f'<td data-sort-value="{_sv(ors.get(name), 0)}">{_fmt(ors.get(name))}</td>')
+        parts.append(f'<td data-sort-value="{_sv(p)}" style="color:{color}; font-weight:bold;">{_fmt(p)}</td>')
         parts.append(f"<td>{ci_str}</td>")
         parts.append("</tr>")
 
@@ -5788,7 +5820,7 @@ def _build_tab_mitigation_effectiveness(
         parts.append("<ul>")
         parts.append("<li>No LightGBM model was successfully trained (required for SHAP values)</li>")
         parts.append("<li>The causal sample was too small to generate meaningful SHAP explanations</li>")
-        parts.append("<li>Feature extraction encountered too much missing data (&gt;50% NaN)</li>")
+        parts.append("<li>Feature extraction encountered too much missing data (&gt;50% missing values)</li>")
         parts.append("<li>SHAP values array length didn't match feature DataFrame length</li>")
         parts.append("</ul>")
 

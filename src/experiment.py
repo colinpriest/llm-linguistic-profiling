@@ -348,8 +348,9 @@ class Experiment:
                     len(result["acceptance_missing"]),
                 )
         except Exception as e:
-            logger.warning("Paper bundle generation failed: %s", e)
+            logger.error("Paper bundle generation failed: %s", e)
             self.analysis_results["paper_bundle"] = {"error": str(e)}
+            raise
 
     # ------------------------------------------------------------------
     # Batch result validation

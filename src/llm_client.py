@@ -156,6 +156,9 @@ class LLMClient:
         MAX_ATTEMPTS = max_attempts if max_attempts is not None else self.config.max_retries
         effective_timeout = timeout_override or self.config.timeout
 
+        # Track truncation failures for retry prompt modification (escalating hints)
+        truncation_failure_count = 0
+
         for attempt in range(1, MAX_ATTEMPTS + 1):
             t0 = time.perf_counter()
             try:
@@ -171,6 +174,26 @@ class LLMClient:
                     kwargs["max_tokens"] = self.config.max_tokens
                     kwargs["temperature"] = self.config.temperature
 
+                # Build messages, potentially with conciseness hint on retry
+                prompt_user = request.prompt_user
+                if truncation_failure_count > 0 and request.task == "neutralize":
+                    # Escalating conciseness hints for neutralization retries
+                    if truncation_failure_count == 1:
+                        concise_hint = (
+                            "\n\nIMPORTANT: Keep your response concise. "
+                            "The neutralized text should be approximately the same length as "
+                            "the original. Focus on the key content and omit minor markers_removed items."
+                        )
+                    else:
+                        # More aggressive on final attempt
+                        concise_hint = (
+                            "\n\nCRITICAL: Your previous response was too long. "
+                            "The neutralized text MUST be SHORTER than the original. "
+                            "Summarize any legal citations or statute references rather than quoting verbatim. "
+                            "Use an empty array [] for markers_removed to save space."
+                        )
+                    prompt_user = request.prompt_user + concise_hint
+
                 # instructor handles JSON extraction + Pydantic validation
                 validated_obj = self._client.chat.completions.create(
                     model=request.model,
@@ -179,7 +202,7 @@ class LLMClient:
                     timeout=effective_timeout,
                     messages=[
                         {"role": "system", "content": request.prompt_system},
-                        {"role": "user", "content": request.prompt_user},
+                        {"role": "user", "content": prompt_user},
                     ],
                     **kwargs,
                 )
@@ -267,21 +290,25 @@ class LLMClient:
                     # Allow retries for incomplete responses (may be transient).
                     # Only fail definitively after all attempts exhausted.
                     if attempt < MAX_ATTEMPTS:
+                        # Log full error on retry to help diagnose persistent failures
+                        full_err = str(e)[:500]
                         logger.debug(
-                            "Response truncated/incomplete for %s (%s/%s), attempt %d. Retrying...",
-                            request.case_id, request.task, request.model, attempt,
+                            "Response truncated/incomplete for %s (%s/%s), attempt %d. Error: %s. Retrying with conciseness hint...",
+                            request.case_id, request.task, request.model, attempt, full_err,
                         )
+                        truncation_failure_count += 1  # Escalate conciseness hint on retry
                         time.sleep(self.config.retry_delay * (2 ** (attempt - 1)))
                         continue
                     # All retries exhausted — record the failure with clear messaging.
                     prompt_chars = len(request.prompt_system) + len(request.prompt_user)
                     narrative_chars = len(request.prompt_user)
-                    err_first_line = str(e).split("\n", 1)[0][:200]
+                    # Capture more error context (not just first line)
+                    err_full = str(e)[:500]
                     # Store warning for deferred logging (avoid breaking tqdm)
                     self._deferred_warnings.append(
                         f"Response truncated for {request.case_id} ({request.model}/{request.task}) "
                         f"after {MAX_ATTEMPTS} attempts: narrative={narrative_chars} chars, "
-                        f"API error: {err_first_line}"
+                        f"API error: {err_full}"
                     )
                     self._record_failure(request.task)
                     return LLMResponse(
@@ -293,7 +320,7 @@ class LLMClient:
                         error_message=(
                             f"Response truncated/incomplete after {MAX_ATTEMPTS} attempts: "
                             f"narrative={narrative_chars} chars. "
-                            f"API error: {err_first_line}"
+                            f"API error: {err_full}"
                         ),
                         latency_ms=latency_ms,
                         timestamp=datetime.now(),

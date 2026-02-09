@@ -107,17 +107,30 @@ def _extract_pdp_values(pd_result) -> Tuple[Optional[np.ndarray], Optional[np.nd
 
     Handles both old-style (namedtuple/list) and new-style (Bunch) returns.
     """
-    # Try Bunch-style access (sklearn >= 0.24)
-    if hasattr(pd_result, "values") and hasattr(pd_result, "average"):
-        return pd_result.values[0], pd_result.average[0]
-
-    # Try dict-style access
+    # Try dict-style access first (Bunch is a dict subclass)
+    # Check for 'grid_values' first (sklearn >= 1.0 naming)
     if isinstance(pd_result, dict):
-        if "values" in pd_result and "average" in pd_result:
-            return pd_result["values"][0], pd_result["average"][0]
-        # Some versions use 'grid_values'
         if "grid_values" in pd_result and "average" in pd_result:
             return pd_result["grid_values"][0], pd_result["average"][0]
+        # Older sklearn versions use 'values' as a key (not the dict method)
+        if "values" in pd_result and "average" in pd_result:
+            return pd_result["values"][0], pd_result["average"][0]
+
+    # Try Bunch-style attribute access (sklearn >= 0.24)
+    # Check grid_values first (new name), then values (old name)
+    # Must verify it's not the dict.values method by checking if it's callable
+    if hasattr(pd_result, "grid_values") and hasattr(pd_result, "average"):
+        grid_vals = getattr(pd_result, "grid_values")
+        avg = getattr(pd_result, "average")
+        if not callable(grid_vals) and not callable(avg):
+            return grid_vals[0], avg[0]
+
+    if hasattr(pd_result, "values") and hasattr(pd_result, "average"):
+        vals = getattr(pd_result, "values")
+        avg = getattr(pd_result, "average")
+        # Only use if not callable (avoid dict.values() method)
+        if not callable(vals) and not callable(avg):
+            return vals[0], avg[0]
 
     # Old-style tuple return (sklearn < 0.24): (average, values)
     if isinstance(pd_result, tuple) and len(pd_result) >= 2:

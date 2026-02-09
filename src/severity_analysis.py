@@ -14,7 +14,8 @@ from __future__ import annotations
 import logging
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -25,6 +26,7 @@ from src.statistics import (
     bootstrap_ci, chi_squared_test, fdr_correction, one_way_anova,
     interpret_cohens_d, interpret_eta_sq,
 )
+from src.estimable import NE, NEValue, is_estimable
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,194 @@ SEVERITY_METRICS = ["monetary_severity", "issue_severity"]
 SEVERITY_ORDINAL: Dict[str, int] = {"low": 1, "medium": 2, "high": 3}
 
 _MIN_CELL_SIZE = 30  # flag cells with fewer observations
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight Diagnostics for ANOVA
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ANOVAPreflightResult:
+    """Result of ANOVA pre-flight checks."""
+    ok: bool
+    error: Optional[str] = None
+    diagnosis: Optional[str] = None
+    warnings: List[str] = field(default_factory=list)
+    n_obs: int = 0
+    n_factors: int = 0
+    cell_counts: Optional[Dict[str, int]] = None
+
+
+def anova_preflight(
+    df: pd.DataFrame,
+    outcome_col: str,
+    factor_cols: List[str],
+    min_n: int = 30,
+    min_cell_n: int = 2,
+    context: str = "ANOVA",
+) -> ANOVAPreflightResult:
+    """Run pre-flight diagnostics before ANOVA.
+
+    Checks performed:
+    1. Required columns exist
+    2. Minimum sample size
+    3. Factor levels (at least 2 per factor)
+    4. Outcome variance (not constant)
+    5. NaN/Inf values in outcome
+    6. Outcome dtype is numeric or can be coerced
+    7. Cell counts (minimum observations per cell for interactions)
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input data.
+    outcome_col : str
+        Name of the outcome/response variable.
+    factor_cols : List[str]
+        Names of factor (categorical) columns.
+    min_n : int
+        Minimum total observations required.
+    min_cell_n : int
+        Minimum observations per cell for interaction terms.
+    context : str
+        Label for error messages.
+
+    Returns
+    -------
+    ANOVAPreflightResult
+        Dataclass with ok=True if all checks pass, else error details.
+    """
+    warnings_list: List[str] = []
+
+    # 1. Check required columns exist
+    missing_cols = []
+    if outcome_col not in df.columns:
+        missing_cols.append(outcome_col)
+    for fc in factor_cols:
+        if fc not in df.columns:
+            missing_cols.append(fc)
+    if missing_cols:
+        return ANOVAPreflightResult(
+            ok=False,
+            error=f"Missing columns: {missing_cols}",
+            diagnosis="missing_columns",
+        )
+
+    # 2. Check minimum sample size
+    n_obs = len(df)
+    if n_obs < min_n:
+        return ANOVAPreflightResult(
+            ok=False,
+            error=f"Insufficient observations: {n_obs} < {min_n}",
+            diagnosis="insufficient_n",
+            n_obs=n_obs,
+        )
+
+    # 3. Check outcome dtype and coercibility
+    outcome = df[outcome_col]
+    if outcome.dtype == object:
+        try:
+            outcome = pd.to_numeric(outcome, errors="raise")
+        except (ValueError, TypeError) as e:
+            return ANOVAPreflightResult(
+                ok=False,
+                error=f"Outcome '{outcome_col}' cannot be coerced to numeric: {e}",
+                diagnosis="outcome_not_numeric",
+                n_obs=n_obs,
+            )
+    elif not np.issubdtype(outcome.dtype, np.number):
+        return ANOVAPreflightResult(
+            ok=False,
+            error=f"Outcome '{outcome_col}' has non-numeric dtype: {outcome.dtype}",
+            diagnosis="outcome_not_numeric",
+            n_obs=n_obs,
+        )
+
+    # 4. Check for NaN/Inf in outcome
+    outcome_arr = outcome.to_numpy(dtype=float, na_value=np.nan)
+    n_nan = np.isnan(outcome_arr).sum()
+    n_inf = np.isinf(outcome_arr).sum()
+    if n_nan > 0:
+        warnings_list.append(f"Outcome has {n_nan} NaN values")
+    if n_inf > 0:
+        return ANOVAPreflightResult(
+            ok=False,
+            error=f"Outcome '{outcome_col}' has {n_inf} Inf values",
+            diagnosis="outcome_has_inf",
+            n_obs=n_obs,
+        )
+
+    # Filter to valid outcome rows for remaining checks
+    valid_mask = np.isfinite(outcome_arr)
+    n_valid = valid_mask.sum()
+    if n_valid < min_n:
+        return ANOVAPreflightResult(
+            ok=False,
+            error=f"Insufficient valid observations after removing NaN: {n_valid} < {min_n}",
+            diagnosis="insufficient_valid_n",
+            n_obs=n_valid,
+        )
+
+    # 5. Check outcome variance
+    valid_outcome = outcome_arr[valid_mask]
+    if np.unique(valid_outcome).size < 2:
+        return ANOVAPreflightResult(
+            ok=False,
+            error=f"Outcome '{outcome_col}' is constant (value={valid_outcome[0]:.4g})",
+            diagnosis="no_variance_y",
+            n_obs=n_valid,
+        )
+
+    # 6. Check factor levels
+    for fc in factor_cols:
+        n_levels = df.loc[valid_mask, fc].nunique()
+        if n_levels < 2:
+            return ANOVAPreflightResult(
+                ok=False,
+                error=f"Factor '{fc}' has fewer than 2 levels ({n_levels})",
+                diagnosis="insufficient_factor_levels",
+                n_obs=n_valid,
+                n_factors=len(factor_cols),
+            )
+
+    # 7. Check cell counts for interactions (only if >1 factor)
+    cell_counts: Dict[str, int] = {}
+    if len(factor_cols) > 1:
+        df_valid = df.loc[valid_mask]
+        cell_sizes = df_valid.groupby(factor_cols).size()
+        min_cell = cell_sizes.min() if len(cell_sizes) > 0 else 0
+        empty_cells = (cell_sizes == 0).sum() if len(cell_sizes) > 0 else 0
+        small_cells = (cell_sizes < min_cell_n).sum() if len(cell_sizes) > 0 else 0
+
+        cell_counts = {
+            "min_cell_size": int(min_cell),
+            "n_empty_cells": int(empty_cells),
+            "n_small_cells": int(small_cells),
+            "total_cells": len(cell_sizes),
+        }
+
+        if min_cell < min_cell_n:
+            warnings_list.append(
+                f"Some cells have < {min_cell_n} observations (min={min_cell})"
+            )
+        if empty_cells > 0:
+            # Empty cells cause rank deficiency
+            return ANOVAPreflightResult(
+                ok=False,
+                error=f"Design has {empty_cells} empty cells (incomplete crossing)",
+                diagnosis="empty_cells",
+                n_obs=n_valid,
+                n_factors=len(factor_cols),
+                cell_counts=cell_counts,
+            )
+
+    return ANOVAPreflightResult(
+        ok=True,
+        warnings=warnings_list,
+        n_obs=n_valid,
+        n_factors=len(factor_cols),
+        cell_counts=cell_counts if cell_counts else None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -60,19 +250,24 @@ def _cohens_d(a: np.ndarray, b: np.ndarray) -> float:
     return float((a.mean() - b.mean()) / pooled_std)
 
 
-def _safe_div(a: float, b: float) -> float:
-    """Division that returns inf when denominator is zero."""
+def _safe_div(a: float, b: float) -> Any:
+    """Division that returns inf when denominator is zero, NE for 0/0."""
     if b == 0:
-        return float("inf") if a > 0 else (float("-inf") if a < 0 else float("nan"))
+        if a > 0:
+            return float("inf")
+        elif a < 0:
+            return float("-inf")
+        else:
+            return NE.zero_denominator("0/0 is undefined")
     return a / b
 
 
-def _cohens_kappa(y1: np.ndarray, y2: np.ndarray) -> float:
+def _cohens_kappa(y1: np.ndarray, y2: np.ndarray) -> Any:
     """Cohen's kappa for two categorical arrays (manual implementation)."""
     labels = sorted(set(y1) | set(y2))
     n = len(y1)
     if n == 0:
-        return float("nan")
+        return NE.insufficient_n(n=0, min_required=1, context="kappa")
     # Build confusion matrix
     k = len(labels)
     label_idx = {l: i for i, l in enumerate(labels)}
@@ -187,11 +382,12 @@ def severity_descriptives(
             "cross_tab_full": ct_full.to_dict(),
         }
     else:
+        ne = NE.insufficient_n(context="severity agreement")
         result["agreement"] = {
-            "spearman_r": float("nan"),
-            "spearman_p": float("nan"),
-            "kappa": float("nan"),
-            "agreement_rate": float("nan"),
+            "spearman_r": ne,
+            "spearman_p": ne,
+            "kappa": ne,
+            "agreement_rate": ne,
             "cross_tab": {},
             "cross_tab_pct": {},
             "cross_tab_full": {},
@@ -302,7 +498,8 @@ def severity_main_effects(
     if ct.shape[0] >= 2 and ct.shape[1] >= 2:
         result["chi2_favorable"] = chi_squared_test(ct)
     else:
-        result["chi2_favorable"] = {"chi2": float("nan"), "p_value": float("nan"), "cramers_v": float("nan")}
+        ne = NE.insufficient_n(context="chi2 favorable", detail="crosstab requires 2x2 minimum")
+        result["chi2_favorable"] = {"chi2": ne, "p_value": ne, "cramers_v": ne}
 
     # Spearman trend
     ord_sev = _ordinal(df[severity_metric]).values
@@ -311,7 +508,8 @@ def severity_main_effects(
         r, p = sp_stats.spearmanr(ord_sev, tiers)
         result["trend"] = {"spearman_r": float(r), "p_value": float(p)}
     else:
-        result["trend"] = {"spearman_r": float("nan"), "p_value": float("nan")}
+        ne = NE.no_variance(detail="severity has <2 unique levels", context="spearman trend")
+        result["trend"] = {"spearman_r": ne, "p_value": ne}
 
     # Group Ns and CIs for chart
     for level in SEVERITY_LEVELS:
@@ -373,9 +571,10 @@ def bias_by_severity(
     for level in SEVERITY_LEVELS:
         sub = df[df[severity_metric] == level]
         if len(sub) < 5:
-            result[level] = {"n": len(sub), "mean_bias": float("nan"),
-                             "sd_across_personas": float("nan"), "range": float("nan"),
-                             "cv": float("nan")}
+            ne = NE.insufficient_n(n=len(sub), min_required=5, context=f"bias@{level}")
+            result[level] = {"n": len(sub), "mean_bias": ne,
+                             "sd_across_personas": ne, "range": ne,
+                             "cv": ne, "ne_reason": ne}
             continue
 
         persona_means = sub.groupby(persona_col)[outcome_col].mean()
@@ -387,14 +586,17 @@ def bias_by_severity(
         sd = float(persona_means.std(ddof=1))
         rng = float(persona_means.max() - persona_means.min())
         mean_val = float(persona_means.mean())
-        cv = _safe_div(sd, mean_val) if mean_val != 0 else float("nan")
+        if mean_val == 0:
+            cv = NE.zero_denominator("mean tier is 0", context=f"cv@{level}")
+        else:
+            cv = sd / mean_val
 
         result[level] = {
             "n": len(sub),
             "mean_bias": rng,
             "sd_across_personas": sd,
             "range": rng,
-            "cv": float(cv),
+            "cv": cv,  # May be NEValue if mean is 0
             "persona_means": persona_means.to_dict(),
         }
 
@@ -422,15 +624,36 @@ def two_way_anova_persona_severity(
         (decisions_df["model"] == model)
         & (decisions_df[severity_metric].isin(SEVERITY_LEVELS))
     ].copy()
-    if persona_col not in df.columns or outcome_col not in df.columns or len(df) < 30:
-        return {"error": "insufficient data", "status": "exploratory"}
 
-    df = df.rename(columns={severity_metric: "severity", persona_col: "persona",
-                            outcome_col: "outcome"})
+    # Rename columns for formula
+    col_map = {severity_metric: "severity", persona_col: "persona", outcome_col: "outcome"}
+    for old, new in col_map.items():
+        if old in df.columns:
+            df = df.rename(columns={old: new})
 
-    # Need at least 2 levels in each factor
-    if df["persona"].nunique() < 2 or df["severity"].nunique() < 2:
-        return {"error": "insufficient factor levels", "status": "exploratory"}
+    # Run comprehensive pre-flight checks
+    preflight = anova_preflight(
+        df,
+        outcome_col="outcome",
+        factor_cols=["persona", "severity"],
+        min_n=30,
+        min_cell_n=1,
+        context=model_label,
+    )
+    if not preflight.ok:
+        return {
+            "error": preflight.error,
+            "diagnosis": preflight.diagnosis,
+            "status": "exploratory",
+            "preflight": {
+                "n_obs": preflight.n_obs,
+                "cell_counts": preflight.cell_counts,
+            },
+        }
+
+    # Log any preflight warnings
+    for warn_msg in preflight.warnings:
+        logger.debug("%s preflight warning: %s", model_label, warn_msg)
 
     # Drop personas that don't appear at every severity level so the
     # interaction design matrix has full column rank.
@@ -439,12 +662,6 @@ def two_way_anova_persona_severity(
     if len(complete_personas) < 2:
         return {"error": "insufficient complete persona×severity cells", "status": "exploratory"}
     df = df[df["persona"].isin(complete_personas)]
-
-    # Pre-flight: check response variance
-    y = df["outcome"].astype(float)
-    if y.nunique() < 2:
-        return {"error": f"response variable '{outcome_col}' is constant (value={y.iloc[0]})",
-                "status": "exploratory", "diagnosis": "no_variance_y"}
 
     try:
         import statsmodels.formula.api as smf
@@ -465,21 +682,23 @@ def two_way_anova_persona_severity(
             if row_label in table.index:
                 ss = max(0.0, float(table.loc[row_label, "sum_sq"]))
                 df_val = float(table.loc[row_label, "df"])
-                f_val = float(table.loc[row_label, "F"]) if "F" in table.columns else float("nan")
-                p_val = float(table.loc[row_label, "PR(>F)"]) if "PR(>F)" in table.columns else float("nan")
-                if np.isfinite(f_val) and f_val < 0:
+                f_val_raw = table.loc[row_label, "F"] if "F" in table.columns else None
+                p_val_raw = table.loc[row_label, "PR(>F)"] if "PR(>F)" in table.columns else None
+                f_val = float(f_val_raw) if f_val_raw is not None and np.isfinite(float(f_val_raw)) else NE.missing_data(field="F", context=source)
+                p_val = float(p_val_raw) if p_val_raw is not None and np.isfinite(float(p_val_raw)) else NE.missing_data(field="p", context=source)
+                if is_estimable(f_val) and f_val < 0:
                     f_val = 0.0
                     p_val = 1.0
                 ss_resid = max(0.0, float(table.loc["Residual", "sum_sq"])) if "Residual" in table.index else 0
                 eta_sq = ss / (ss + ss_resid) if (ss + ss_resid) > 0 else 0.0
                 result[source] = {
                     "SS": ss, "df": df_val, "F": f_val,
-                    "p_value": p_val if np.isfinite(p_val) else float("nan"),
+                    "p_value": p_val if (is_estimable(p_val) and np.isfinite(p_val)) else (p_val if isinstance(p_val, NEValue) else NE.numerical(context=f"p-value {source}")),
                     "eta_sq_partial": eta_sq,
                 }
             else:
-                result[source] = {"SS": 0, "df": 0, "F": float("nan"),
-                                  "p_value": float("nan"), "eta_sq_partial": 0.0}
+                ne = NE.missing_data(field=row_label, context=f"ANOVA {source}")
+                result[source] = {"SS": 0, "df": 0, "F": ne, "p_value": ne, "eta_sq_partial": 0.0}
 
         return result
 
@@ -509,8 +728,9 @@ def simple_effects_by_severity(
         sub = df[df[severity_metric] == level]
         personas = sub[persona_col].unique()
         if len(personas) < 2 or len(sub) < 10:
-            result[level] = {"eta_sq_partial": float("nan"),
-                             "largest_pairwise_d": float("nan"),
+            ne = NE.insufficient_n(n=len(sub), min_required=10, context=f"simple_effects@{level}")
+            result[level] = {"eta_sq_partial": ne,
+                             "largest_pairwise_d": ne,
                              "n_significant": 0, "n": len(sub)}
             continue
 
@@ -555,11 +775,12 @@ def simple_effects_by_severity(
                 adj_p = fdr_correction(p_values)
                 n_sig = int((adj_p < 0.05).sum())
 
+        ne_missing = NE.missing_data(context=f"simple effects {level}")
         result[level] = {
-            "eta_sq_partial": anova_res.get("eta_sq_partial", float("nan")),
-            "eta_sq_interpretation": anova_res.get("eta_sq_interpretation", interpret_eta_sq(anova_res.get("eta_sq_partial", float("nan")))),
-            "F": anova_res.get("F", float("nan")),
-            "p_value": anova_res.get("p_value", float("nan")),
+            "eta_sq_partial": anova_res.get("eta_sq_partial", ne_missing),
+            "eta_sq_interpretation": anova_res.get("eta_sq_interpretation", interpret_eta_sq(anova_res.get("eta_sq_partial", 0.0))),
+            "F": anova_res.get("F", ne_missing),
+            "p_value": anova_res.get("p_value", ne_missing),
             "largest_pairwise_d": max_d,
             "largest_pairwise_d_interpretation": interpret_cohens_d(max_d),
             "n_significant": n_sig,
@@ -592,18 +813,33 @@ def amplification_ratio(
         & (decisions_df[severity_metric].isin(SEVERITY_LEVELS))
     ].copy()
     if persona_col not in df.columns or outcome_col not in df.columns or len(df) < 30:
-        return {"point": float("nan"), "ci_lower": float("nan"), "ci_upper": float("nan")}
+        ne = NE.insufficient_n(n=len(df), min_required=30, context="amplification")
+        return {"point": ne, "ci_lower": ne, "ci_upper": ne, "ne_reason": ne}
 
-    def _bias_at_level(data: pd.DataFrame, level: str) -> float:
+    def _bias_at_level(data: pd.DataFrame, level: str):
+        """Calculate bias (SD across personas) at a severity level."""
         sub = data[data[severity_metric] == level]
         if len(sub) < 5:
-            return float("nan")
+            return NE.insufficient_n(n=len(sub), min_required=5, context=f"bias@{level}")
         pm = sub.groupby(persona_col)[outcome_col].mean()
-        return float(pm.std(ddof=1)) if len(pm) >= 2 else 0.0
+        if len(pm) < 2:
+            return NE.insufficient_n(n=len(pm), min_required=2, context=f"personas@{level}")
+        return float(pm.std(ddof=1))
 
     bias_low = _bias_at_level(df, "low")
     bias_high = _bias_at_level(df, "high")
-    point = _safe_div(bias_high, bias_low)
+
+    # Check if either bias is non-estimable
+    if isinstance(bias_low, NEValue) or isinstance(bias_high, NEValue):
+        ne = bias_low if isinstance(bias_low, NEValue) else bias_high
+        return {"point": ne, "ci_lower": ne, "ci_upper": ne,
+                "bias_low": bias_low, "bias_high": bias_high, "ne_reason": ne}
+
+    # Calculate ratio (amplification)
+    if bias_low == 0:
+        point = NE.zero_denominator("low-severity bias SD is 0.000", context="amplification")
+    else:
+        point = bias_high / bias_low
 
     # Check operation cache for bootstrap results
     op_cache = get_operation_cache()
@@ -620,12 +856,26 @@ def amplification_ratio(
     cached = op_cache.get("amplification_bootstrap", cache_key)
     if cached is not None:
         # Use cached bootstrap CIs, update point estimate with current data
+        # Handle NEValue point estimates
+        if isinstance(point, NEValue):
+            return {
+                "point": point, "ci_lower": point, "ci_upper": point,
+                "bias_low": bias_low, "bias_high": bias_high, "ne_reason": point,
+            }
+        ne_ci = NE.missing_data(context="bootstrap CI")
         return {
-            "point": float(point) if np.isfinite(point) else float("nan"),
-            "ci_lower": cached.get("ci_lower", float("nan")),
-            "ci_upper": cached.get("ci_upper", float("nan")),
+            "point": float(point) if np.isfinite(point) else NE.numerical(context="amp ratio"),
+            "ci_lower": cached.get("ci_lower", ne_ci),
+            "ci_upper": cached.get("ci_upper", ne_ci),
             "bias_low": bias_low,
             "bias_high": bias_high,
+        }
+
+    # If point is already NEValue, skip bootstrap
+    if isinstance(point, NEValue):
+        return {
+            "point": point, "ci_lower": point, "ci_upper": point,
+            "bias_low": bias_low, "bias_high": bias_high, "ne_reason": point,
         }
 
     # Bootstrap CI: resample at complaint (case_id) level
@@ -637,15 +887,17 @@ def amplification_ratio(
         boot_df = df[df["case_id"].isin(sample_ids)]
         b_low = _bias_at_level(boot_df, "low")
         b_high = _bias_at_level(boot_df, "high")
-        if np.isfinite(b_low) and np.isfinite(b_high) and b_low > 0:
+        # Skip non-estimable bootstrap samples
+        if is_estimable(b_low) and is_estimable(b_high) and b_low > 0:
             boot_ratios.append(b_high / b_low)
 
     if len(boot_ratios) >= 10:
         ci_lower = float(np.percentile(boot_ratios, 2.5))
         ci_upper = float(np.percentile(boot_ratios, 97.5))
     else:
-        ci_lower = float("nan")
-        ci_upper = float("nan")
+        ci_ne = NE.insufficient_n(n=len(boot_ratios), min_required=10, context="bootstrap CI")
+        ci_lower = ci_ne
+        ci_upper = ci_ne
 
     # Cache the bootstrap results
     op_cache.put("amplification_bootstrap", cache_key, {
@@ -656,7 +908,7 @@ def amplification_ratio(
     })
 
     return {
-        "point": float(point) if np.isfinite(point) else float("nan"),
+        "point": float(point) if is_estimable(point) else point,
         "ci_lower": ci_lower,
         "ci_upper": ci_upper,
         "bias_low": bias_low,
@@ -701,17 +953,43 @@ def dimension_severity_interaction(
     """
     from src.analysis_cache import get_operation_cache
 
+    model_label = f"DimSevANOVA({severity_metric},{model},{dimension})"
     df = decisions_df[
         (decisions_df["model"] == model)
         & (decisions_df[severity_metric].isin(SEVERITY_LEVELS))
     ].copy()
 
-    if dimension not in df.columns or len(df) < 30:
-        return {"error": "insufficient data", "dimension": dimension}
+    if dimension not in df.columns:
+        return {"error": f"missing dimension column: {dimension}", "dimension": dimension}
 
     df = df.dropna(subset=[dimension])
-    if df[dimension].nunique() < 2 or df[severity_metric].nunique() < 2:
-        return {"error": "insufficient factor levels", "dimension": dimension}
+
+    # Rename columns for consistent handling
+    df_anova = df.rename(columns={severity_metric: "severity", dimension: "dim_level"})
+
+    # Run comprehensive pre-flight checks
+    preflight = anova_preflight(
+        df_anova,
+        outcome_col="tier",
+        factor_cols=["dim_level", "severity"],
+        min_n=30,
+        min_cell_n=1,
+        context=model_label,
+    )
+    if not preflight.ok:
+        return {
+            "error": preflight.error,
+            "diagnosis": preflight.diagnosis,
+            "dimension": dimension,
+            "preflight": {
+                "n_obs": preflight.n_obs,
+                "cell_counts": preflight.cell_counts,
+            },
+        }
+
+    # Log any preflight warnings
+    for warn_msg in preflight.warnings:
+        logger.debug("%s preflight warning: %s", model_label, warn_msg)
 
     result: Dict[str, Any] = {"dimension": dimension, "severity_metric": severity_metric}
 
@@ -725,7 +1003,6 @@ def dimension_severity_interaction(
         import statsmodels.formula.api as smf
         from statsmodels.stats.anova import anova_lm
 
-        df_anova = df.rename(columns={severity_metric: "severity", dimension: "dim_level"})
         # Ensure every dim_level appears at every severity level for full-rank interaction
         cc = df_anova.groupby(["dim_level", "severity"]).size().unstack(fill_value=0)
         complete_levels = cc.index[cc.min(axis=1) > 0]
@@ -747,19 +1024,22 @@ def dimension_severity_interaction(
         ]:
             if row_label in table.index:
                 ss = max(0.0, float(table.loc[row_label, "sum_sq"]))
-                f_val = float(table.loc[row_label, "F"]) if "F" in table.columns else float("nan")
-                p_val = float(table.loc[row_label, "PR(>F)"]) if "PR(>F)" in table.columns else float("nan")
-                if np.isfinite(f_val) and f_val < 0:
+                f_val_raw = table.loc[row_label, "F"] if "F" in table.columns else None
+                p_val_raw = table.loc[row_label, "PR(>F)"] if "PR(>F)" in table.columns else None
+                f_val = float(f_val_raw) if f_val_raw is not None and np.isfinite(float(f_val_raw)) else NE.missing_data(field="F", context=source)
+                p_val = float(p_val_raw) if p_val_raw is not None and np.isfinite(float(p_val_raw)) else NE.missing_data(field="p", context=source)
+                if is_estimable(f_val) and f_val < 0:
                     f_val, p_val = 0.0, 1.0
                 eta_sq = ss / (ss + ss_resid) if (ss + ss_resid) > 0 else 0.0
                 anova_result[source] = {
-                    "F": f_val if np.isfinite(f_val) else float("nan"),
-                    "p_value": p_val if np.isfinite(p_val) else float("nan"),
+                    "F": f_val if is_estimable(f_val) else NE.numerical(context=f"ANOVA F for {source}"),
+                    "p_value": p_val if is_estimable(p_val) else NE.numerical(context=f"ANOVA p for {source}"),
                     "eta_sq_partial": eta_sq,
                     "eta_sq_interpretation": interpret_eta_sq(eta_sq),
                 }
             else:
-                anova_result[source] = {"F": float("nan"), "p_value": float("nan"),
+                ne = NE.missing_data(field=row_label, context=f"dimension ANOVA {source}")
+                anova_result[source] = {"F": ne, "p_value": ne,
                                         "eta_sq_partial": 0.0, "eta_sq_interpretation": "N/A"}
         result["anova"] = anova_result
 
@@ -777,10 +1057,10 @@ def dimension_severity_interaction(
 
     # Amplification ratio: bias_high / bias_low
     # where bias = max(dim_mean) - min(dim_mean) at a severity level
-    def _dim_bias(level: str) -> float:
+    def _dim_bias(level: str) -> Any:
         means = means_table.get(level, {})
         if len(means) < 2:
-            return float("nan")
+            return NE.insufficient_n(n=len(means), min_required=2, context=f"dim bias {level}")
         vals = list(means.values())
         return max(vals) - min(vals)
 
@@ -801,12 +1081,14 @@ def dimension_severity_interaction(
     cache_key = op_cache.compute_key(f"dim_severity_bootstrap_{dimension}", df, cache_params, cache_cols)
     cached = op_cache.get(f"dim_severity_bootstrap_{dimension}", cache_key)
     if cached is not None:
+        ne_ci = NE.missing_data(context="dimension bootstrap CI")
+        amp_pt = float(amp_point) if is_estimable(amp_point) and np.isfinite(amp_point) else (amp_point if isinstance(amp_point, NEValue) else NE.numerical(context="dim amp ratio"))
         result["amplification"] = {
             "bias_low": bias_low,
             "bias_high": bias_high,
-            "point": float(amp_point) if np.isfinite(amp_point) else float("nan"),
-            "ci_lower": cached.get("ci_lower", float("nan")),
-            "ci_upper": cached.get("ci_upper", float("nan")),
+            "point": amp_pt,
+            "ci_lower": cached.get("ci_lower", ne_ci),
+            "ci_upper": cached.get("ci_upper", ne_ci),
         }
         return result
 
@@ -826,10 +1108,10 @@ def dimension_severity_interaction(
                 boot_ratios.append(b_high / b_low)
 
     if len(boot_ratios) >= 10:
-        ci_lo = float(np.percentile(boot_ratios, 2.5))
-        ci_hi = float(np.percentile(boot_ratios, 97.5))
+        ci_lo: Any = float(np.percentile(boot_ratios, 2.5))
+        ci_hi: Any = float(np.percentile(boot_ratios, 97.5))
     else:
-        ci_lo = ci_hi = float("nan")
+        ci_lo = ci_hi = NE.insufficient_n(n=len(boot_ratios), min_required=10, context="dim bootstrap CI")
 
     # Cache the bootstrap results
     op_cache.put(f"dim_severity_bootstrap_{dimension}", cache_key, {
@@ -839,10 +1121,11 @@ def dimension_severity_interaction(
         "n_valid_boots": len(boot_ratios),
     })
 
+    amp_pt = float(amp_point) if is_estimable(amp_point) and np.isfinite(amp_point) else (amp_point if isinstance(amp_point, NEValue) else NE.numerical(context="dim amp ratio"))
     result["amplification"] = {
         "bias_low": bias_low,
         "bias_high": bias_high,
-        "point": float(amp_point) if np.isfinite(amp_point) else float("nan"),
+        "point": amp_pt,
         "ci_lower": ci_lo,
         "ci_upper": ci_hi,
     }
@@ -991,28 +1274,29 @@ def logistic_interaction_tier2(
             try:
                 joint_test = fit.wald_test_terms(scalar=True)
                 # Find the interaction row in the joint test
-                interaction_p = float("nan")
+                interaction_p: Any = NE.missing_data(context="GEE interaction p")
                 for term_name in joint_test.table.index:
                     if ":" in str(term_name):
                         interaction_p = float(joint_test.table.loc[term_name, "P>chi2"])
                         break
-                if np.isnan(interaction_p):
+                if isinstance(interaction_p, NEValue):
                     # Fallback: use maximum individual p-value
                     interaction_p = float(max(pvalues[t] for t in interaction_terms))
             except Exception:
-                interaction_p = float(max(pvalues[t] for t in interaction_terms)) if interaction_terms else float("nan")
+                interaction_p = float(max(pvalues[t] for t in interaction_terms)) if interaction_terms else NE.missing_data(context="GEE interaction p")
         else:
-            interaction_p = float("nan")
+            interaction_p = NE.missing_data(context="no interaction terms")
 
         # Build coefficients dict
         coefficients = {}
+        ne_ci = NE.missing_data(context="GEE coef CI")
         for term in params.index:
             coefficients[term] = {
                 "estimate": float(params[term]),
                 "se": float(bse[term]),
                 "p_value": float(pvalues[term]),
-                "ci_lower": float(conf_int.loc[term, 0]) if term in conf_int.index else float("nan"),
-                "ci_upper": float(conf_int.loc[term, 1]) if term in conf_int.index else float("nan"),
+                "ci_lower": float(conf_int.loc[term, 0]) if term in conf_int.index else ne_ci,
+                "ci_upper": float(conf_int.loc[term, 1]) if term in conf_int.index else ne_ci,
                 "odds_ratio": float(np.exp(params[term])),
             }
 
@@ -1048,12 +1332,37 @@ def three_way_anova(
 
     model_label = f"ThreeWayANOVA({severity_metric})"
     df = decisions_df[decisions_df[severity_metric].isin(SEVERITY_LEVELS)].copy()
-    if persona_col not in df.columns or len(df) < 50:
-        return {"error": "insufficient data", "status": "exploratory"}
+
+    # Rename columns for consistent handling
+    df = df.rename(columns={severity_metric: "severity", persona_col: "persona"})
+
+    # Run comprehensive pre-flight checks
+    preflight = anova_preflight(
+        df,
+        outcome_col="tier",
+        factor_cols=["model", "persona", "severity"],
+        min_n=50,
+        min_cell_n=1,
+        context=model_label,
+    )
+    if not preflight.ok:
+        return {
+            "error": preflight.error,
+            "diagnosis": preflight.diagnosis,
+            "status": "exploratory",
+            "preflight": {
+                "n_obs": preflight.n_obs,
+                "cell_counts": preflight.cell_counts,
+            },
+        }
+
+    # Log any preflight warnings
+    for warn_msg in preflight.warnings:
+        logger.debug("%s preflight warning: %s", model_label, warn_msg)
+
+    # Additional check: need multiple models
     if df["model"].nunique() < 2:
         return {"error": "need multiple models for three-way ANOVA", "status": "exploratory"}
-
-    df = df.rename(columns={severity_metric: "severity", persona_col: "persona"})
 
     # Keep only persona×severity×model cells that are fully populated.
     cell_counts = df.groupby(["persona", "severity", "model"]).size().unstack(fill_value=0)
@@ -1064,11 +1373,6 @@ def three_way_anova(
     if len(complete_personas) < 2:
         return {"error": "insufficient complete persona×severity×model cells", "status": "exploratory"}
     df = df[df["persona"].isin(complete_personas)]
-
-    # Pre-flight: check response variance
-    if df["tier"].nunique() < 2:
-        return {"error": f"response variable 'tier' is constant (value={df['tier'].iloc[0]})",
-                "status": "exploratory", "diagnosis": "no_variance_y"}
 
     try:
         import statsmodels.formula.api as smf
@@ -1097,19 +1401,22 @@ def three_way_anova(
             if row_label in table.index:
                 ss = max(0.0, float(table.loc[row_label, "sum_sq"]))
                 df_val = float(table.loc[row_label, "df"])
-                f_val = float(table.loc[row_label, "F"]) if "F" in table.columns else float("nan")
-                p_val = float(table.loc[row_label, "PR(>F)"]) if "PR(>F)" in table.columns else float("nan")
-                if np.isfinite(f_val) and f_val < 0:
+                f_val_raw = table.loc[row_label, "F"] if "F" in table.columns else None
+                p_val_raw = table.loc[row_label, "PR(>F)"] if "PR(>F)" in table.columns else None
+                f_val = float(f_val_raw) if f_val_raw is not None and np.isfinite(float(f_val_raw)) else NE.missing_data(field="F", context=key)
+                p_val = float(p_val_raw) if p_val_raw is not None and np.isfinite(float(p_val_raw)) else NE.missing_data(field="p", context=key)
+                if is_estimable(f_val) and f_val < 0:
                     f_val = 0.0
                     p_val = 1.0
                 eta_sq = ss / (ss + ss_resid) if (ss + ss_resid) > 0 else 0.0
                 result[key] = {
-                    "F": f_val if np.isfinite(f_val) else float("nan"),
-                    "p_value": p_val if np.isfinite(p_val) else float("nan"),
+                    "F": f_val if is_estimable(f_val) else NE.numerical(context=f"3-way ANOVA F for {key}"),
+                    "p_value": p_val if is_estimable(p_val) else NE.numerical(context=f"3-way ANOVA p for {key}"),
                     "eta_sq_partial": eta_sq,
                 }
             else:
-                result[key] = {"F": float("nan"), "p_value": float("nan"), "eta_sq_partial": 0.0}
+                ne = NE.missing_data(field=row_label, context=f"3-way ANOVA {key}")
+                result[key] = {"F": ne, "p_value": ne, "eta_sq_partial": 0.0}
 
         return result
 
@@ -1268,9 +1575,12 @@ def process_severity_analysis(
         result["logistic"] = {"error": "insufficient factor levels"}
 
     # Process amplification ratio (disparity high / disparity low)
-    disp_low = rates_by_severity.get("low", {}).get("disparity", float("nan"))
-    disp_high = rates_by_severity.get("high", {}).get("disparity", float("nan"))
-    if np.isfinite(disp_low) and np.isfinite(disp_high):
+    disp_low_raw = rates_by_severity.get("low", {}).get("disparity")
+    disp_high_raw = rates_by_severity.get("high", {}).get("disparity")
+    ne_disp = NE.missing_data(context="process disparity")
+    disp_low = disp_low_raw if is_estimable(disp_low_raw) else ne_disp
+    disp_high = disp_high_raw if is_estimable(disp_high_raw) else ne_disp
+    if is_estimable(disp_low) and is_estimable(disp_high):
         result["process_amplification"] = {
             "point": _safe_div(disp_high, disp_low),
             "disparity_low": disp_low,
@@ -1278,9 +1588,9 @@ def process_severity_analysis(
         }
     else:
         result["process_amplification"] = {
-            "point": float("nan"),
-            "disparity_low": disp_low if np.isfinite(disp_low) else float("nan"),
-            "disparity_high": disp_high if np.isfinite(disp_high) else float("nan"),
+            "point": NE.missing_data(context="process amp ratio"),
+            "disparity_low": disp_low,
+            "disparity_high": disp_high,
         }
 
     return result
@@ -1297,10 +1607,21 @@ def consistency_check(
     """Compare findings across monetary and issue severity metrics."""
     findings: list = []
 
-    def _get_p(data: Dict, *keys: str) -> float:
+    def _get_p(data: Dict, *keys: str) -> Any:
         for k in keys:
             data = data.get(k, {})
-        return data if isinstance(data, (int, float)) else float("nan")
+        return data if isinstance(data, (int, float, NEValue)) else NE.missing_data(context="consistency check p-value")
+
+    def _is_sig(p_val: Any, threshold: float = 0.05) -> bool:
+        """Check if p-value is significant, handling NEValue and non-numeric types."""
+        if isinstance(p_val, NEValue):
+            return False
+        if not isinstance(p_val, (int, float)):
+            return False
+        try:
+            return bool(np.isfinite(p_val) and p_val < threshold)
+        except (TypeError, ValueError):
+            return False
 
     # For each model present in both metrics
     monetary_me = main_effects.get("monetary_severity", {})
@@ -1310,8 +1631,8 @@ def consistency_check(
     for model in sorted(all_models):
         m_anova_p = _get_p(monetary_me, model, "anova", "p_value")
         i_anova_p = _get_p(issue_me, model, "anova", "p_value")
-        m_sig = m_anova_p < 0.05 if np.isfinite(m_anova_p) else False
-        i_sig = i_anova_p < 0.05 if np.isfinite(i_anova_p) else False
+        m_sig = _is_sig(m_anova_p)
+        i_sig = _is_sig(i_anova_p)
         findings.append({
             "finding": f"Severity main effect ({model})",
             "monetary_p": m_anova_p,
@@ -1326,8 +1647,8 @@ def consistency_check(
     for model in sorted(all_models):
         m_p = _get_p(monetary_int, model, "two_way", "interaction", "p_value")
         i_p = _get_p(issue_int, model, "two_way", "interaction", "p_value")
-        m_sig = m_p < 0.05 if np.isfinite(m_p) else False
-        i_sig = i_p < 0.05 if np.isfinite(i_p) else False
+        m_sig = _is_sig(m_p)
+        i_sig = _is_sig(i_p)
         findings.append({
             "finding": f"Persona×Severity interaction ({model})",
             "monetary_p": m_p,
@@ -1397,46 +1718,47 @@ def mitigation_severity_comparison(
                                          outcome_col=outcome_col)
 
     # --- Compute deltas ---
-    base_ratio = amp_base.get("point", float("nan"))
-    neut_ratio = amp_neut.get("point", float("nan"))
+    ne_missing = NE.missing_data(context="neutralization delta")
+    base_ratio = amp_base.get("point", ne_missing)
+    neut_ratio = amp_neut.get("point", ne_missing)
 
-    if np.isfinite(base_ratio) and np.isfinite(neut_ratio) and base_ratio > 0:
-        amp_change = neut_ratio - base_ratio
-        amp_pct = amp_change / base_ratio * 100
+    if is_estimable(base_ratio) and is_estimable(neut_ratio) and base_ratio > 0:
+        amp_change: Any = neut_ratio - base_ratio
+        amp_pct: Any = amp_change / base_ratio * 100
     else:
-        amp_change = float("nan")
-        amp_pct = float("nan")
+        amp_change = NE.missing_data(context="amp change")
+        amp_pct = NE.missing_data(context="amp pct change")
 
     # Per-level bias SD changes
-    bias_sd_change: Dict[str, float] = {}
+    bias_sd_change: Dict[str, Any] = {}
     for level in SEVERITY_LEVELS:
-        b_sd = bias_base.get(level, {}).get("sd_across_personas", float("nan"))
-        n_sd = bias_neut.get(level, {}).get("sd_across_personas", float("nan"))
-        if np.isfinite(b_sd) and np.isfinite(n_sd):
+        b_sd = bias_base.get(level, {}).get("sd_across_personas", ne_missing)
+        n_sd = bias_neut.get(level, {}).get("sd_across_personas", ne_missing)
+        if is_estimable(b_sd) and is_estimable(n_sd):
             bias_sd_change[level] = n_sd - b_sd
         else:
-            bias_sd_change[level] = float("nan")
+            bias_sd_change[level] = NE.missing_data(context=f"bias SD change {level}")
 
     # Interaction p-values
-    base_int_p = tw_base.get("interaction", {}).get("p_value", float("nan"))
-    neut_int_p = tw_neut.get("interaction", {}).get("p_value", float("nan"))
+    base_int_p = tw_base.get("interaction", {}).get("p_value", ne_missing)
+    neut_int_p = tw_neut.get("interaction", {}).get("p_value", ne_missing)
     interaction_weakened = (
-        np.isfinite(base_int_p) and np.isfinite(neut_int_p)
+        is_estimable(base_int_p) and is_estimable(neut_int_p)
         and neut_int_p > base_int_p
     )
 
     # Verdict
-    if not np.isfinite(base_ratio) or not np.isfinite(neut_ratio):
+    if not is_estimable(base_ratio) or not is_estimable(neut_ratio):
         verdict = "insufficient_data"
     else:
-        base_ci_lo = amp_base.get("ci_lower", float("nan"))
-        base_ci_hi = amp_base.get("ci_upper", float("nan"))
-        neut_ci_lo = amp_neut.get("ci_lower", float("nan"))
-        neut_ci_hi = amp_neut.get("ci_upper", float("nan"))
+        base_ci_lo = amp_base.get("ci_lower", ne_missing)
+        base_ci_hi = amp_base.get("ci_upper", ne_missing)
+        neut_ci_lo = amp_neut.get("ci_lower", ne_missing)
+        neut_ci_hi = amp_neut.get("ci_upper", ne_missing)
         # "eliminated" if neutralized CI includes 1.0 but baseline CI didn't
-        base_includes_1 = (np.isfinite(base_ci_lo) and np.isfinite(base_ci_hi)
+        base_includes_1 = (is_estimable(base_ci_lo) and is_estimable(base_ci_hi)
                            and base_ci_lo <= 1.0 <= base_ci_hi)
-        neut_includes_1 = (np.isfinite(neut_ci_lo) and np.isfinite(neut_ci_hi)
+        neut_includes_1 = (is_estimable(neut_ci_lo) and is_estimable(neut_ci_hi)
                            and neut_ci_lo <= 1.0 <= neut_ci_hi)
         if neut_includes_1 and not base_includes_1:
             verdict = "eliminated"
@@ -1651,7 +1973,8 @@ def monetary_missingness_diagnostic(
 
         def _bias_stats(df: pd.DataFrame) -> Dict[str, Any]:
             if persona_col not in df.columns or len(df) == 0:
-                return {"n": 0, "bias_sd": float("nan"), "bias_range": float("nan"), "n_significant_pairs": 0}
+                ne_empty = NE.insufficient_n(n=0, min_required=1, context="bias stats")
+                return {"n": 0, "bias_sd": ne_empty, "bias_range": ne_empty, "n_significant_pairs": 0}
             pm = df.groupby(persona_col)["tier"].mean()
             bias_sd = float(pm.std()) if len(pm) > 1 else 0.0
             bias_range = float(pm.max() - pm.min()) if len(pm) > 1 else 0.0
@@ -1693,10 +2016,13 @@ def monetary_missingness_diagnostic(
 
         sd_pres = stats_pres["bias_sd"]
         sd_miss = stats_miss["bias_sd"]
-        ratio = sd_miss / sd_pres if sd_pres > 0 else float("nan")
+        if is_estimable(sd_pres) and sd_pres > 0 and is_estimable(sd_miss):
+            ratio: Any = sd_miss / sd_pres
+        else:
+            ratio = NE.zero_denominator("baseline SD is zero or non-estimable")
 
         # Conclusion
-        if np.isfinite(ratio):
+        if is_estimable(ratio):
             if ratio > 1.2:
                 conclusion = (
                     f"Bias is higher in the missing-amount subset (ratio={ratio:.2f}). "
@@ -1737,8 +2063,8 @@ def monetary_missingness_diagnostic(
         # Append fairness summary
         bias_notes = []
         for model in models:
-            r = fairness.get(model, {}).get("bias_sd_ratio", float("nan"))
-            if np.isfinite(r):
+            r = fairness.get(model, {}).get("bias_sd_ratio", NE.missing_data(context="bias SD ratio"))
+            if is_estimable(r):
                 if r > 1.2:
                     bias_notes.append(f"{model}: missingness may deflate apparent bias (ratio={r:.2f})")
                 elif r < 0.8:

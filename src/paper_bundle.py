@@ -44,6 +44,7 @@ _REQUIRED_DIRS = [
     "analysis/figures/appendix/bayes",
     "analysis/stats",
     "analysis/stats/bayes",
+    "analysis/panels",
     "qualitative",
     "paper_pack/latex/tables",
     "paper_pack/latex/figures",
@@ -232,6 +233,20 @@ class PaperBundleGenerator:
             (stats_dir / "ipw_robustness__monetary__all__v1.json").write_text(
                 json.dumps(ipw, indent=2, default=str), encoding="utf-8",
             )
+
+            # Generate panel payload for validation contract
+            from src.ipw_robustness import ipw_to_panel_payload
+            panels_dir = self.output_root / "analysis" / "panels"
+            panels_dir.mkdir(parents=True, exist_ok=True)
+            panel_payload = ipw_to_panel_payload(
+                ipw_result=ipw,
+                run_id=self.run_id,
+                models=self.models,
+            )
+            (panels_dir / "panel12_ipw_robustness_monetary.json").write_text(
+                json.dumps(panel_payload, indent=2, default=str), encoding="utf-8",
+            )
+            logger.info("IPW panel payload saved to analysis/panels/")
 
         # Claim classifications
         from src.prereg_compliance import generate_claim_classifications

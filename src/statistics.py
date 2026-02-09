@@ -11,6 +11,7 @@ import pandas as pd
 from scipy import stats as sp_stats
 
 from src.schemas import ESTIMATE_DIMS
+from src.estimable import NE, NEValue, is_estimable
 
 logger = logging.getLogger(__name__)
 
@@ -225,15 +226,15 @@ def power_analysis(
     # 1. Matched-guise (within-complaint paired design)
     tt = TTestPower()
     try:
-        min_d_paired = tt.solve_power(
+        min_d_paired: Any = tt.solve_power(
             nobs=causal_sample, alpha=alpha, power=power, alternative="two-sided",
         )
     except Exception:
-        min_d_paired = float("nan")
+        min_d_paired = NE.numerical(context="paired power solve")
     result["matched_guise"] = {
         "n_pairs": causal_sample,
-        "min_detectable_d": float(min_d_paired),
-        "interpretation": interpret_cohens_d(min_d_paired),
+        "min_detectable_d": float(min_d_paired) if is_estimable(min_d_paired) else min_d_paired,
+        "interpretation": interpret_cohens_d(min_d_paired) if is_estimable(min_d_paired) else "N/A",
         "design": "paired within-complaint",
     }
 
@@ -243,15 +244,15 @@ def power_analysis(
         if n_cell < 2:
             continue
         try:
-            min_d = tt.solve_power(
+            min_d: Any = tt.solve_power(
                 nobs=n_cell, alpha=alpha, power=power, alternative="two-sided",
             )
         except Exception:
-            min_d = float("nan")
+            min_d = NE.numerical(context=f"between power solve {dim}")
         between_results[dim] = {
             "n_per_cell": n_cell,
-            "min_detectable_d": float(min_d),
-            "interpretation": interpret_cohens_d(min_d),
+            "min_detectable_d": float(min_d) if is_estimable(min_d) else min_d,
+            "interpretation": interpret_cohens_d(min_d) if is_estimable(min_d) else "N/A",
         }
     result["between_persona"] = between_results
 
@@ -342,18 +343,20 @@ def one_way_anova(
     """
     groups = [np.asarray(g, dtype=float) for g in groups if len(g) > 0]
     if len(groups) < 2:
-        return {"F": float("nan"), "p_value": float("nan"), "eta_sq_partial": float("nan"),
+        ne_groups = NE.insufficient_n(n=len(groups), min_required=2, context="ANOVA groups")
+        return {"F": ne_groups, "p_value": ne_groups, "eta_sq_partial": ne_groups,
                 "group_means": {}, "group_ns": {}}
     labels = group_labels or [str(i) for i in range(len(groups))]
 
     # If all groups have zero within-group variance, F-test is undefined (0/0).
-    # Return NaN explicitly rather than letting f_oneway produce a RuntimeWarning.
+    # Return NE explicitly rather than letting f_oneway produce a RuntimeWarning.
     ss_within = sum(float(np.sum((g - g.mean()) ** 2)) for g in groups)
     if ss_within == 0:
         grand_mean = np.concatenate(groups).mean()
         ss_between = sum(len(g) * (g.mean() - grand_mean) ** 2 for g in groups)
+        ne_zerovar = NE.no_variance(context="ANOVA within-group")
         return {
-            "F": float("nan"), "p_value": float("nan"),
+            "F": ne_zerovar, "p_value": ne_zerovar,
             "eta_sq_partial": float(ss_between / (ss_between + ss_within)) if ss_between > 0 else 0.0,
             "group_means": {l: float(g.mean()) for l, g in zip(labels, groups)},
             "group_ns": {l: len(g) for l, g in zip(labels, groups)},
