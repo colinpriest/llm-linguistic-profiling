@@ -15,6 +15,8 @@ class ModelPricing:
 # Update these rates as pricing changes. Values are USD per 1M tokens.
 PRICING_PER_1M_TOKENS: Dict[str, ModelPricing] = {
     "gpt-4o-mini": ModelPricing(prompt_per_1m=0.15, completion_per_1m=0.60),
+    "gpt-5-mini": ModelPricing(prompt_per_1m=0.25, completion_per_1m=2.00),
+    "gpt-5.2": ModelPricing(prompt_per_1m=1.75, completion_per_1m=14.00),
 }
 
 
