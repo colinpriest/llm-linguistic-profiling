@@ -1,0 +1,59 @@
+{
+  "metadata": {
+    "timestamp": "20260209_171241",
+    "models": [
+      "gpt-4o-mini",
+      "gpt-5-mini"
+    ],
+    "num_complaints": 20000,
+    "threads": 100,
+    "seed": 42,
+    "data_path": "./data/complaints.csv",
+    "cache_dir": "./cache"
+  },
+  "usage": {
+    "totals": {
+      "requests": 7,
+      "prompt_tokens": 32832,
+      "completion_tokens": 4604,
+      "total_tokens": 37436,
+      "estimated_cost_usd": 0.115292
+    },
+    "per_model": {
+      "gpt-4o-mini": {
+        "requests": 3,
+        "prompt_tokens": 1985,
+        "completion_tokens": 257,
+        "estimated_cost_usd": 0.000452,
+        "pricing_per_1m": {
+          "prompt": 0.15,
+          "completion": 0.6
+        }
+      },
+      "gpt-5.2": {
+        "requests": 4,
+        "prompt_tokens": 30847,
+        "completion_tokens": 4347,
+        "estimated_cost_usd": 0.11484,
+        "pricing_per_1m": {
+          "prompt": 1.75,
+          "completion": 14.0
+        }
+      }
+    },
+    "pricing_reference": {
+      "gpt-4o-mini": {
+        "prompt": 0.15,
+        "completion": 0.6
+      },
+      "gpt-5-mini": {
+        "prompt": 0.25,
+        "completion": 2.0
+      },
+      "gpt-5.2": {
+        "prompt": 1.75,
+        "completion": 14.0
+      }
+    }
+  }
+}

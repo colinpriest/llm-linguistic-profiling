@@ -923,17 +923,21 @@ def _causal_effect_sizes(df: pd.DataFrame) -> Dict[str, Any]:
     """Effect sizes for each persona variant relative to baseline mean."""
     df["favorable"] = (df["tier"] >= 1).astype(int)
     overall_rate = df["favorable"].mean()
+    overall_sd = df["favorable"].std()
     effects = {}
     for variant in df["variant"].unique():
         subset = df[df["variant"] == variant]["favorable"].values
         if len(subset) < 5:
             continue
         est, lo, hi = bootstrap_ci(subset)
+        diff = est - overall_rate
+        cohens_d = float(diff / overall_sd) if overall_sd > 0 else 0.0
         effects[variant] = {
             "rate": est,
             "ci_lower": lo,
             "ci_upper": hi,
-            "diff_from_mean": est - overall_rate,
+            "diff_from_mean": diff,
+            "cohens_d": cohens_d,
         }
     return effects
 
@@ -994,6 +998,10 @@ def mitigation_analysis(
             results["variance_reduction"] = 1 - results["variance_neut"] / results["variance_orig"]
         else:
             results["variance_reduction"] = 0.0
+        results["variance_change"] = {
+            "baseline_sd": float(orig_rates.std()),
+            "neutralized_sd": float(neut_rates.std()),
+        }
 
     # 3. Residual bias – repeat correlation on neutralized
     results["residual_correlation"] = correlation_analysis(neutralized_decisions, personas_df)

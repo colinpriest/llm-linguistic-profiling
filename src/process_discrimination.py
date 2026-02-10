@@ -273,6 +273,10 @@ def process_mitigation_analysis(
         results["variance_neut"] = float(neut_rates.var())
         if results["variance_orig"] > 0:
             results["variance_reduction"] = 1 - results["variance_neut"] / results["variance_orig"]
+        results["variance_change"] = {
+            "baseline_sd": float(orig_rates.std()),
+            "neutralized_sd": float(neut_rates.std()),
+        }
 
     # 3. Residual process bias
     results["residual_correlation"] = process_correlation_analysis(neutralized_decisions, personas_df)

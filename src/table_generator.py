@@ -220,6 +220,11 @@ class TableGenerator:
         for model in self.models:
             for metric in ["monetary_severity", "issue_severity"]:
                 paths.extend(self._table6_amplification(main_dir, model, metric))
+        paths.extend(self._table7_persona_explainability(main_dir))
+        paths.extend(self._table8_manipulation_rewrite_match(main_dir))
+        paths.extend(self._table9_manipulation_signal_reduction(main_dir))
+        for model in self.models:
+            paths.extend(self._table10_operational_friction(main_dir, model))
         return paths
 
     def _table1_dataset_sampling(self, out: Path) -> List[Path]:
@@ -244,7 +249,7 @@ class TableGenerator:
         df = pd.DataFrame(rows, columns=["Item", "Count", "%", "Notes"])
         return _write_three_formats(
             df, out, "table", "main", "dataset_sampling_summary", "na", "all", 1,
-            caption="Table 1. Dataset and sampling summary.",
+            caption="Dataset and sampling summary.",
             label="tab:dataset_summary",
         )
 
@@ -262,11 +267,54 @@ class TableGenerator:
             ("Issue severity", "Product x issue derived score", "Severity amplification", "Confirmatory (all)"),
         ]
         df = pd.DataFrame(rows, columns=["Endpoint", "Definition", "Rationale", "Used as"])
-        return _write_three_formats(
-            df, out, "table", "main", "endpoint_definitions", "na", "all", 1,
-            caption="Table 2. Endpoint definitions and analysis roles.",
-            label="tab:endpoints",
-        )
+
+        # --- Custom LaTeX with ragged columns ---
+        tex_rows = [
+            (r"Tier 0", "No action warranted", "Baseline category", "Primary (reference)"),
+            (r"Tier 1", "Non-monetary remediation or guidance", "Positive remediation", "Primary"),
+            (r"Tier 2", "Monetary remediation recommended", "Most consequential allocation", "Primary"),
+            (r"\path{Y2 = 1[T=2]}", "Binary: monetary remediation", "Primary distributive endpoint", "Confirmatory"),
+            (r"\path{Y1+ = 1[T>=1]}", "Binary: any positive remediation", "Sensitivity check", "Exploratory"),
+            (r"\path{F = 1[need_more_info]}", "Model requests additional information", "Operational friction (secondary)", "Exploratory"),
+            (r"\path{M = 1[amount_extractable]}", "Dollar amount present indicator", "Two-part severity handling", "Descriptive"),
+            (r"\path{S \in \{L,M,H\}}", r"Monetary severity band (within \path{M=1})", "Severity amplification", "Confirmatory (M=1)"),
+            ("Issue severity", r"Product $\times$ issue derived score", "Severity amplification", "Confirmatory (all)"),
+        ]
+        tex_lines = [
+            r"\begin{table}[htbp]",
+            r"\centering",
+            r"\small",
+            r"\caption{Endpoint definitions and analysis roles.}",
+            r"\label{tab:endpoints}",
+            r"\begin{tabular}{>{\RaggedRight\arraybackslash}p{0.18\linewidth}",
+            r"                >{\RaggedRight\arraybackslash}p{0.34\linewidth}",
+            r"                >{\RaggedRight\arraybackslash}p{0.30\linewidth}",
+            r"                >{\RaggedRight\arraybackslash}p{0.14\linewidth}}",
+            r"\toprule",
+            r"Endpoint & Definition & Rationale & Used as \\",
+            r"\midrule",
+        ]
+        for endpoint, definition, rationale, used_as in tex_rows:
+            tex_lines.append(f"{endpoint} & {definition} & {rationale} & {used_as} \\\\")
+        tex_lines.append(r"\bottomrule")
+        tex_lines.append(r"\end{tabular}")
+        tex_lines.append(r"\end{table}")
+
+        tex_name = _build_filename("table", "main", "endpoint_definitions", "na", "all", 1, "tex")
+        tex_path = out / tex_name
+        tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
+
+        # --- Markdown + CSV via standard path ---
+        md_name = _build_filename("table", "main", "endpoint_definitions", "na", "all", 1, "md")
+        md_path = out / md_name
+        md_path.write_text(_dataframe_to_markdown(df, "Endpoint definitions and analysis roles."), encoding="utf-8")
+
+        csv_name = _build_filename("table", "main", "endpoint_definitions", "na", "all", 1, "csv")
+        csv_path = out / csv_name
+        df.to_csv(csv_path, index=False, encoding="utf-8")
+
+        logger.info("Written table: endpoint_definitions (.tex/.md/.csv)")
+        return [tex_path, md_path, csv_path]
 
     def _table3_persona_grid(self, out: Path) -> List[Path]:
         """Table 3: Persona grid and rewrite design."""
@@ -287,7 +335,7 @@ class TableGenerator:
         df = pd.DataFrame(rows, columns=["Dimension", "Levels", "Values", "Notes"])
         return _write_three_formats(
             df, out, "table", "main", "persona_grid_design", "na", "matched", 1,
-            caption="Table 3. Persona grid and matched-guise rewrite design.",
+            caption="Persona grid and matched-guise rewrite design.",
             label="tab:persona_grid",
         )
 
@@ -359,7 +407,7 @@ class TableGenerator:
         return _write_three_formats(
             df, out, "table", "main", "distributive_fairness_tier2",
             model_clean, "matched", 1,
-            caption=f"Table 4. Distributive fairness results (Tier 2, matched-guise) -- {model}.",
+            caption=f"Distributive fairness results (Tier 2, matched-guise) -- {model}.",
             label=f"tab:fairness_tier2_{model_clean}",
             analysis_type="confirmatory",
         )
@@ -414,7 +462,7 @@ class TableGenerator:
         return _write_three_formats(
             df, out, "table", "main", "neutralization_effects",
             model_clean, "baseline_vs_neutralized", 1,
-            caption=f"Table 5. Neutralisation mitigation effects -- {model}.",
+            caption=f"Neutralisation mitigation effects -- {model}.",
             label=f"tab:neutralization_{model_clean}",
         )
 
@@ -465,9 +513,199 @@ class TableGenerator:
         return _write_three_formats(
             df, out, "table", "main", f"severity_amplification_confirmatory",
             model_clean, f"{metric_clean}__{subset}", 1,
-            caption=f"Table 6. Severity amplification (confirmatory) -- {model}, {metric.replace('_', ' ')}.",
+            caption=f"Severity amplification (confirmatory) -- {model}, {metric.replace('_', ' ')}.",
             label=f"tab:amplification_{model_clean}_{metric_clean}",
             analysis_type="confirmatory",
+        )
+
+    def _table7_persona_explainability(self, out: Path) -> List[Path]:
+        """Table 7: Top text features predicting persona dimensions (LightGBM)."""
+        pa = self.ar.get("persona_analysis", {})
+        if not pa:
+            logger.warning("No persona_analysis data; skipping Table 7.")
+            return []
+
+        rows = []
+        for model in self.models:
+            model_pa = pa.get(model, {})
+            dims = model_pa.get("dimensions", {})
+            for dim in ["age", "geographic", "education", "socioeconomic", "gender", "esl"]:
+                dim_data = dims.get(dim, {})
+                for value, val_data in sorted(dim_data.items()):
+                    if isinstance(val_data, dict) and "top_features" in val_data:
+                        feats = val_data["top_features"]
+                        auc = val_data.get("auc")
+                        summary = val_data.get("summary", "")
+                        feat_strs = []
+                        for f in feats[:3]:
+                            display = f.get("feature_display", f.get("feature", "?"))
+                            imp = f.get("importance", 0)
+                            feat_strs.append(f"{display} ({imp:.0f})")
+                        # Pad to 3 columns
+                        while len(feat_strs) < 3:
+                            feat_strs.append("---")
+                        rows.append((
+                            dim.capitalize(),
+                            value,
+                            model,
+                            feat_strs[0],
+                            feat_strs[1],
+                            feat_strs[2],
+                            _fmt_prop(auc) if auc is not None else "---",
+                            summary[:80] + ("..." if len(summary) > 80 else ""),
+                        ))
+
+        if not rows:
+            return []
+
+        df = pd.DataFrame(rows, columns=[
+            "Dimension", "Value", "Model",
+            "Feature 1", "Feature 2", "Feature 3",
+            "AUC", "Interpretation",
+        ])
+
+        # Custom LaTeX with ragged columns for wide table
+        tex_lines = [
+            r"\begin{table}[htbp]",
+            r"\centering",
+            r"\small",
+            r"\caption{Top text features predicting persona dimensions (LightGBM classifiers).}",
+            r"\label{tab:persona_explainability}",
+            r"\begin{tabular}{>{\RaggedRight\arraybackslash}p{0.09\linewidth}",
+            r"                >{\RaggedRight\arraybackslash}p{0.10\linewidth}",
+            r"                >{\RaggedRight\arraybackslash}p{0.10\linewidth}",
+            r"                >{\RaggedRight\arraybackslash}p{0.12\linewidth}",
+            r"                >{\RaggedRight\arraybackslash}p{0.12\linewidth}",
+            r"                >{\RaggedRight\arraybackslash}p{0.12\linewidth}",
+            r"                r",
+            r"                >{\RaggedRight\arraybackslash}p{0.20\linewidth}}",
+            r"\toprule",
+            r"Dimension & Value & Model & Feature 1 & Feature 2 & Feature 3 & AUC & Interpretation \\",
+            r"\midrule",
+        ]
+        for _, row in df.iterrows():
+            cells = " & ".join(_escape_latex(str(v)) for v in row.values) + r" \\"
+            tex_lines.append(cells)
+        tex_lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table}"])
+
+        tex_name = _build_filename("table", "main", "persona_explainability", "na", "all", 1, "tex")
+        tex_path = out / tex_name
+        tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
+
+        md_name = _build_filename("table", "main", "persona_explainability", "na", "all", 1, "md")
+        md_path = out / md_name
+        md_path.write_text(_dataframe_to_markdown(df, "Top text features predicting persona dimensions."), encoding="utf-8")
+
+        csv_name = _build_filename("table", "main", "persona_explainability", "na", "all", 1, "csv")
+        csv_path = out / csv_name
+        df.to_csv(csv_path, index=False, encoding="utf-8")
+
+        logger.info("Written table: persona_explainability (.tex/.md/.csv)")
+        return [tex_path, md_path, csv_path]
+
+    def _table8_manipulation_rewrite_match(self, out: Path) -> List[Path]:
+        """Table 8: Manipulation check -- persona re-estimation match rates after rewriting."""
+        mc = self.ar.get("manipulation_checks", {})
+        match_rates = mc.get("rewrite_match_rates", {})
+        if not match_rates:
+            logger.warning("No rewrite_match_rates data; skipping Table 8.")
+            return []
+
+        # Collect all dimensions across models
+        all_dims = set()
+        for model_rates in match_rates.values():
+            all_dims.update(model_rates.keys())
+        dims_sorted = sorted(all_dims)
+
+        rows = []
+        for dim in dims_sorted:
+            row = [dim.capitalize()]
+            for model in self.models:
+                rate = match_rates.get(model, {}).get(dim)
+                row.append(_fmt_pct(rate * 100, 1) if rate is not None else "---")
+            rows.append(tuple(row))
+
+        cols = ["Dimension"] + [f"{m} Match %" for m in self.models]
+        df = pd.DataFrame(rows, columns=cols)
+        return _write_three_formats(
+            df, out, "table", "main", "manipulation_rewrite_match", "na", "all", 1,
+            caption="Manipulation check: persona re-estimation match rates after style rewriting.",
+            label="tab:manipulation_rewrite",
+        )
+
+    def _table9_manipulation_signal_reduction(self, out: Path) -> List[Path]:
+        """Table 9: Manipulation check -- entropy signal reduction after neutralisation."""
+        mc = self.ar.get("manipulation_checks", {})
+        signal = mc.get("signal_reduction", {})
+        if not signal:
+            logger.warning("No signal_reduction data; skipping Table 9.")
+            return []
+
+        rows = []
+        for model in self.models:
+            model_signal = signal.get(model, {})
+            for dim in sorted(model_signal.keys()):
+                d = model_signal[dim]
+                rows.append((
+                    dim.capitalize(),
+                    model,
+                    _fmt_effect(d.get("original_entropy")),
+                    _fmt_effect(d.get("neutralized_entropy")),
+                    _fmt_pct(d.get("reduction_pct", 0), 1),
+                ))
+
+        if not rows:
+            return []
+
+        df = pd.DataFrame(rows, columns=[
+            "Dimension", "Model", "Orig Entropy", "Neut Entropy", "Reduction %",
+        ])
+        return _write_three_formats(
+            df, out, "table", "main", "manipulation_signal_reduction", "na", "all", 1,
+            caption="Manipulation check: entropy signal reduction after language neutralisation.",
+            label="tab:manipulation_signal",
+        )
+
+    def _table10_operational_friction(self, out: Path, model: str) -> List[Path]:
+        """Table 10: Operational friction (need_more_info) rates by dimension."""
+        model_r = self.ar.get(model, {})
+        proc_corr = model_r.get("process_correlation", {})
+        info_rates = proc_corr.get("info_rates_by_dimension", {})
+        if not info_rates:
+            logger.warning("No info_rates_by_dimension for %s; skipping Table 10.", model)
+            return []
+
+        # Also try to get causal process rates if available
+        proc_causal = model_r.get("process_causal", {})
+        causal_rates = proc_causal.get("info_rates_by_dimension", {}) if proc_causal else {}
+
+        rows = []
+        for dim in sorted(info_rates.keys()):
+            dim_rates = info_rates[dim]
+            causal_dim = causal_rates.get(dim, {})
+            for value in sorted(dim_rates.keys()):
+                corr_rate = dim_rates[value]
+                caus_rate = causal_dim.get(value)
+                rows.append((
+                    dim.capitalize(),
+                    value,
+                    _fmt_pct(corr_rate * 100, 1) if corr_rate is not None else "---",
+                    _fmt_pct(caus_rate * 100, 1) if caus_rate is not None else "---",
+                ))
+
+        if not rows:
+            return []
+
+        df = pd.DataFrame(rows, columns=[
+            "Dimension", "Value", "Correlational Rate", "Causal Rate",
+        ])
+
+        model_clean = model.replace("-", "").replace("_", "")
+        return _write_three_formats(
+            df, out, "table", "main", "operational_friction",
+            model_clean, "all", 1,
+            caption=f"Operational friction (need_more_info) rates by dimension -- {model}.",
+            label=f"tab:friction_{model_clean}",
         )
 
     # ==================================================================
@@ -485,6 +723,9 @@ class TableGenerator:
             paths.extend(self._tableA2_pairwise_comparisons(app_dir, model))
         paths.extend(self._tableA3_missingness_diagnostics(app_dir))
         paths.extend(self._tableA5_prompt_inventory(app_dir))
+        paths.extend(self._tableA6_text_feature_inventory(app_dir))
+        for model in self.models:
+            paths.extend(self._tableA7_persona_distribution_diagnostics(app_dir, model))
         return paths
 
     def _tableA1_persona_tier_dist(self, out: Path, model: str) -> List[Path]:
@@ -506,7 +747,7 @@ class TableGenerator:
         return _write_three_formats(
             df, out, "table", "appendix", "persona_by_tier_fullgrid",
             model_clean, "matched", 1,
-            caption=f"Table A1. Full persona x tier distribution -- {model}.",
+            caption=f"Full persona x tier distribution -- {model}.",
             label=f"tab:persona_tier_{model_clean}",
         )
 
@@ -541,7 +782,7 @@ class TableGenerator:
         return _write_three_formats(
             df, out, "table", "appendix", "pairwise_persona_effects_topk",
             model_clean, "matched", 1,
-            caption=f"Table A2. Pairwise persona comparisons (top 20 by effect size) -- {model}.",
+            caption=f"Pairwise persona comparisons (top 20 by effect size) -- {model}.",
             label=f"tab:pairwise_{model_clean}",
         )
 
@@ -574,7 +815,7 @@ class TableGenerator:
         return _write_three_formats(
             df, out, "table", "appendix", "monetary_missingness_diagnostics",
             "na", "all", 1,
-            caption="Table A3. Monetary missingness diagnostics: M=1 vs M=0 comparison.",
+            caption="Monetary missingness diagnostics: M=1 vs M=0 comparison.",
             label="tab:missingness",
         )
 
@@ -595,8 +836,132 @@ class TableGenerator:
         return _write_three_formats(
             df, out, "table", "appendix", "prompt_inventory",
             "na", "all", 1,
-            caption="Table A5. Prompt inventory and model parameters.",
+            caption="Prompt inventory and model parameters.",
             label="tab:prompts",
+        )
+
+    def _tableA6_text_feature_inventory(self, out: Path) -> List[Path]:
+        """Appendix Table A6: Text feature inventory (static reference)."""
+        rows = [
+            # Length features
+            ("Length", "word_count", "Word Count", "Total words in complaint text"),
+            ("Length", "char_count", "Character Count", "Total characters in complaint text"),
+            ("Length", "sentence_count", "Sentence Count", "Total sentences in complaint text"),
+            ("Length", "avg_word_length", "Avg Word Length", "Mean characters per word"),
+            ("Length", "avg_sentence_length", "Avg Sentence Length", "Mean words per sentence"),
+            # Readability features
+            ("Readability", "flesch_reading_ease", "Flesch Reading Ease", "Readability score (0--100, higher = easier)"),
+            ("Readability", "flesch_kincaid_grade", "Flesch-Kincaid Grade", "US grade level required to understand"),
+            ("Readability", "gunning_fog", "Gunning Fog Index", "Complexity estimate based on polysyllabic words"),
+            ("Readability", "smog_index", "SMOG Index", "Years of education needed to comprehend"),
+            ("Readability", "ari", "Automated Readability", "Character-based readability index"),
+            # Vocabulary diversity
+            ("Vocabulary", "type_token_ratio", "Type-Token Ratio", "Unique words / total words"),
+            ("Vocabulary", "hapax_ratio", "Hapax Ratio", "Words appearing once / total words"),
+            ("Vocabulary", "mtld", "MTLD", "Measure of textual lexical diversity"),
+            ("Vocabulary", "hdd", "HD-D", "Hypergeometric distribution D diversity"),
+            # Sentiment features
+            ("Sentiment", "polarity", "TextBlob Polarity", "Sentiment polarity (--1 to +1)"),
+            ("Sentiment", "subjectivity", "TextBlob Subjectivity", "Subjectivity score (0 to 1)"),
+            ("Sentiment", "vader_compound", "VADER Compound", "Normalised composite sentiment (--1 to +1)"),
+            ("Sentiment", "vader_pos", "VADER Positive", "Proportion of positive sentiment"),
+            ("Sentiment", "vader_neg", "VADER Negative", "Proportion of negative sentiment"),
+            ("Sentiment", "vader_neu", "VADER Neutral", "Proportion of neutral sentiment"),
+            ("Sentiment", "emotional_intensity", "Emotional Intensity", "Absolute value of VADER compound"),
+            # Topic features
+            ("Topic", "dominant_topic", "Dominant Topic", "LDA-assigned primary topic (0--4)"),
+            ("Topic", "topic_coherence", "Topic Coherence", "Maximum topic probability (concentration)"),
+        ]
+
+        df = pd.DataFrame(rows, columns=["Group", "Feature ID", "Display Name", "Definition"])
+
+        # Custom LaTeX with ragged columns
+        tex_lines = [
+            r"\begin{table}[htbp]",
+            r"\centering",
+            r"\small",
+            r"\caption{Text feature inventory: 23 linguistic metrics extracted per complaint.}",
+            r"\label{tab:text_features}",
+            r"\begin{tabular}{>{\RaggedRight\arraybackslash}p{0.10\linewidth}",
+            r"                >{\ttfamily\RaggedRight\arraybackslash}p{0.18\linewidth}",
+            r"                >{\RaggedRight\arraybackslash}p{0.18\linewidth}",
+            r"                >{\RaggedRight\arraybackslash}p{0.44\linewidth}}",
+            r"\toprule",
+            r"Group & Feature ID & Display Name & Definition \\",
+            r"\midrule",
+        ]
+        prev_group = None
+        for group, fid, display, defn in rows:
+            g = _escape_latex(group) if group != prev_group else ""
+            tex_lines.append(f"{g} & {fid} & {_escape_latex(display)} & {_escape_latex(defn)} \\\\")
+            prev_group = group
+            if g and prev_group != rows[-1][0]:
+                pass  # no extra rule needed between groups in booktabs style
+        tex_lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table}"])
+
+        tex_name = _build_filename("table", "appendix", "text_feature_inventory", "na", "all", 1, "tex")
+        tex_path = out / tex_name
+        tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
+
+        md_name = _build_filename("table", "appendix", "text_feature_inventory", "na", "all", 1, "md")
+        md_path = out / md_name
+        md_path.write_text(_dataframe_to_markdown(df, "Text feature inventory."), encoding="utf-8")
+
+        csv_name = _build_filename("table", "appendix", "text_feature_inventory", "na", "all", 1, "csv")
+        csv_path = out / csv_name
+        df.to_csv(csv_path, index=False, encoding="utf-8")
+
+        logger.info("Written table: text_feature_inventory (.tex/.md/.csv)")
+        return [tex_path, md_path, csv_path]
+
+    def _tableA7_persona_distribution_diagnostics(self, out: Path, model: str) -> List[Path]:
+        """Appendix Table A7: Persona distribution diagnostics per dimension."""
+        model_r = self.ar.get(model, {})
+        corr = model_r.get("correlation", {})
+        rates = corr.get("rates_by_dimension", {})
+        if not rates:
+            logger.warning("No rates_by_dimension for %s; skipping Table A7.", model)
+            return []
+
+        rows = []
+        for dim in sorted(rates.keys()):
+            dim_rates = rates[dim]
+            if not dim_rates:
+                continue
+
+            values = list(dim_rates.values())
+            n_values = len(values)
+
+            # Compute entropy
+            total = sum(values) if values else 1
+            probs = [v / total for v in values] if total > 0 else []
+            entropy = -sum(p * np.log2(p) for p in probs if p > 0) if probs else 0.0
+
+            # Top value and its share
+            top_value = max(dim_rates, key=dim_rates.get) if dim_rates else "---"
+            top_share = max(values) / total if total > 0 and values else 0.0
+
+            rows.append((
+                dim.capitalize(),
+                f"{entropy:.3f}",
+                top_value,
+                _fmt_pct(top_share * 100, 1),
+                str(n_values),
+            ))
+
+        if not rows:
+            return []
+
+        df = pd.DataFrame(rows, columns=[
+            "Dimension", "Entropy", "Top Value", "Top Share", "N Values",
+        ])
+
+        model_clean = model.replace("-", "").replace("_", "")
+        return _write_three_formats(
+            df, out, "table", "appendix", "persona_distribution_diagnostics",
+            model_clean, "all", 1,
+            caption=f"Persona distribution diagnostics -- {model}.",
+            label=f"tab:persona_dist_{model_clean}",
         )
 
     # ==================================================================
@@ -673,7 +1038,7 @@ class TableGenerator:
         return _write_three_formats(
             df, out, "table", "robustness", "robustness_summary",
             model_clean, "all", 1,
-            caption=f"Table A4. Robustness summary -- {model}.",
+            caption=f"Robustness summary -- {model}.",
             label=f"tab:robustness_{model_clean}",
         )
 
@@ -707,7 +1072,7 @@ class TableGenerator:
         return _write_three_formats(
             df, out, "table", "robustness", "bayes_model_spec",
             "na", "all", 1,
-            caption="Table B1. Bayesian model specification and priors.",
+            caption="Bayesian model specification and priors.",
             label="tab:bayes_spec",
         )
 
@@ -762,7 +1127,7 @@ class TableGenerator:
         return _write_three_formats(
             df, out, "table", "robustness", "bayes_amplification_tier2",
             model_clean, metric_clean, 1,
-            caption=f"Table B2. Bayesian amplification robustness -- {model}, {metric.replace('_', ' ')}.",
+            caption=f"Bayesian amplification robustness -- {model}, {metric.replace('_', ' ')}.",
             label=f"tab:bayes_amp_{model_clean}_{metric_clean}",
         )
 
@@ -815,7 +1180,7 @@ class TableGenerator:
         return _write_three_formats(
             df, out, "table", "robustness", "bayes_ordinal_tier_distribution",
             model_clean, metric_clean, 1,
-            caption=f"Table B3. Bayesian ordinal tier distribution -- {model}, {metric.replace('_', ' ')}.",
+            caption=f"Bayesian ordinal tier distribution -- {model}, {metric.replace('_', ' ')}.",
             label=f"tab:bayes_ordinal_{model_clean}_{metric_clean}",
         )
 
@@ -857,6 +1222,6 @@ class TableGenerator:
         return _write_three_formats(
             df, out, "table", "robustness", "bayes_diagnostics",
             model_clean, "all", 1,
-            caption=f"Table B4. Bayesian MCMC diagnostics -- {model}.",
+            caption=f"Bayesian MCMC diagnostics -- {model}.",
             label=f"tab:bayes_diag_{model_clean}",
         )

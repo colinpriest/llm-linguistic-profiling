@@ -112,7 +112,10 @@ class FigureGenerator:
             self._fig7_missingness,
             self._fig8_amplification,
             self._fig9_worked_examples,
+            self._fig_golden_pipeline,
             self._fig10_robustness,
+            self._fig_pdp_appendix,
+            self._fig_cross_model_agreement,
         ]
         for method in fig_methods:
             try:
@@ -139,7 +142,7 @@ class FigureGenerator:
         ax.set_xlim(0, 14)
         ax.set_ylim(0, 3)
         ax.axis("off")
-        ax.set_title("Figure 1. End-to-End Experiment Pipeline", fontsize=13, fontweight="bold")
+        ax.set_title("End-to-End Experiment Pipeline", fontsize=13, fontweight="bold")
 
         steps = [
             ("CFPB\nSampling", 0.5),
@@ -157,7 +160,7 @@ class FigureGenerator:
                 facecolor="#e0e0e0", edgecolor="#333333", linewidth=1.2,
             )
             ax.add_patch(rect)
-            ax.text(x + 0.75, 1.5, label, ha="center", va="center", fontsize=8, fontweight="bold")
+            ax.text(x + 0.75, 1.5, label, ha="center", va="center", fontsize=12, fontweight="bold")
 
         # Arrows
         for i in range(len(steps) - 1):
@@ -194,7 +197,7 @@ class FigureGenerator:
         fig, axes = plt.subplots(n_models, 4, figsize=(14, 3.5 * n_models))
         if n_models == 1:
             axes = axes[np.newaxis, :]
-        fig.suptitle("Figure 2. Estimated Persona Distributions by Model", fontsize=13, fontweight="bold")
+        fig.suptitle("Estimated Persona Distributions by Model", fontsize=13, fontweight="bold")
 
         for i, model in enumerate(self.models):
             model_r = self.ar.get(model, {})
@@ -243,7 +246,7 @@ class FigureGenerator:
         fig, axes = plt.subplots(n_models, 2, figsize=(12, 4 * n_models))
         if n_models == 1:
             axes = axes[np.newaxis, :]
-        fig.suptitle("Figure 3. Correlation vs Causation", fontsize=13, fontweight="bold")
+        fig.suptitle("Correlation vs Causation", fontsize=13, fontweight="bold")
 
         for i, model in enumerate(self.models):
             model_r = self.ar.get(model, {})
@@ -307,7 +310,7 @@ class FigureGenerator:
             return None
 
         fig, axes = plt.subplots(1, n_models, figsize=(6 * n_models, 5), squeeze=False)
-        fig.suptitle("Figure 4. Distributive Fairness Gaps (Tier 2, Matched-Guise)", fontsize=13, fontweight="bold")
+        fig.suptitle("Distributive Fairness Gaps (Tier 2, Matched-Guise)", fontsize=13, fontweight="bold")
 
         for i, model in enumerate(self.models):
             ax = axes[0, i]
@@ -368,17 +371,13 @@ class FigureGenerator:
             return None
 
         fig, axes = plt.subplots(1, n_models, figsize=(6 * n_models, 5), squeeze=False)
-        fig.suptitle("Figure 5. Operational Friction (need_more_info) by Dimension", fontsize=13, fontweight="bold")
+        fig.suptitle("Operational Friction (need_more_info) by Dimension", fontsize=13, fontweight="bold")
 
         for i, model in enumerate(self.models):
             ax = axes[0, i]
             model_r = self.ar.get(model, {})
             proc_corr = model_r.get("process_correlation", {})
-            proc_rates = proc_corr.get("info_request_rates_by_dimension", {})
-
-            if not proc_rates:
-                # Try alternative key
-                proc_rates = proc_corr.get("rates_by_dimension", {})
+            proc_rates = proc_corr.get("info_rates_by_dimension", {})
 
             if proc_rates:
                 dims_plotted = []
@@ -427,7 +426,7 @@ class FigureGenerator:
             return None
 
         fig, axes = plt.subplots(1, n_models, figsize=(6 * n_models, 5), squeeze=False)
-        fig.suptitle("Figure 6. Neutralisation Effects (Before/After)", fontsize=13, fontweight="bold")
+        fig.suptitle("Neutralisation Effects (Before/After)", fontsize=13, fontweight="bold")
 
         for i, model in enumerate(self.models):
             ax = axes[0, i]
@@ -485,7 +484,7 @@ class FigureGenerator:
             return None
 
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        fig.suptitle("Figure 7. Monetary Severity Missingness Diagnostic", fontsize=13, fontweight="bold")
+        fig.suptitle("Monetary Severity Missingness Diagnostic", fontsize=13, fontweight="bold")
 
         # Panel A: Proportion known vs unknown
         ax_a = axes[0]
@@ -499,25 +498,33 @@ class FigureGenerator:
         else:
             ax_a.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax_a.transAxes)
 
-        # Panel B: Tier distribution differences
+        # Panel B: Tier distribution differences (grouped bar chart)
         ax_b = axes[1]
-        chars = miss_diag.get("complaint_characteristics", {})
-        tier_dist = chars.get("tier_distribution", {})
-        if tier_dist:
-            # Show basic info about the test
-            stat = tier_dist.get("statistic", float("nan"))
-            p_val = tier_dist.get("p_value", float("nan"))
-            test = tier_dist.get("test", "chi-squared")
-            ax_b.text(0.5, 0.5,
-                      f"Tier distribution: M=1 vs M=0\n"
-                      f"Test: {test}\n"
-                      f"Statistic: {stat:.2f}\n"
-                      f"p-value: {p_val:.4f}" if np.isfinite(stat) else "No data",
-                      ha="center", va="center", transform=ax_b.transAxes,
-                      fontsize=11, family="monospace",
-                      bbox=dict(boxstyle="round", facecolor="#f0f0f0"))
+        tier_counts = miss_diag.get("distributions", {}).get("tier", {})
+        present_counts = tier_counts.get("present", {})
+        missing_counts = tier_counts.get("missing", {})
+        if present_counts and missing_counts:
+            tiers = sorted(set(present_counts.keys()) | set(missing_counts.keys()), key=lambda t: int(t))
+            pres_total = sum(present_counts.values()) or 1
+            miss_total = sum(missing_counts.values()) or 1
+            present_vals = [present_counts.get(t, 0) / pres_total for t in tiers]
+            missing_vals = [missing_counts.get(t, 0) / miss_total for t in tiers]
+            x = np.arange(len(tiers))
+            w = 0.3
+            ax_b.bar(x - w / 2, present_vals, w, label="Amount present", color="#666666")
+            ax_b.bar(x + w / 2, missing_vals, w, label="Amount missing", color="#cccccc")
+            ax_b.set_xticks(x)
+            ax_b.set_xticklabels([f"Tier {t}" for t in tiers])
+            ax_b.set_ylabel("Proportion")
+            chars = miss_diag.get("complaint_characteristics", {})
+            tier_test = chars.get("tier_distribution", {})
+            chi2 = tier_test.get("chi2", float("nan"))
+            p_val = tier_test.get("p_value", float("nan"))
+            if np.isfinite(chi2):
+                sig = "***" if p_val < 0.001 else "**" if p_val < 0.01 else "*" if p_val < 0.05 else "ns"
+                ax_b.set_xlabel(f"\u03c7\u00b2={chi2:.1f}, p={p_val:.4f} {sig}", fontsize=9)
+            ax_b.legend(fontsize=8)
             ax_b.set_title("(b) Tier Distribution Comparison")
-            ax_b.axis("off")
         else:
             ax_b.text(0.5, 0.5, "No tier distribution data", ha="center", va="center", transform=ax_b.transAxes)
             ax_b.axis("off")
@@ -551,7 +558,7 @@ class FigureGenerator:
             return None
 
         fig, axes = plt.subplots(2, max(n_models, 1), figsize=(6 * max(n_models, 1), 10), squeeze=False)
-        fig.suptitle("Figure 8. Severity Amplification as Interaction", fontsize=13, fontweight="bold")
+        fig.suptitle("Severity Amplification as Interaction", fontsize=13, fontweight="bold")
 
         metrics = ["monetary_severity", "issue_severity"]
         metric_labels = ["Monetary Severity (M=1 only)", "Issue Severity (full sample)"]
@@ -623,25 +630,26 @@ class FigureGenerator:
         n_cases = min(3, len(self.complaints))
         examples = self.complaints[:n_cases]
 
-        fig, axes = plt.subplots(n_cases, 1, figsize=(12, 3.5 * n_cases))
+        fig, axes = plt.subplots(n_cases, 1, figsize=(14, 5 * n_cases))
         if n_cases == 1:
             axes = [axes]
-        fig.suptitle("Figure 9. Worked Examples", fontsize=13, fontweight="bold")
+        fig.suptitle("Worked Examples", fontsize=16, fontweight="bold")
 
         for idx, (ax, complaint) in enumerate(zip(axes, examples)):
             ax.axis("off")
             text = complaint.narrative[:300] + ("..." if len(complaint.narrative) > 300 else "")
-            wrapped = textwrap.fill(text, width=90)
+            wrapped = textwrap.fill(text, width=70)
             display_text = (
                 f"Case {idx+1} (ID: {complaint.case_id[:8]}...)\n"
                 f"Product: {complaint.product_category} | Issue: {complaint.issue_category}\n"
                 f"Monetary severity: {complaint.monetary_severity} | Issue severity: {complaint.issue_severity}\n"
-                f"{'─' * 80}\n"
+                f"{'─' * 60}\n"
                 f"{wrapped}"
             )
-            ax.text(0.02, 0.95, display_text, transform=ax.transAxes,
-                    fontsize=8, family="monospace", verticalalignment="top",
-                    bbox=dict(boxstyle="round", facecolor="#f8f8f8", edgecolor="#cccccc"))
+            ax.text(0.01, 0.95, display_text, transform=ax.transAxes,
+                    fontsize=16, family="monospace", verticalalignment="top",
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor="#f8f8f8",
+                              edgecolor="#cccccc"))
 
         fig.tight_layout(rect=[0, 0, 1, 0.95])
 
@@ -653,6 +661,177 @@ class FigureGenerator:
             fig, self.fig_dir, "worked_examples_panel", "both", "all", 1,
             caption=f"Figure 9. Worked examples panel showing {n_cases} complaint cases "
                     "with original text, product/issue categories, and severity classifications.",
+            metadata=meta,
+        )
+
+    # ==================================================================
+    # Golden Example: Single complaint through the full pipeline
+    # ==================================================================
+
+    def _fig_golden_pipeline(self) -> Optional[Tuple[Path, Path]]:
+        import matplotlib.pyplot as plt
+        import matplotlib.gridspec as gridspec
+        import matplotlib.colors as mcolors
+
+        mit_eff = self.ar.get("mitigation_effectiveness", {})
+        ge = mit_eff.get("golden_example", {})
+        if not ge or not ge.get("original_text"):
+            return None
+
+        models = self.models
+        if not models:
+            return None
+
+        tier_labels = {0: "Tier 0\n(No action)", 1: "Tier 1\n(Non-monetary)", 2: "Tier 2\n(Monetary)"}
+        tier_cmap = mcolors.ListedColormap(["#e0e0e0", "#999999", "#333333"])
+
+        fig = plt.figure(figsize=(16, 24))
+        gs = gridspec.GridSpec(5, 1, figure=fig, height_ratios=[2, 1, 1, 8, 1.5],
+                               hspace=0.35)
+        fig.suptitle("Golden Example: One Complaint Through the Pipeline",
+                     fontsize=16, fontweight="bold", y=0.98)
+
+        # --- Panel A: Original complaint text ---
+        ax_a = fig.add_subplot(gs[0])
+        ax_a.axis("off")
+        original = ge.get("original_text", "")
+        wrapped = textwrap.fill(original, width=100)
+        product = ge.get("product", "")
+        issue = ge.get("issue", "")
+        case_id = ge.get("complaint_id", "")[:12]
+        header = f"Stage 1 — Original Complaint  [{product} / {issue}]  (ID: {case_id}...)"
+        ax_a.text(0.01, 0.98, header, transform=ax_a.transAxes,
+                  fontsize=13, fontweight="bold", verticalalignment="top")
+        ax_a.text(0.01, 0.82, wrapped, transform=ax_a.transAxes,
+                  fontsize=11, family="monospace", verticalalignment="top",
+                  bbox=dict(boxstyle="round,pad=0.4", facecolor="#f8f8f8",
+                            edgecolor="#cccccc"))
+
+        # --- Panel B: Persona estimation ---
+        ax_b = fig.add_subplot(gs[1])
+        ax_b.axis("off")
+        ax_b.text(0.01, 0.95, "Stage 2 — Persona Estimation",
+                  transform=ax_b.transAxes, fontsize=13, fontweight="bold",
+                  verticalalignment="top")
+        personas = ge.get("estimated_persona", {})
+        dims = ["age", "geographic", "education", "socioeconomic"]
+        y_pos = 0.65
+        for model in models:
+            p = personas.get(model, {})
+            vals = "  |  ".join(f"{d}: {p.get(d, '?')}" for d in dims)
+            ax_b.text(0.03, y_pos, f"{model}:  {vals}", transform=ax_b.transAxes,
+                      fontsize=12, family="monospace",
+                      bbox=dict(boxstyle="round,pad=0.3", facecolor="#eef2ff",
+                                edgecolor="#aabbdd"))
+            y_pos -= 0.40
+
+        # --- Panel C: Baseline remedy tiers ---
+        ax_c = fig.add_subplot(gs[2])
+        ax_c.axis("off")
+        ax_c.text(0.01, 0.95, "Stage 3 — Baseline Remedy Decision",
+                  transform=ax_c.transAxes, fontsize=13, fontweight="bold",
+                  verticalalignment="top")
+        orig_tiers = ge.get("original_tiers", {})
+        x_pos = 0.03
+        for model in models:
+            tier = orig_tiers.get(model, "?")
+            label = tier_labels.get(tier, f"Tier {tier}")
+            color = ["#e0e0e0", "#999999", "#333333"][tier] if isinstance(tier, int) and 0 <= tier <= 2 else "#ffffff"
+            text_color = "white" if tier == 2 else "black"
+            ax_c.text(x_pos, 0.45, f"{model}:  {label.replace(chr(10), ' ')}",
+                      transform=ax_c.transAxes, fontsize=12, fontweight="bold",
+                      color=text_color,
+                      bbox=dict(boxstyle="round,pad=0.4", facecolor=color,
+                                edgecolor="#666666"))
+            x_pos += 0.45
+
+        # --- Panel D: Matched-guise heatmap ---
+        ax_d = fig.add_subplot(gs[3])
+        persona_tiers = ge.get("persona_tiers", {})
+        if persona_tiers and any(persona_tiers.values()):
+            # Build sorted persona list from the first model that has data
+            first_model_tiers = next((v for v in persona_tiers.values() if v), {})
+            persona_keys = sorted(first_model_tiers.keys())
+            n_personas = len(persona_keys)
+            n_models = len(models)
+
+            # Build matrix: rows=personas, cols=models
+            matrix = np.full((n_personas, n_models), np.nan)
+            for j, model in enumerate(models):
+                model_pt = persona_tiers.get(model, {})
+                for i, pk in enumerate(persona_keys):
+                    if pk in model_pt:
+                        matrix[i, j] = model_pt[pk]
+
+            im = ax_d.imshow(matrix, aspect="auto", cmap=tier_cmap, vmin=0, vmax=2,
+                             interpolation="nearest")
+            ax_d.set_yticks(range(n_personas))
+            ax_d.set_yticklabels([pk.replace("_", " ") for pk in persona_keys], fontsize=7)
+            ax_d.set_xticks(range(n_models))
+            ax_d.set_xticklabels(models, fontsize=11)
+            ax_d.set_title("Stages 4–5 — Matched-Guise Rewrite Tier Decisions (36 personas)",
+                           fontsize=13, fontweight="bold", pad=10)
+
+            # Annotate cells with tier values
+            for i in range(n_personas):
+                for j in range(n_models):
+                    val = matrix[i, j]
+                    if np.isfinite(val):
+                        text_color = "white" if val == 2 else "black"
+                        ax_d.text(j, i, f"{int(val)}", ha="center", va="center",
+                                  fontsize=8, color=text_color, fontweight="bold")
+
+            # Colorbar legend
+            cbar = fig.colorbar(im, ax=ax_d, ticks=[0, 1, 2], shrink=0.5, pad=0.02)
+            cbar.ax.set_yticklabels(["Tier 0", "Tier 1", "Tier 2"], fontsize=9)
+        else:
+            ax_d.axis("off")
+            ax_d.text(0.5, 0.5, "No matched-guise data available",
+                      ha="center", va="center", transform=ax_d.transAxes, fontsize=12)
+
+        # --- Panel E: Neutralisation & final remedy ---
+        ax_e = fig.add_subplot(gs[4])
+        ax_e.axis("off")
+        ax_e.text(0.01, 0.90, "Stages 6–7 — Neutralisation & Final Remedy",
+                  transform=ax_e.transAxes, fontsize=13, fontweight="bold",
+                  verticalalignment="top")
+        neut_tiers = ge.get("neutralized_tiers", {})
+        x_pos = 0.03
+        for model in models:
+            orig_t = orig_tiers.get(model, "?")
+            neut_t = neut_tiers.get(model, "?")
+            orig_label = tier_labels.get(orig_t, f"Tier {orig_t}").replace("\n", " ")
+            neut_label = tier_labels.get(neut_t, f"Tier {neut_t}").replace("\n", " ")
+
+            delta = ""
+            if isinstance(orig_t, int) and isinstance(neut_t, int):
+                diff = neut_t - orig_t
+                if diff > 0:
+                    delta = f"  (+{diff})"
+                elif diff < 0:
+                    delta = f"  ({diff})"
+                else:
+                    delta = "  (no change)"
+
+            neut_color = ["#e0e0e0", "#999999", "#333333"][neut_t] if isinstance(neut_t, int) and 0 <= neut_t <= 2 else "#ffffff"
+            text_color = "white" if neut_t == 2 else "black"
+            ax_e.text(x_pos, 0.45,
+                      f"{model}:  {orig_label}  \u2192  {neut_label}{delta}",
+                      transform=ax_e.transAxes, fontsize=12, fontweight="bold",
+                      color=text_color,
+                      bbox=dict(boxstyle="round,pad=0.4", facecolor=neut_color,
+                                edgecolor="#666666"))
+            x_pos += 0.45
+
+        meta = self._base_metadata()
+        meta["analysis_type"] = "descriptive"
+        meta["golden_example_id"] = ge.get("complaint_id", "")
+        return _save_figure_files(
+            fig, self.fig_dir, "golden_example_pipeline", "both", "all", 1,
+            caption="Golden example: a single complaint tracked through all pipeline stages. "
+                    "(a) Original complaint text. (b) LLM-estimated persona. "
+                    "(c) Baseline remedy tier. (d) Matched-guise tier decisions across 36 personas. "
+                    "(e) Post-neutralisation remedy tier with change from baseline.",
             metadata=meta,
         )
 
@@ -671,7 +850,7 @@ class FigureGenerator:
             return None
 
         fig, axes = plt.subplots(1, max(n_models, 1), figsize=(6 * max(n_models, 1), 5), squeeze=False)
-        fig.suptitle("Figure 10. Robustness and Sensitivity", fontsize=13, fontweight="bold")
+        fig.suptitle("Robustness and Sensitivity", fontsize=13, fontweight="bold")
 
         for i, model in enumerate(self.models):
             ax = axes[0, i]
@@ -747,6 +926,215 @@ class FigureGenerator:
             ax.set_ylabel("Rate")
             ax.set_ylim(0, 1)
         ax.set_title(title, fontsize=9)
+
+    # ==================================================================
+    # PDP + CROSS-MODEL AGREEMENT FIGURES
+    # ==================================================================
+
+    def _fig_pdp_appendix(self) -> Optional[Tuple[Path, Path]]:
+        """Partial dependence plots for top persona-predicting features."""
+        import matplotlib.pyplot as plt
+        from io import BytesIO
+        from PIL import Image
+        import base64
+
+        pa = self.ar.get("persona_analysis", {})
+        if not pa:
+            logger.warning("No persona_analysis data; skipping PDP figure.")
+            return None
+
+        fig_dir = self.output_root / "analysis" / "figures" / "main"
+        fig_dir.mkdir(parents=True, exist_ok=True)
+
+        dims_to_plot = ["age", "geographic", "education", "socioeconomic", "gender", "esl"]
+
+        for model in self.models:
+            model_pa = pa.get(model, {})
+            dims_data = model_pa.get("dimensions", {})
+            if not dims_data:
+                continue
+
+            # Collect PDP charts: one per dimension (first value, top-1 feature)
+            pdp_panels = []
+            for dim in dims_to_plot:
+                dim_data = dims_data.get(dim, {})
+                for value, val_data in sorted(dim_data.items()):
+                    if isinstance(val_data, dict) and val_data.get("pdp_charts"):
+                        chart = val_data["pdp_charts"][0]
+                        pdp_panels.append({
+                            "dim": dim,
+                            "value": value,
+                            "feature": chart.get("feature_display", chart.get("feature", "?")),
+                            "b64": chart["chart_b64"],
+                        })
+                        break  # One per dimension
+
+            if not pdp_panels:
+                continue
+
+            n_panels = len(pdp_panels)
+            n_cols = min(3, n_panels)
+            n_rows = (n_panels + n_cols - 1) // n_cols
+
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
+            if n_rows == 1 and n_cols == 1:
+                axes = np.array([[axes]])
+            elif n_rows == 1:
+                axes = axes[np.newaxis, :]
+            elif n_cols == 1:
+                axes = axes[:, np.newaxis]
+
+            for idx, panel in enumerate(pdp_panels):
+                r, c = divmod(idx, n_cols)
+                ax = axes[r, c]
+                try:
+                    img_bytes = base64.b64decode(panel["b64"])
+                    img = Image.open(BytesIO(img_bytes))
+                    ax.imshow(np.array(img))
+                    ax.set_title(f"{panel['dim'].capitalize()}: {panel['value']}\n({panel['feature']})", fontsize=9)
+                except Exception as e:
+                    ax.text(0.5, 0.5, f"Error: {e}", ha="center", va="center", transform=ax.transAxes)
+                    ax.set_title(f"{panel['dim'].capitalize()}", fontsize=9)
+                ax.axis("off")
+
+            # Hide unused axes
+            for idx in range(n_panels, n_rows * n_cols):
+                r, c = divmod(idx, n_cols)
+                axes[r, c].axis("off")
+
+            fig.suptitle(f"Partial Dependence Plots: Top Persona-Predicting Features ({model})", fontsize=12)
+            fig.tight_layout(rect=[0, 0, 1, 0.95])
+
+            model_clean = model.replace("-", "").replace("_", "")
+            result = _save_figure_files(
+                fig, fig_dir,
+                topic=f"pdp_persona_features",
+                model=model_clean,
+                subset="all",
+                version=1,
+                caption=f"Partial dependence plots for top persona-predicting text features ({model}).",
+                metadata={
+                    "run_id": self.run_id,
+                    "seed": self.seed,
+                    "n_complaints": self.n_complaints,
+                    "models": self.models,
+                    "generated_at": datetime.now().isoformat(),
+                    "analysis_type": "exploratory",
+                    "n_panels": n_panels,
+                },
+            )
+            plt.close(fig)
+            # Return last model's result (both models produce separate files)
+            last_result = result
+
+        return last_result if 'last_result' in dir() else None
+
+    def _fig_cross_model_agreement(self) -> Optional[Tuple[Path, Path]]:
+        """Cross-model feature importance agreement (per-dimension Spearman correlations)."""
+        import matplotlib.pyplot as plt
+
+        pa = self.ar.get("persona_analysis", {})
+        mit_eff = self.ar.get("mitigation_effectiveness", {})
+        if not pa or len(self.models) < 2:
+            logger.warning("Insufficient data for cross-model agreement figure.")
+            return None
+
+        fig_dir = self.output_root / "analysis" / "figures" / "main"
+        fig_dir.mkdir(parents=True, exist_ok=True)
+
+        # Compute per-dimension Spearman rank correlations between models
+        from scipy.stats import spearmanr
+
+        model_a, model_b = self.models[0], self.models[1]
+        pa_a = pa.get(model_a, {}).get("dimensions", {})
+        pa_b = pa.get(model_b, {}).get("dimensions", {})
+
+        dim_correlations = {}
+        dims_to_check = ["age", "geographic", "education", "socioeconomic", "gender", "esl"]
+
+        for dim in dims_to_check:
+            # Collect feature importances from both models for this dimension
+            feats_a = {}
+            feats_b = {}
+            for value, val_data in pa_a.get(dim, {}).items():
+                if isinstance(val_data, dict) and "top_features" in val_data:
+                    for f in val_data["top_features"]:
+                        feat_name = f.get("feature", "")
+                        feats_a[feat_name] = feats_a.get(feat_name, 0) + f.get("importance", 0)
+            for value, val_data in pa_b.get(dim, {}).items():
+                if isinstance(val_data, dict) and "top_features" in val_data:
+                    for f in val_data["top_features"]:
+                        feat_name = f.get("feature", "")
+                        feats_b[feat_name] = feats_b.get(feat_name, 0) + f.get("importance", 0)
+
+            common = set(feats_a.keys()) & set(feats_b.keys())
+            if len(common) >= 3:
+                vals_a = [feats_a[f] for f in sorted(common)]
+                vals_b = [feats_b[f] for f in sorted(common)]
+                rho, _ = spearmanr(vals_a, vals_b)
+                dim_correlations[dim] = rho
+
+        # Get overall agreement from mitigation_effectiveness
+        fia = mit_eff.get("feature_importance_agreement", {})
+        overall_rho = None
+        for pair_key, rho_val in fia.items():
+            overall_rho = rho_val
+            break
+
+        if not dim_correlations and overall_rho is None:
+            logger.warning("No agreement data for cross-model figure.")
+            return None
+
+        # Build figure
+        fig, ax = plt.subplots(figsize=(8, 5))
+
+        dims_sorted = sorted(dim_correlations.keys())
+        rhos = [dim_correlations[d] for d in dims_sorted]
+        labels = [d.capitalize() for d in dims_sorted]
+
+        x = range(len(dims_sorted))
+        bars = ax.bar(x, rhos, color="#666666", edgecolor="black", linewidth=0.5)
+
+        # Annotate bars
+        for bar, rho_val in zip(bars, rhos):
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.02,
+                    f"{rho_val:.2f}", ha="center", va="bottom", fontsize=9)
+
+        ax.set_xticks(list(x))
+        ax.set_xticklabels(labels, rotation=30, ha="right")
+        ax.set_ylabel("Spearman Rank Correlation")
+        ax.set_ylim(-0.2, 1.1)
+        ax.axhline(y=0, color="black", linewidth=0.5, linestyle="-")
+
+        # Add overall annotation
+        if overall_rho is not None:
+            ax.axhline(y=overall_rho, color="#999999", linewidth=1.5, linestyle="--")
+            ax.text(len(dims_sorted) - 0.5, overall_rho + 0.03,
+                    f"Overall: {overall_rho:.3f}", ha="right", fontsize=9, color="#666666")
+
+        ax.set_title(f"Cross-Model Feature Importance Agreement ({model_a} vs {model_b})", fontsize=11)
+        fig.tight_layout()
+
+        result = _save_figure_files(
+            fig, fig_dir,
+            topic="cross_model_feature_agreement",
+            model="both",
+            subset="all",
+            version=1,
+            caption=f"Cross-model feature importance agreement: per-dimension Spearman rank correlations between {model_a} and {model_b}.",
+            metadata={
+                "run_id": self.run_id,
+                "seed": self.seed,
+                "n_complaints": self.n_complaints,
+                "models": self.models,
+                "generated_at": datetime.now().isoformat(),
+                "analysis_type": "exploratory",
+                "n_dimensions": len(dim_correlations),
+                "overall_rho": overall_rho,
+            },
+        )
+        plt.close(fig)
+        return result
 
     # ==================================================================
     # BAYESIAN APPENDIX FIGURES

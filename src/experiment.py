@@ -1134,10 +1134,17 @@ class Experiment:
                 continue
 
             logger.info("  Model: %s (%d re-estimates)", model, len(matched))
+            match_rates_model: Dict[str, float] = {}
             for dim in CAUSAL_DIMS:
                 correct = sum(1 for intended, est in matched if getattr(est, dim) == intended[dim])
                 rate = correct / len(matched) if matched else 0
+                match_rates_model[dim] = rate
                 logger.info("    %s match: %d/%d (%.1f%%)", dim, correct, len(matched), rate * 100)
+
+            # Store match rates in analysis_results
+            mc = self.analysis_results.setdefault("manipulation_checks", {})
+            rw_rates = mc.setdefault("rewrite_match_rates", {})
+            rw_rates[model] = match_rates_model
 
             # Estimated persona distribution on rewritten records
             est_df = pd.DataFrame([
@@ -1375,6 +1382,7 @@ class Experiment:
                     for e in orig_ests
                 ])
                 logger.info("  Comparison: original vs neutralized persona signal")
+                signal_model: Dict[str, Dict[str, float]] = {}
                 for dim in ESTIMATE_DIMS:
                     orig_entropy = orig_df[dim].value_counts(normalize=True).pipe(
                         lambda s: -(s * np.log2(s.clip(lower=1e-10))).sum()
@@ -1382,7 +1390,18 @@ class Experiment:
                     neut_entropy = est_df[dim].value_counts(normalize=True).pipe(
                         lambda s: -(s * np.log2(s.clip(lower=1e-10))).sum()
                     )
+                    reduction_pct = (1 - neut_entropy / orig_entropy) * 100 if orig_entropy > 0 else 0.0
+                    signal_model[dim] = {
+                        "original_entropy": float(orig_entropy),
+                        "neutralized_entropy": float(neut_entropy),
+                        "reduction_pct": float(reduction_pct),
+                    }
                     logger.info("    %s entropy: original=%.3f, neutralized=%.3f", dim, orig_entropy, neut_entropy)
+
+                # Store signal reduction in analysis_results
+                mc = self.analysis_results.setdefault("manipulation_checks", {})
+                sr = mc.setdefault("signal_reduction", {})
+                sr[model] = signal_model
 
     # ------------------------------------------------------------------
     # Step 7: Remedy Decision (Neutralized)
@@ -3025,6 +3044,54 @@ class Experiment:
 
         return "\n".join(lines)
 
+    def _capture_bridging_data(self) -> str:
+        """Capture text-feature → persona → outcome data for bridging commentary."""
+        lines: List[str] = []
+        pa = self.analysis_results.get("persona_analysis", {})
+        if not pa:
+            return ""
+
+        for model in self.models:
+            model_pa = pa.get(model, {})
+            dims = model_pa.get("dimensions", {})
+            if not dims:
+                continue
+            lines.append(f"── Model: {model} ──")
+            lines.append("TOP TEXT FEATURES PREDICTING PERSONA DIMENSIONS:")
+            for dim_name, dim_data in dims.items():
+                for value, val_data in dim_data.items():
+                    top_feats = val_data.get("top_features", [])
+                    auc = val_data.get("auc", 0)
+                    summary = val_data.get("summary", "")
+                    feat_str = ", ".join(
+                        f"{f['feature_display']} ({f['importance']:.0f})"
+                        for f in top_feats[:3]
+                    )
+                    lines.append(f"  {dim_name}={value}: {feat_str}  (AUC={auc:.3f})")
+                    if summary:
+                        lines.append(f"    → {summary}")
+
+            # Add tier rates by dimension from correlation analysis
+            mr = self.analysis_results.get(model, {})
+            corr = mr.get("correlation", {})
+            rates = corr.get("rates_by_dimension", {})
+            if rates:
+                lines.append("TIER 2 RATES BY PERSONA DIMENSION:")
+                for dim_name, dim_rates in rates.items():
+                    rate_str = ", ".join(f"{v}={r:.3f}" for v, r in dim_rates.items())
+                    lines.append(f"  {dim_name}: {rate_str}")
+            lines.append("")
+
+        # Add cross-model agreement
+        mit_eff = self.analysis_results.get("mitigation_effectiveness", {})
+        fia = mit_eff.get("feature_importance_agreement", {})
+        if fia:
+            lines.append("CROSS-MODEL FEATURE IMPORTANCE AGREEMENT:")
+            for pair, corr_val in fia.items():
+                lines.append(f"  {pair}: Spearman rho = {corr_val:.3f}")
+
+        return "\n".join(lines)
+
     def _capture_mitigation_effectiveness_data(self) -> str:
         """Capture mitigation effectiveness analysis for exec summary.
 
@@ -3657,8 +3724,29 @@ class Experiment:
             else:
                 logger.warning("  Section 6 generation failed")
 
-        # Section 7: Conclusion (uses all 6 prior sections)
-        logger.info("── Generating Exec Section 7: Conclusion ──")
+        # Section 7: Bridging Commentary (text → persona → outcome)
+        logger.info("── Generating Exec Section 7: Bridging Commentary ──")
+        data = self._capture_bridging_data()
+        if data:
+            text = self._generate_exec_section(
+                "bridging_text_to_outcome",
+                "one-shot-example-bridging-commentary.md",
+                data,
+                "This section connects three layers of evidence from the experiment: "
+                "(i) observable text characteristics that predict persona assignment, "
+                "(ii) the persona labels themselves, and (iii) how those labels relate "
+                "to remedy tier outcomes and tier dispersion. Use association / consistency "
+                "language (not causal claims). Keep it to 2-3 paragraphs. Reference "
+                "specific text features, AUC scores, and tier rates where available.",
+            )
+            if text:
+                sections["bridging_text_to_outcome"] = text
+                logger.info("  Section 7 generated (%d chars)", len(text))
+            else:
+                logger.warning("  Section 7 generation failed")
+
+        # Section 8: Conclusion (uses all prior sections)
+        logger.info("── Generating Exec Section 8: Conclusion ──")
         if sections:
             combined_sections = "\n\n".join(sections.values())
             text = self._generate_exec_section(

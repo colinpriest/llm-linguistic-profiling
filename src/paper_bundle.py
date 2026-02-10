@@ -23,6 +23,25 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+def _latex_escape(text: str) -> str:
+    """Escape special LaTeX characters in plain text."""
+    replacements = [
+        ("\\", "\\textbackslash{}"),
+        ("{", "\\{"),
+        ("}", "\\}"),
+        ("$", "\\$"),
+        ("&", "\\&"),
+        ("#", "\\#"),
+        ("%", "\\%"),
+        ("_", "\\_"),
+        ("~", "\\textasciitilde{}"),
+        ("^", "\\textasciicircum{}"),
+    ]
+    for old, new in replacements:
+        text = text.replace(old, new)
+    return text
+
+
 # ------------------------------------------------------------------
 # Folder structure definition
 # ------------------------------------------------------------------
@@ -48,7 +67,9 @@ _REQUIRED_DIRS = [
     "qualitative",
     "paper_pack/latex/tables",
     "paper_pack/latex/figures",
+    "paper_pack/latex/appendix_tables",
     "paper_pack/latex/appendix_bayes",
+    "paper_pack/latex/appendix_worked_examples",
     "paper_pack/docx/tables",
     "paper_pack/docx/figures",
     "paper_pack/markdown/tables",
@@ -330,7 +351,7 @@ class PaperBundleGenerator:
         fg.generate_all_figures()
 
     def _generate_qualitative_cards(self) -> None:
-        """Generate worked example cards as Markdown."""
+        """Generate worked example cards as Markdown and LaTeX."""
         qual_dir = self.output_root / "qualitative"
         if not self.complaints:
             return
@@ -346,6 +367,8 @@ class PaperBundleGenerator:
 
         for case in cases:
             card_id = case.case_id[:8]
+
+            # Markdown version
             card_path = qual_dir / f"card__appendix__worked_example_{card_id}__both__all__v1.md"
             card_lines = [
                 f"# Worked Example: {card_id}",
@@ -362,7 +385,32 @@ class PaperBundleGenerator:
             ]
             card_path.write_text("\n".join(card_lines), encoding="utf-8")
 
-        logger.info("Generated %d qualitative cards", len(cases))
+            # LaTeX version
+            tex_path = qual_dir / f"card__appendix__worked_example_{card_id}__both__all__v1.tex"
+            narrative_escaped = _latex_escape(
+                case.narrative[:500] + ("..." if len(case.narrative) > 500 else "")
+            )
+            tex_lines = [
+                f"\\subsection{{Worked Example: {card_id}}}",
+                f"\\label{{sec:worked-example-{card_id}}}",
+                "",
+                "\\begin{description}",
+                f"  \\item[Product] {_latex_escape(case.product_category)}",
+                f"  \\item[Issue] {_latex_escape(case.issue_category)}",
+                f"  \\item[Monetary severity] {_latex_escape(case.monetary_severity)}",
+                f"  \\item[Issue severity] {_latex_escape(case.issue_severity)}",
+                "\\end{description}",
+                "",
+                "\\paragraph{Original Complaint}",
+                "",
+                "\\begin{quote}",
+                f"\\small {narrative_escaped}",
+                "\\end{quote}",
+                "",
+            ]
+            tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
+
+        logger.info("Generated %d qualitative cards (Markdown + LaTeX)", len(cases))
 
     def _generate_reports(self) -> None:
         """Generate pre-reg compliance and summary reports."""
@@ -449,7 +497,50 @@ class PaperBundleGenerator:
         for f in src_figs.glob("*.png"):
             shutil.copy2(f, dst_md_figs / f.name)
 
-        logger.info("Paper pack populated")
+        # Appendix tables → dedicated appendix_tables/ folder
+        dst_app_tables = self.output_root / "paper_pack" / "latex" / "appendix_tables"
+        src_app_tables = self.output_root / "analysis" / "tables" / "appendix"
+        if src_app_tables.exists():
+            for f in src_app_tables.glob("*.tex"):
+                shutil.copy2(f, dst_app_tables / f.name)
+            for f in src_app_tables.glob("*.md"):
+                shutil.copy2(f, dst_md_tables / f.name)
+
+        # Non-Bayes robustness tables → appendix_tables/ (Bayes goes to appendix_bayes/)
+        src_rob_tables = self.output_root / "analysis" / "tables" / "robustness"
+        if src_rob_tables.exists():
+            for f in src_rob_tables.glob("*.tex"):
+                shutil.copy2(f, dst_app_tables / f.name)
+            for f in src_rob_tables.glob("*.md"):
+                shutil.copy2(f, dst_md_tables / f.name)
+
+        # Appendix figures
+        src_app_figs = self.output_root / "analysis" / "figures" / "appendix"
+        if src_app_figs.exists():
+            for f in src_app_figs.rglob("*.pdf"):
+                shutil.copy2(f, dst_figs / f.name)
+            for f in src_app_figs.rglob("*.png"):
+                shutil.copy2(f, dst_md_figs / f.name)
+
+        # Worked examples → appendix_worked_examples/
+        dst_worked = self.output_root / "paper_pack" / "latex" / "appendix_worked_examples"
+        src_qual = self.output_root / "qualitative"
+        if src_qual.exists():
+            for f in src_qual.glob("*.tex"):
+                shutil.copy2(f, dst_worked / f.name)
+
+        # Bayesian appendix (dedicated folder for LaTeX \input convenience)
+        dst_bayes = self.output_root / "paper_pack" / "latex" / "appendix_bayes"
+        src_bayes_tables = self.output_root / "analysis" / "tables" / "robustness" / "bayes"
+        if src_bayes_tables.exists():
+            for f in src_bayes_tables.glob("*.tex"):
+                shutil.copy2(f, dst_bayes / f.name)
+        src_bayes_figs = self.output_root / "analysis" / "figures" / "appendix" / "bayes"
+        if src_bayes_figs.exists():
+            for f in src_bayes_figs.glob("*.pdf"):
+                shutil.copy2(f, dst_bayes / f.name)
+
+        logger.info("Paper pack populated (main + appendix_tables + worked_examples + bayes)")
 
     def _generate_index_files(self) -> None:
         """Generate stable pointer files for LaTeX/Markdown includes."""
@@ -465,6 +556,48 @@ class PaperBundleGenerator:
             for f in tex_files:
                 index_lines.append(f"\\input{{tables/{f.name}}}")
             (latex_tables / "_index.tex").write_text("\n".join(index_lines), encoding="utf-8")
+
+        # LaTeX appendix_tables index
+        latex_app_tables = self.output_root / "paper_pack" / "latex" / "appendix_tables"
+        app_tex = sorted(latex_app_tables.glob("*.tex"))
+        if app_tex:
+            index_lines = [
+                "% Auto-generated appendix table index for LaTeX \\input",
+                f"% Run ID: {self.run_id}",
+                "",
+            ]
+            for f in app_tex:
+                index_lines.append(f"\\input{{appendix_tables/{f.name}}}")
+            (latex_app_tables / "_index.tex").write_text("\n".join(index_lines), encoding="utf-8")
+
+        # LaTeX appendix_worked_examples index
+        latex_worked = self.output_root / "paper_pack" / "latex" / "appendix_worked_examples"
+        worked_tex = sorted(latex_worked.glob("*.tex"))
+        if worked_tex:
+            index_lines = [
+                "% Auto-generated worked examples appendix index for LaTeX \\input",
+                f"% Run ID: {self.run_id}",
+                "",
+            ]
+            for f in worked_tex:
+                index_lines.append(f"\\input{{appendix_worked_examples/{f.name}}}")
+            (latex_worked / "_index.tex").write_text("\n".join(index_lines), encoding="utf-8")
+
+        # LaTeX appendix_bayes index
+        latex_bayes = self.output_root / "paper_pack" / "latex" / "appendix_bayes"
+        bayes_tex = sorted(latex_bayes.glob("*.tex"))
+        bayes_pdf = sorted(latex_bayes.glob("*.pdf"))
+        if bayes_tex or bayes_pdf:
+            index_lines = [
+                "% Auto-generated Bayesian appendix index for LaTeX",
+                f"% Run ID: {self.run_id}",
+                "",
+            ]
+            for f in bayes_tex:
+                index_lines.append(f"\\input{{appendix_bayes/{f.name}}}")
+            for f in bayes_pdf:
+                index_lines.append(f"\\includegraphics[width=\\textwidth]{{appendix_bayes/{f.name}}}")
+            (latex_bayes / "_index.tex").write_text("\n".join(index_lines), encoding="utf-8")
 
         # LaTeX figure index
         latex_figs = self.output_root / "paper_pack" / "latex" / "figures"

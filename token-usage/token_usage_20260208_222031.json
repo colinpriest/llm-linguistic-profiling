@@ -1,0 +1,38 @@
+{
+  "metadata": {
+    "timestamp": "20260208_222031",
+    "models": [
+      "gpt-4o-mini",
+      "gpt-5-mini"
+    ],
+    "num_complaints": 20000,
+    "threads": 100,
+    "seed": 42,
+    "data_path": "./data/complaints.csv",
+    "cache_dir": "./cache"
+  },
+  "usage": {
+    "totals": {
+      "requests": 2,
+      "prompt_tokens": 24221,
+      "completion_tokens": 2259,
+      "total_tokens": 26480,
+      "estimated_cost_usd": null
+    },
+    "per_model": {
+      "gpt-5.2": {
+        "requests": 2,
+        "prompt_tokens": 24221,
+        "completion_tokens": 2259,
+        "estimated_cost_usd": null,
+        "pricing_per_1m": null
+      }
+    },
+    "pricing_reference": {
+      "gpt-4o-mini": {
+        "prompt": 0.15,
+        "completion": 0.6
+      }
+    }
+  }
+}
