@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
 
-from src.schemas import ESTIMATE_DIMS
+from src.schemas import CAUSAL_DIMS, ESTIMATE_DIMS, parse_persona_label
 from src.statistics import (
     adverse_impact_ratio,
     bootstrap_ci,
@@ -144,6 +144,21 @@ def process_causal_analysis(
     # 1. Info request rate by persona variant
     rates = persona_decisions.groupby("variant")["need_info"].mean()
     results["info_rates_by_persona"] = rates.to_dict()
+
+    # 1b. Aggregate info request rates by dimension (for Table 10)
+    parsed_rows = []
+    for _, row in persona_decisions.iterrows():
+        parsed = parse_persona_label(row["variant"])
+        if parsed is not None:
+            parsed["need_info"] = row["need_info"]
+            parsed_rows.append(parsed)
+    if parsed_rows:
+        dim_df = pd.DataFrame(parsed_rows)
+        results["info_rates_by_dimension"] = {
+            dim: dim_df.groupby(dim)["need_info"].mean().to_dict()
+            for dim in CAUSAL_DIMS
+            if dim in dim_df.columns
+        }
 
     # 2. Cochran's Q test (generalised McNemar for >2 conditions)
     try:

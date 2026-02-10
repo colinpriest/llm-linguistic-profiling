@@ -43,6 +43,31 @@ def persona_label(age: str, geo: str, edu: str, ses: str) -> str:
     return f"{age}_{geo}_{edu}_{ses}"
 
 
+def parse_persona_label(label: str) -> Optional[Dict[str, str]]:
+    """Parse a persona label back into its dimension values.
+
+    Handles multi-word values like ``high_school`` by matching against known
+    dimension values rather than naive underscore splitting.
+
+    Returns ``None`` if the label cannot be parsed.
+    """
+    for a in AGE_VALUES:
+        if not label.startswith(a + "_"):
+            continue
+        rest = label[len(a) + 1:]
+        for g in GEO_VALUES:
+            if not rest.startswith(g + "_"):
+                continue
+            rest2 = rest[len(g) + 1:]
+            for e in EDU_VALUES:
+                if not rest2.startswith(e + "_"):
+                    continue
+                s = rest2[len(e) + 1:]
+                if s in SES_VALUES:
+                    return {"age": a, "geographic": g, "education": e, "socioeconomic": s}
+    return None
+
+
 PERSONA_GRID = generate_persona_grid()
 PERSONA_LABELS = [persona_label(**p) for p in PERSONA_GRID]
 

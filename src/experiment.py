@@ -62,6 +62,7 @@ from src.schemas import (
     RemedyDecisionResponse,
     PERSONA_GRID,
     PERSONA_LABELS,
+    parse_persona_label,
     persona_label,
 )
 from src.statistics import (
@@ -1120,15 +1121,13 @@ class Experiment:
                     self.rewrite_persona_estimates.append((rw.persona_label, model, est))
 
             # Compute match accuracy per dimension
-            intended_dims = []
-            for rw in model_rewrites:
-                parts = rw.persona_label.split("_")
-                if len(parts) == 4:
-                    intended_dims.append({"age": parts[0], "geographic": parts[1], "education": parts[2], "socioeconomic": parts[3]})
-
-            matched = [(intended, est) for (lbl, m, est), intended in
-                       zip(self.rewrite_persona_estimates, intended_dims)
-                       if m == model] if intended_dims else []
+            matched = []
+            for (lbl, m, est) in self.rewrite_persona_estimates:
+                if m != model:
+                    continue
+                intended = parse_persona_label(lbl)
+                if intended is not None:
+                    matched.append((intended, est))
 
             if not matched:
                 continue
@@ -1563,15 +1562,14 @@ class Experiment:
                 for d in self.persona_decisions
             ])
             # Parse variant into dimension columns for downstream analysis (e.g., IPW)
-            # Variant format: "young_urban_college_high" -> [age, geographic, education, socioeconomic]
             if "variant" in self.persona_decisions_df.columns:
-                parts = self.persona_decisions_df["variant"].str.split("_", expand=True)
-                if parts.shape[1] >= 4:
-                    self.persona_decisions_df["age"] = parts[0]
-                    self.persona_decisions_df["geographic"] = parts[1]
-                    self.persona_decisions_df["education"] = parts[2]
-                    self.persona_decisions_df["socioeconomic"] = parts[3]
-                    logger.debug("Parsed dimension columns from variant: age, geographic, education, socioeconomic")
+                parsed = self.persona_decisions_df["variant"].apply(parse_persona_label)
+                valid = parsed.notna()
+                if valid.any():
+                    parsed_df = pd.DataFrame(parsed[valid].tolist(), index=parsed[valid].index)
+                    for col in ["age", "geographic", "education", "socioeconomic"]:
+                        self.persona_decisions_df[col] = parsed_df[col]
+                    logger.debug("Parsed dimension columns from variant (%d/%d rows)", valid.sum(), len(parsed))
 
         if self.neutralized_decisions:
             self.neutralized_df = pd.DataFrame([

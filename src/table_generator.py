@@ -608,7 +608,7 @@ class TableGenerator:
         mc = self.ar.get("manipulation_checks", {})
         match_rates = mc.get("rewrite_match_rates", {})
         if not match_rates:
-            logger.warning("No rewrite_match_rates data; skipping Table 8.")
+            logger.info("No rewrite_match_rates data; skipping Table 8 (requires re-run with updated code).")
             return []
 
         # Collect all dimensions across models
@@ -638,7 +638,7 @@ class TableGenerator:
         mc = self.ar.get("manipulation_checks", {})
         signal = mc.get("signal_reduction", {})
         if not signal:
-            logger.warning("No signal_reduction data; skipping Table 9.")
+            logger.info("No signal_reduction data; skipping Table 9 (requires re-run with updated code).")
             return []
 
         rows = []
@@ -795,17 +795,28 @@ class TableGenerator:
         chars = miss_diag.get("complaint_characteristics", {})
         rows = []
 
+        # Each test stores results with different key names; map to
+        # standardised (test_label, statistic_key, effect_size_key) triples.
+        _TEST_MAP = {
+            "issue_category":    ("Chi-squared",    "chi2",        "cramers_v"),
+            "product_category":  ("Chi-squared",    "chi2",        "cramers_v"),
+            "word_count":        ("Mann-Whitney U", "U_statistic", "rank_biserial"),
+            "tier_distribution": ("Chi-squared",    "chi2",        "cramers_v"),
+            "mean_tier":         ("Welch t-test",   "t_statistic", "cohens_d"),
+        }
+
         ne_test = NE.missing_data(context="missingness test")
         for test_name in ["issue_category", "product_category", "word_count", "tier_distribution", "mean_tier"]:
             test_data = chars.get(test_name, {})
             if not test_data:
                 continue
+            label, stat_key, es_key = _TEST_MAP[test_name]
             rows.append((
                 test_name.replace("_", " ").title(),
-                test_data.get("test", "---"),
-                _fmt_effect(test_data.get("statistic", ne_test)),
+                label,
+                _fmt_effect(test_data.get(stat_key, ne_test)),
                 _fmt_pval(test_data.get("p_value", ne_test)),
-                _fmt_effect(test_data.get("effect_size", ne_test)),
+                _fmt_effect(test_data.get(es_key, ne_test)),
             ))
 
         if not rows:
