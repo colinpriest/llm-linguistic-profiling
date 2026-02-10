@@ -31,6 +31,39 @@ SEVERITY_LEVELS = ["low", "medium", "high"]
 DIMENSIONS = ["age", "geographic", "education", "socioeconomic"]
 
 
+def _resolve_variance_change(block: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize variance change payload across mitigation result objects."""
+    vc = dict(block.get("variance_change", {}) or {})
+
+    if "baseline_sd" not in vc and "variance_orig" in block:
+        try:
+            vc["baseline_sd"] = float(block["variance_orig"]) ** 0.5
+        except (TypeError, ValueError):
+            pass
+    if "neutralized_sd" not in vc and "variance_neut" in block:
+        try:
+            vc["neutralized_sd"] = float(block["variance_neut"]) ** 0.5
+        except (TypeError, ValueError):
+            pass
+
+    if "pct_change" not in vc:
+        if "variance_reduction" in block:
+            try:
+                vc["pct_change"] = -100.0 * float(block["variance_reduction"])
+            except (TypeError, ValueError):
+                pass
+        elif "baseline_sd" in vc and "neutralized_sd" in vc:
+            try:
+                base = float(vc.get("baseline_sd"))
+                neut = float(vc.get("neutralized_sd"))
+                if np.isfinite(base) and np.isfinite(neut) and base != 0:
+                    vc["pct_change"] = (neut - base) / base * 100.0
+            except (TypeError, ValueError):
+                pass
+
+    return vc
+
+
 def _build_filename(
     kind: str, scope: str, topic: str, model: str, subset: str,
     version: int, ext: str,
@@ -432,13 +465,13 @@ class FigureGenerator:
             ax = axes[0, i]
             model_r = self.ar.get(model, {})
             mitigation = model_r.get("mitigation", {})
-            vc = mitigation.get("variance_change", {})
+            vc = _resolve_variance_change(mitigation)
 
             baseline_sd = vc.get("baseline_sd", float("nan"))
             neutralised_sd = vc.get("neutralized_sd", float("nan"))
 
             proc_mit = model_r.get("process_mitigation", {})
-            proc_vc = proc_mit.get("variance_change", {})
+            proc_vc = _resolve_variance_change(proc_mit)
             proc_base = proc_vc.get("baseline_sd", float("nan"))
             proc_neut = proc_vc.get("neutralized_sd", float("nan"))
 

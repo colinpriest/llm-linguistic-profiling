@@ -70,6 +70,38 @@ def _fmt_pct(v: Any, decimals: int = 1) -> str:
     return f"{float(v):.{decimals}f}%"
 
 
+def _resolve_variance_change(block: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize variance change payload across mitigation result objects."""
+    vc = dict(block.get("variance_change", {}) or {})
+
+    # Backfill from legacy keys when variance_change payload is partial.
+    if "baseline_sd" not in vc and "variance_orig" in block:
+        try:
+            vc["baseline_sd"] = float(block["variance_orig"]) ** 0.5
+        except (TypeError, ValueError):
+            pass
+    if "neutralized_sd" not in vc and "variance_neut" in block:
+        try:
+            vc["neutralized_sd"] = float(block["variance_neut"]) ** 0.5
+        except (TypeError, ValueError):
+            pass
+
+    # Accept either stored percent change or legacy ratio reduction.
+    if "pct_change" not in vc:
+        if "variance_reduction" in block:
+            try:
+                vc["pct_change"] = -100.0 * float(block["variance_reduction"])
+            except (TypeError, ValueError):
+                pass
+        elif "baseline_sd" in vc and "neutralized_sd" in vc:
+            base = vc.get("baseline_sd")
+            neut = vc.get("neutralized_sd")
+            if is_estimable(base) and is_estimable(neut) and float(base) != 0:
+                vc["pct_change"] = (float(neut) - float(base)) / float(base) * 100.0
+
+    return vc
+
+
 def _escape_latex(s: str) -> str:
     """Escape special LaTeX characters."""
     for char in ["&", "%", "$", "#", "_", "{", "}"]:
@@ -421,7 +453,7 @@ class TableGenerator:
         # Tier 2 rate changes
         baseline_rates = mitigation.get("baseline_rates", {})
         neutralized_rates = mitigation.get("neutralized_rates", {})
-        variance_change = mitigation.get("variance_change", {})
+        variance_change = _resolve_variance_change(mitigation)
 
         ne_vc = NE.missing_data(context="variance change")
         baseline_sd = variance_change.get("baseline_sd", ne_vc)
@@ -441,7 +473,7 @@ class TableGenerator:
 
         # Process friction
         proc_mit = model_r.get("process_mitigation", {})
-        proc_vc = proc_mit.get("variance_change", {})
+        proc_vc = _resolve_variance_change(proc_mit)
         proc_baseline_sd = proc_vc.get("baseline_sd", ne_vc)
         proc_neut_sd = proc_vc.get("neutralized_sd", ne_vc)
         proc_pct = proc_vc.get("pct_change", ne_vc)
@@ -470,6 +502,7 @@ class TableGenerator:
         """Table 6: Severity amplification (confirmatory)."""
         severity = self.ar.get("severity", {})
         interactions_t2 = severity.get("interactions_tier2", {}).get(metric, {}).get(model, {})
+        dim_sev = severity.get("dimension_severity", {}).get(metric, {}).get(model, {})
         gee = severity.get("gee_interactions_tier2", {}).get(metric, {}).get(model, {})
         miss_diag = severity.get("missingness_diagnostic", {})
 
@@ -480,8 +513,12 @@ class TableGenerator:
             int_p = gee_dim.get("interaction_p", ne_amp_t6) if not gee_dim.get("skipped") else NE.skipped("GEE skipped")
             n_obs = gee_dim.get("n_obs", 0) if not gee_dim.get("skipped") else 0
 
-            # Amplification from ANOVA tier2
-            amp = interactions_t2.get("amplification", {})
+            # Amplification should be read from dimension-specific interaction output.
+            # Fallback to the model-level interaction object for backward compatibility.
+            dd = dim_sev.get(dim, {})
+            amp = dd.get("amplification", {}) if dd and not dd.get("error") else {}
+            if not amp:
+                amp = interactions_t2.get("amplification", {})
             bias_low = amp.get("bias_low", ne_amp_t6)
             bias_high = amp.get("bias_high", ne_amp_t6)
             A = bias_high - bias_low if is_estimable(bias_high) and is_estimable(bias_low) else ne_amp_t6
