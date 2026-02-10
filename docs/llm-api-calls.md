@@ -91,7 +91,7 @@ Repairs are attempted individually first, then cumulatively if no single fix wor
 | Storage | File-based, one JSON file per response in `./cache/{task}/{hash}.json` |
 | Key | Blake2b-16 hash of `"{model}|{task}|{prompt_version}|{narrative}"` |
 | Invalidation | Automatic when `PROMPT_VERSIONS` in `src/prompts.py` changes |
-| Thread safety | `threading.Lock` around reads and writes |
+| Thread safety | Lock-free design using atomic file operations |
 | Atomic writes | Write to `.tmp` file, then `os.replace()` |
 | Task directories | `persona_estimate`, `remedy_decision`, `persona_rewrite`, `neutralize`, `dollar_extract` |
 | Commentary/exec caching | Keyed by `variant` field (e.g. `step3_commentary`, `exec_linguistic_differences`) |
@@ -117,7 +117,7 @@ Cache hits return `attempt_number=0` in the `LLMResponse`. Invalid cache entries
 | **Max tokens** | `1000` |
 | **Execution** | `execute_batch` (concurrent) |
 | **Batch retry** | Yes — timeout failures retried up to 3 rounds with escalating timeouts |
-| **Failure handling** | Failed responses skipped (null values stored); fatal if >1% fail |
+| **Failure handling** | Failed responses silently skipped; fatal if >1% fail |
 
 **Input JSON structure:** Single message pair — system + user containing the complaint narrative.
 
@@ -286,8 +286,8 @@ Cache hits return `attempt_number=0` in the `LLMResponse`. Invalid cache entries
 | **Model** | `gpt-5.2` |
 | **Task name** | `commentary` |
 | **Prompt version** | Not versioned in `PROMPT_VERSIONS` (defaults to `1.0`) |
-| **System prompt** | Inline in `src/experiment.py` (~line 874–889) |
-| **User prompt** | Inline in `src/experiment.py` (~line 864–872) — statistical results + instruction |
+| **System prompt** | Inline in `src/experiment.py` (~line 983–998) |
+| **User prompt** | Inline in `src/experiment.py` (~line 973–981) — statistical results + instruction |
 | **Pydantic schema** | `CommentaryResponse` |
 | **Variant** | `"step3_commentary"` |
 | **Temperature** | Omitted (reasoning model) |
@@ -314,8 +314,8 @@ Cache hits return `attempt_number=0` in the `LLMResponse`. Invalid cache entries
 | **Model** | `gpt-5.2` |
 | **Task name** | `commentary` |
 | **Prompt version** | Not versioned (defaults to `1.0`) |
-| **System prompt** | Inline in `src/experiment.py` (~line 2359–2375) |
-| **User prompt** | Inline in `src/experiment.py` (~line 2376–2381) — model-specific results |
+| **System prompt** | Inline in `src/experiment.py` (~line 2807–2823) |
+| **User prompt** | Inline in `src/experiment.py` (~line 2824–2829) — model-specific results |
 | **Pydantic schema** | `CommentaryResponse` |
 | **Variant** | `"commentary"` |
 | **Temperature** | Omitted (reasoning model) |
@@ -342,8 +342,8 @@ Cache hits return `attempt_number=0` in the `LLMResponse`. Invalid cache entries
 | **Model** | `gpt-5.2` |
 | **Task name** | `executive_summary` |
 | **Prompt version** | Not versioned (defaults to `1.0`) |
-| **System prompt** | Inline in `src/experiment.py` (~line 2858–2880) — includes one-shot example |
-| **User prompt** | Inline in `src/experiment.py` (~line 2882–2885) — section-specific statistical data |
+| **System prompt** | Inline in `src/experiment.py` (~line 3458–3509) — includes one-shot example |
+| **User prompt** | Inline in `src/experiment.py` (~line 3511–3514) — section-specific statistical data |
 | **Pydantic schema** | `CommentaryResponse` |
 | **Variant** | `"exec_{section_name}"` (e.g. `exec_linguistic_differences`) |
 | **Temperature** | Omitted (reasoning model) |
@@ -390,7 +390,7 @@ Section 7 (Conclusion) receives the concatenated output of sections 1–6 as inp
 | All other exceptions | Retried with exponential backoff up to `max_retries` | Yes |
 | All retries exhausted | Returns `LLMResponse(success=False)` — **soft failure** | — |
 
-### Batch-level errors (`execute_batch` + `_check_batch_results`)
+### Batch-level errors (`execute_batch` in `llm_client.py` + `_check_batch_results` in `experiment.py`)
 
 | Mechanism | Detail |
 |-----------|--------|

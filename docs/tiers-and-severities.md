@@ -68,7 +68,7 @@ Tiers are assigned at three stages of the experiment, always using the same prom
 
 ## 2. Monetary Severity
 
-**Source:** `src/experiment.py` lines 404–465 (extraction + binning), `src/severity_analysis.py` line 115 (threshold constants)
+**Source:** `src/experiment.py` lines 513–573 (extraction + binning)
 
 Monetary severity classifies complaints by the dollar amount at stake, extracted from the complaint narrative by `gpt-4o-mini`.
 
@@ -132,7 +132,7 @@ The `amount_type` field is normalised via a synonym mapping in `src/schemas.py` 
 
 ## 3. Issue Severity
 
-**Source:** `src/data_loader.py` lines 123–245
+**Source:** `src/data_loader.py` lines 198–320
 
 Issue severity is a deterministic composite score computed from the CFPB product and issue fields at data loading time (no LLM involved). It uses a three-tier scoring system.
 

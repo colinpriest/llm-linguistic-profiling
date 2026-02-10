@@ -244,7 +244,7 @@ The extracted `primary_amount` is classified into severity bins: low (≤$100), 
 
 ## 6. Cross-Model Commentary (Step 3)
 
-**Source:** `src/experiment.py` lines 874–889 (system), 864–872 (user)
+**Source:** `src/experiment.py` lines 983–998 (system), 973–981 (user)
 **Task name:** `commentary`
 **Schema:** `CommentaryResponse`
 **Model:** `gpt-5.2`
@@ -271,7 +271,7 @@ Provides the numerical results and instructs: "Write exactly one paragraph (4-8 
 
 ## 7. Tier/Process Bias Commentary (Per-Model Analysis)
 
-**Source:** `src/experiment.py` lines 2359–2380
+**Source:** `src/experiment.py` lines 2807–2829
 **Task name:** `commentary`
 **Schema:** `CommentaryResponse`
 **Model:** `gpt-5.2`
@@ -292,7 +292,7 @@ Provides model-specific analysis results and instructs: "Write your two findings
 
 ## 8. Executive Summary Sections (Report Generation)
 
-**Source:** `src/experiment.py` lines 2833–2896
+**Source:** `src/experiment.py` lines 3433–3514
 **Task name:** `executive_summary`
 **Schema:** `CommentaryResponse`
 **Model:** `gpt-5.2`

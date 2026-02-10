@@ -170,16 +170,33 @@ The experiment produces:
 │   ├── schemas.py                      # Pydantic models and dataclasses
 │   ├── prompts.py                      # LLM prompt templates (versioned)
 │   ├── json_utils.py                   # JSON extraction, repair, validation
-│   ├── cache.py                        # Thread-safe disk-based response cache
+│   ├── cache.py                        # Lock-free disk-based response cache
+│   ├── analysis_cache.py               # Analysis-level caching (severity, Bayesian)
 │   ├── data_loader.py                  # CFPB data ingestion, cleaning, severity scoring
 │   ├── text_features.py                # Text feature extraction (26 metrics)
 │   ├── llm_client.py                   # OpenAI API client with threading and circuit breaker
+│   ├── token_usage.py                  # Token usage accounting and cost estimation
 │   ├── statistics.py                   # Disparate impact statistical analysis
 │   ├── process_discrimination.py       # Process discrimination analysis
 │   ├── severity_analysis.py            # Severity amplification analysis (7 sections, multithreaded)
 │   ├── repeated_measures.py            # Repeated-measures causal inference (CLMM, GEE, multithreaded)
+│   ├── bayes_robustness.py             # Stan-based Bayesian robustness checks
+│   ├── ipw_robustness.py               # Inverse probability weighting robustness
+│   ├── mitigation_analysis.py          # Bias mitigation effectiveness analysis
+│   ├── persona_analysis.py             # Persona-level analysis utilities
+│   ├── text_rewriting_analysis.py      # Text rewriting quality analysis
+│   ├── regression_diagnostics.py       # Regression model diagnostics
+│   ├── sparsity_analysis.py            # Data sparsity diagnostics
+│   ├── diagnostics.py                  # General experiment diagnostics
+│   ├── estimable.py                    # Estimability checking for model parameters
+│   ├── reproducibility.py              # Reproducibility utilities
+│   ├── prereg_compliance.py            # Pre-registration compliance checking
 │   ├── experiment.py                   # 7-step orchestration + executive summary generation
-│   └── reporter.py                     # HTML report generation (8 tabs, 20+ charts)
+│   ├── reporter.py                     # HTML report generation (8 tabs, 20+ charts)
+│   ├── worked_examples.py              # Side-by-side complaint comparison generator
+│   ├── table_generator.py              # LaTeX/CSV table generation for papers
+│   ├── figure_generator.py             # Publication-quality figure generation
+│   └── paper_bundle.py                 # Academic paper artifact bundling
 │
 ├── one-shot-examples/                  # GPT-5.2 executive summary examples (7 files)
 │   ├── one-shot-example-linguistic-differences.md
@@ -215,6 +232,16 @@ The experiment produces:
 │   │   └── panel_process_amplification.schema.json
 │   └── validators/                     # Validation utilities
 │       └── render_contract.py
+│
+├── docs/                               # Technical documentation
+│   ├── llm-api-calls.md                # LLM API call reference
+│   ├── llm-prompts.md                  # LLM prompt reference
+│   ├── tiers-and-severities.md         # Remedy tiers and severity metrics
+│   └── cfpb-data.md                    # CFPB data documentation
+│
+├── models/stan/                        # Compiled Stan models (auto-created)
+│
+├── token-usage/                        # Token usage logs (auto-created)
 │
 └── output/                             # Reports and artifacts (auto-created)
 ```
