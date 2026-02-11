@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -78,6 +79,10 @@ class ResponseCache:
         3. If two threads write the *same* key concurrently, both produce
            identical content (same input → same hash → same response),
            so last-writer-wins is correct.
+
+        On Windows, ``os.replace`` can raise ``PermissionError`` when
+        another thread holds the target file open for reading.  We retry
+        with exponential backoff (up to ~1 s total) to handle this.
         """
         key = self._key(model, task, narrative)
         path = self._path(task, key)
@@ -93,7 +98,19 @@ class ResponseCache:
         payload = json.dumps(entry, ensure_ascii=False, indent=2)
         tmp_path = path.with_suffix(f"{path.suffix}.{uuid.uuid4().hex}.tmp")
         tmp_path.write_text(payload, encoding="utf-8")
-        os.replace(tmp_path, path)
+        for attempt in range(5):
+            try:
+                os.replace(tmp_path, path)
+                return
+            except PermissionError:
+                # Windows: target file held open by a concurrent reader
+                time.sleep(0.05 * (2 ** attempt))  # 50ms, 100ms, 200ms, 400ms, 800ms
+        # Final attempt — let it raise if still blocked
+        try:
+            os.replace(tmp_path, path)
+        except PermissionError:
+            logger.warning("Cache put failed (file locked): %s", path.name)
+            self._delete_path(tmp_path)
 
     def delete(self, model: str, task: str, narrative: str) -> None:
         """Remove a cached response if it exists."""

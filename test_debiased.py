@@ -27,6 +27,7 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
+from tqdm import tqdm
 
 
 def main() -> None:
@@ -37,7 +38,7 @@ def main() -> None:
     )
     parser.add_argument("--num", type=int, default=10, help="Number of complaints to test")
     parser.add_argument("--models", nargs="+", default=["gpt-4o-mini", "gpt-5-mini"])
-    parser.add_argument("--pool-size", type=int, default=5000, help="Must match --num-complaints from experiment run")
+    parser.add_argument("--pool-size", type=int, default=20000, help="Must match --num-complaints from experiment run")
     parser.add_argument("--causal-pct", type=float, default=0.10, help="Must match --causal-sample-pct from experiment run")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--threads", type=int, default=20)
@@ -193,34 +194,35 @@ def main() -> None:
         # ==============================================================
         rewrite_texts: Dict[str, Dict[str, Optional[str]]] = defaultdict(dict)
         missing: List[str] = []
-        for c in complaints:
-            for persona in PERSONA_GRID:
-                plabel = persona_label(**persona)
-                # Cache key must match what the main experiment uses:
-                # the full formatted user prompt (see experiment.py line 1056)
-                narrative_key = format_persona_rewrite_user(
-                    narrative=c.narrative,
-                    age=persona["age"],
-                    geo=persona["geo"],
-                    edu=persona["edu"],
-                    ses=persona["ses"],
-                )
-                cached = cache.get(model, "persona_rewrite", narrative_key)
-                if cached is None:
-                    missing.append(
-                        f"  {model} / {c.case_id} / {plabel}"
+        n_rewrites = n_complaints * n_personas
+        with tqdm(total=n_rewrites, desc=f"Step 2 [{model}] Load rewrites from cache") as pbar:
+            for c in complaints:
+                for persona in PERSONA_GRID:
+                    plabel = persona_label(**persona)
+                    narrative_key = format_persona_rewrite_user(
+                        narrative=c.narrative,
+                        age=persona["age"],
+                        geo=persona["geo"],
+                        edu=persona["edu"],
+                        ses=persona["ses"],
                     )
-                else:
-                    try:
-                        parsed = PersonaRewriteResponse(**cached)
-                        rewrite_texts[c.case_id][plabel] = (
-                            parsed.rewritten_complaint
-                        )
-                    except Exception as exc:
+                    cached = cache.get(model, "persona_rewrite", narrative_key)
+                    if cached is None:
                         missing.append(
                             f"  {model} / {c.case_id} / {plabel}"
-                            f" (parse error: {exc})"
                         )
+                    else:
+                        try:
+                            parsed = PersonaRewriteResponse(**cached)
+                            rewrite_texts[c.case_id][plabel] = (
+                                parsed.rewritten_complaint
+                            )
+                        except Exception as exc:
+                            missing.append(
+                                f"  {model} / {c.case_id} / {plabel}"
+                                f" (parse error: {exc})"
+                            )
+                    pbar.update(1)
 
         if missing:
             print(
@@ -301,6 +303,8 @@ def main() -> None:
     )
     print(f"{'=' * 90}")
 
+    verbose_rows = n_complaints <= 20
+
     for model in args.models:
         print(f"\n--- {model} ---")
         hdr = (
@@ -308,8 +312,9 @@ def main() -> None:
             f"{'TIER':>6} {'ENTITY':>7} {'NEXUS':>6} "
             f"{'CONDUCT':>8} {'HARM':>6} {'EVID':>6} {'N':>4}"
         )
-        print(hdr)
-        print("-" * len(hdr))
+        if verbose_rows:
+            print(hdr)
+            print("-" * len(hdr))
 
         model_tier: List[float] = []
         model_entity: List[float] = []
@@ -356,16 +361,18 @@ def main() -> None:
             model_harm.append(rates[4])
             model_evid.append(rates[5])
 
-            print(
-                f"{c.case_id[:12]:<14} T{odec.tier.value:<3} "
-                f"{rates[0]:>6.0%} {rates[1]:>7.0%} {rates[2]:>6.0%} "
-                f"{rates[3]:>8.0%} {rates[4]:>6.0%} {rates[5]:>6.0%} "
-                f"{n:>4}"
-            )
+            if verbose_rows:
+                print(
+                    f"{c.case_id[:12]:<14} T{odec.tier.value:<3} "
+                    f"{rates[0]:>6.0%} {rates[1]:>7.0%} {rates[2]:>6.0%} "
+                    f"{rates[3]:>8.0%} {rates[4]:>6.0%} {rates[5]:>6.0%} "
+                    f"{n:>4}"
+                )
 
         if model_tier:
             avg = lambda xs: sum(xs) / len(xs)  # noqa: E731
-            print("-" * len(hdr))
+            if verbose_rows:
+                print("-" * len(hdr))
             print(
                 f"{'AVERAGE':<14} {'':>4} "
                 f"{avg(model_tier):>6.0%} {avg(model_entity):>7.0%} "
@@ -376,52 +383,53 @@ def main() -> None:
     # ==================================================================
     # ANALYSIS 2: Where do extractions diverge? (worst-case diffs)
     # ==================================================================
-    print(f"\n{'=' * 90}")
-    print("DIVERGENCE EXAMPLES: complaints with lowest tier consistency")
-    print(f"{'=' * 90}")
+    if verbose_rows:
+        print(f"\n{'=' * 90}")
+        print("DIVERGENCE EXAMPLES: complaints with lowest tier consistency")
+        print(f"{'=' * 90}")
 
-    for model in args.models:
-        # Rank complaints by tier consistency (ascending)
-        scored: List[Tuple[str, float, int, Dict[int, int]]] = []
-        for c in complaints:
-            odec = orig_dec[model].get(c.case_id)
-            if odec is None:
-                continue
-            tier_counts: Dict[int, int] = defaultdict(int)
-            n = 0
-            for plabel, rdec in rw_dec[model].get(c.case_id, {}).items():
-                if rdec is not None:
-                    tier_counts[rdec.tier.value] += 1
-                    n += 1
-            if n == 0:
-                continue
-            tier_match_rate = tier_counts.get(odec.tier.value, 0) / n
-            scored.append((c.case_id, tier_match_rate, odec.tier.value, dict(tier_counts)))
-
-        scored.sort(key=lambda x: x[1])
-
-        print(f"\n--- {model} (showing 3 most inconsistent) ---")
-        for case_id, rate, orig_tier, counts in scored[:3]:
-            dist = ", ".join(f"T{t}={c}" for t, c in sorted(counts.items()))
-            print(f"  {case_id[:12]}  orig=T{orig_tier}  tier_match={rate:.0%}  distribution: {dist}")
-
-            # Show what fields actually changed for a mismatched rewrite
-            ofs = orig_fs[model].get(case_id)
-            if ofs is None:
-                continue
-            for plabel, rfs in rw_fs[model].get(case_id, {}).items():
-                rdec = rw_dec[model][case_id].get(plabel)
-                if rfs is None or rdec is None:
+        for model in args.models:
+            # Rank complaints by tier consistency (ascending)
+            scored: List[Tuple[str, float, int, Dict[int, int]]] = []
+            for c in complaints:
+                odec = orig_dec[model].get(c.case_id)
+                if odec is None:
                     continue
-                if rdec.tier.value != orig_tier:
-                    diffs = compare_factsets(ofs, rfs)
-                    diff_fields = list(diffs.keys()) or ["(identical FactSet, different rule path)"]
-                    print(
-                        f"    {plabel}: T{rdec.tier.value} "
-                        f"({rdec.primary_reason.value}) "
-                        f"diffs={diff_fields}"
-                    )
-                    break  # one example per complaint is enough
+                tier_counts: Dict[int, int] = defaultdict(int)
+                n = 0
+                for plabel, rdec in rw_dec[model].get(c.case_id, {}).items():
+                    if rdec is not None:
+                        tier_counts[rdec.tier.value] += 1
+                        n += 1
+                if n == 0:
+                    continue
+                tier_match_rate = tier_counts.get(odec.tier.value, 0) / n
+                scored.append((c.case_id, tier_match_rate, odec.tier.value, dict(tier_counts)))
+
+            scored.sort(key=lambda x: x[1])
+
+            print(f"\n--- {model} (showing 3 most inconsistent) ---")
+            for case_id, rate, orig_tier, counts in scored[:3]:
+                dist = ", ".join(f"T{t}={c}" for t, c in sorted(counts.items()))
+                print(f"  {case_id[:12]}  orig=T{orig_tier}  tier_match={rate:.0%}  distribution: {dist}")
+
+                # Show what fields actually changed for a mismatched rewrite
+                ofs = orig_fs[model].get(case_id)
+                if ofs is None:
+                    continue
+                for plabel, rfs in rw_fs[model].get(case_id, {}).items():
+                    rdec = rw_dec[model][case_id].get(plabel)
+                    if rfs is None or rdec is None:
+                        continue
+                    if rdec.tier.value != orig_tier:
+                        diffs = compare_factsets(ofs, rfs)
+                        diff_fields = list(diffs.keys()) or ["(identical FactSet, different rule path)"]
+                        print(
+                            f"    {plabel}: T{rdec.tier.value} "
+                            f"({rdec.primary_reason.value}) "
+                            f"diffs={diff_fields}"
+                        )
+                        break  # one example per complaint is enough
 
     # ==================================================================
     # ANALYSIS 3: Cross-model comparison
@@ -438,8 +446,9 @@ def main() -> None:
             f"{'CASE_ID':<14} {'T_' + m1[:8]:>10} {'T_' + m2[:8]:>10} "
             f"{'TIER':>5} {'ENTITY':>7} {'NEXUS':>6} {'CONDUCT':>8} {'HARM':>6}"
         )
-        print(hdr2)
-        print("-" * len(hdr2))
+        if verbose_rows:
+            print(hdr2)
+            print("-" * len(hdr2))
 
         n_comp = 0
         agree = defaultdict(int)
@@ -463,17 +472,19 @@ def main() -> None:
                 if v:
                     agree[k] += 1
 
-            yn = lambda b: "Y" if b else "N"  # noqa: E731
-            print(
-                f"{c.case_id[:12]:<14} {'T' + str(d1.tier.value):>10} "
-                f"{'T' + str(d2.tier.value):>10} "
-                f"{yn(checks['tier']):>5} {yn(checks['entity']):>7} "
-                f"{yn(checks['nexus']):>6} {yn(checks['conduct']):>8} "
-                f"{yn(checks['harm']):>6}"
-            )
+            if verbose_rows:
+                yn = lambda b: "Y" if b else "N"  # noqa: E731
+                print(
+                    f"{c.case_id[:12]:<14} {'T' + str(d1.tier.value):>10} "
+                    f"{'T' + str(d2.tier.value):>10} "
+                    f"{yn(checks['tier']):>5} {yn(checks['entity']):>7} "
+                    f"{yn(checks['nexus']):>6} {yn(checks['conduct']):>8} "
+                    f"{yn(checks['harm']):>6}"
+                )
 
         if n_comp:
-            print("-" * len(hdr2))
+            if verbose_rows:
+                print("-" * len(hdr2))
             print(
                 f"{'AGREEMENT':<14} {'':>10} {'':>10} "
                 f"{agree['tier']/n_comp:>5.0%} "
@@ -642,6 +653,181 @@ def main() -> None:
                     f"{rates[3]:>8.0%} {rates[4]:>6.0%} "
                     f"{n_total:>6}"
                 )
+
+    # ==================================================================
+    # WORKED EXAMPLE: complaint with cross-model + within-model disagreement
+    # ==================================================================
+    if len(args.models) >= 2:
+        m1, m2 = args.models[0], args.models[1]
+
+        # Abbreviation maps for compact display
+        _ENT = {
+            "bank_or_lender": "BANK", "credit_bureau": "CB",
+            "debt_collector": "DC", "merchant": "MRCH",
+            "fintech_payment_platform": "FNTK", "mortgage_servicer": "MORT",
+            "student_loan_servicer": "STUD", "insurance_company": "INSR",
+            "other_third_party": "OTHR", "unknown": "UNK",
+        }
+        _COND = {
+            "failed_to_validate_debt": "fvd",
+            "failed_to_investigate_dispute": "fid",
+            "inaccurate_credit_reporting": "icr",
+            "failed_to_correct_reporting": "fcr",
+            "failed_to_provide_required_notice": "frn",
+            "failed_to_provide_provisional_credit": "fpc",
+            "unauthorized_account_opened": "uao",
+            "unauthorized_transaction_processed": "utp",
+            "unauthorized_inquiry_on_credit": "uic",
+            "improper_fees_charged": "ifc",
+            "undisclosed_fees_charged": "ufc",
+            "payment_not_posted": "pnp",
+            "payment_posted_late": "ppl",
+            "account_closed_without_notice": "acn",
+            "account_restricted_or_frozen": "arf",
+            "funds_held_beyond_permitted_period": "fhp",
+            "failed_to_process_autopay": "fpa",
+            "failed_fraud_dispute_process": "ffd",
+            "poor_communication_or_responsiveness": "pcr",
+            "incorrect_account_status": "ias",
+            "failed_to_apply_promotion": "fap",
+            "incorrect_balance_reported": "ibr",
+            "failed_loss_mitigation": "flm",
+            "wrongful_repossession_or_foreclosure": "wrf",
+            "failed_to_release_lien": "frl",
+            "system_outage_preventing_access": "spa",
+            "improper_collection_practices": "icp",
+            "failed_identity_theft_process": "fit",
+            "other_alleged_conduct": "oac",
+        }
+        _HARM = {
+            "fees_or_charges_incurred": "fee",
+            "funds_lost_or_inaccessible": "fnd",
+            "credit_score_damage": "csd",
+            "denied_credit_or_service": "dcs",
+            "forced_third_party_costs": "3pc",
+            "lost_property_or_collateral": "lpc",
+            "consequential_financial_loss": "cfl",
+            "no_financial_harm_claimed": "non",
+            "financial_harm_vague_or_unquantified": "vag",
+        }
+
+        def _fmt_vals(fs: FactSet, dec: TriageDecision) -> str:
+            """Format FactSet + TriageDecision as compact string."""
+            t = str(dec.tier.value)
+            ent = _ENT.get(
+                fs.primary_entity_type.value,
+                fs.primary_entity_type.value[:4],
+            )
+            nx = "Y" if fs.bank_nexus else "N"
+            conducts = sorted(
+                {_COND.get(af.conduct.value, af.conduct.value[:3])
+                 for af in fs.alleged_facts}
+            )
+            cond = "+".join(conducts) if conducts else "-"
+            harms = sorted(
+                {_HARM.get(h.value, h.value[:3])
+                 for h in fs.harm_types}
+            )
+            harm = "+".join(harms) if harms else "-"
+            return f"T={t} ENT={ent:<4} NX={nx} COND={cond:<20} HARM={harm}"
+
+        def _vals_key(fs: FactSet, dec: TriageDecision) -> tuple:
+            """Hashable key for comparing extractions."""
+            return (
+                dec.tier.value,
+                fs.primary_entity_type.value,
+                fs.bank_nexus,
+                frozenset(af.conduct.value for af in fs.alleged_facts),
+                frozenset(h.value for h in fs.harm_types),
+            )
+
+        # Search for a complaint meeting all three criteria
+        example_case = None
+        for c in complaints:
+            fs1 = orig_fs[m1].get(c.case_id)
+            fs2 = orig_fs[m2].get(c.case_id)
+            d1 = orig_dec[m1].get(c.case_id)
+            d2 = orig_dec[m2].get(c.case_id)
+            if any(x is None for x in (fs1, fs2, d1, d2)):
+                continue
+
+            # Criterion 1: cross-model disagreement on original
+            cross_diffs = compare_factsets(fs1, fs2)
+            if d1.tier == d2.tier and not cross_diffs:
+                continue
+
+            # Criterion 2: within-m1 variation across rewrites
+            m1_keys = set()
+            for plabel_i, rfs_i in rw_fs[m1].get(c.case_id, {}).items():
+                rdec_i = rw_dec[m1].get(c.case_id, {}).get(plabel_i)
+                if rfs_i is not None and rdec_i is not None:
+                    m1_keys.add(_vals_key(rfs_i, rdec_i))
+            if len(m1_keys) <= 1:
+                continue
+
+            # Criterion 3: within-m2 variation across rewrites
+            m2_keys = set()
+            for plabel_i, rfs_i in rw_fs[m2].get(c.case_id, {}).items():
+                rdec_i = rw_dec[m2].get(c.case_id, {}).get(plabel_i)
+                if rfs_i is not None and rdec_i is not None:
+                    m2_keys.add(_vals_key(rfs_i, rdec_i))
+            if len(m2_keys) <= 1:
+                continue
+
+            example_case = c
+            break
+
+        print(f"\n{'=' * 100}")
+        if example_case is None:
+            print(
+                "WORKED EXAMPLE: No complaint found meeting all three "
+                "disagreement criteria"
+            )
+            print(f"{'=' * 100}")
+        else:
+            cid = example_case.case_id
+            print(f"WORKED EXAMPLE: {cid}")
+            print(
+                "Criteria: cross-model disagreement + within-model "
+                "persona variation (both models)"
+            )
+            print(f"{'=' * 100}")
+
+            # -- Original --
+            text = example_case.narrative
+            snippet = text[:200] + ("..." if len(text) > 200 else "")
+            print(f"\n  ORIGINAL ({len(text)} chars):")
+            print(f"  {snippet}")
+            efs1 = orig_fs[m1][cid]
+            ed1 = orig_dec[m1][cid]
+            efs2 = orig_fs[m2][cid]
+            ed2 = orig_dec[m2][cid]
+            print(f"    {m1:<14} {_fmt_vals(efs1, ed1)}")
+            print(f"    {m2:<14} {_fmt_vals(efs2, ed2)}")
+
+            # -- Persona rewrites --
+            for persona in PERSONA_GRID:
+                plabel = persona_label(**persona)
+                rtext = rewrite_texts.get(cid, {}).get(plabel)
+                rfs1 = rw_fs[m1].get(cid, {}).get(plabel)
+                rd1 = rw_dec[m1].get(cid, {}).get(plabel)
+                rfs2 = rw_fs[m2].get(cid, {}).get(plabel)
+                rd2 = rw_dec[m2].get(cid, {}).get(plabel)
+
+                snippet = (
+                    rtext[:200] + ("..." if len(rtext) > 200 else "")
+                    if rtext else "(missing)"
+                )
+                print(f"\n  {plabel}:")
+                print(f"  {snippet}")
+                if rfs1 is not None and rd1 is not None:
+                    print(f"    {m1:<14} {_fmt_vals(rfs1, rd1)}")
+                else:
+                    print(f"    {m1:<14} (extraction failed)")
+                if rfs2 is not None and rd2 is not None:
+                    print(f"    {m2:<14} {_fmt_vals(rfs2, rd2)}")
+                else:
+                    print(f"    {m2:<14} (extraction failed)")
 
     # ==================================================================
     # Cache statistics
