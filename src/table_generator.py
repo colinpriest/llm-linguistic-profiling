@@ -133,6 +133,9 @@ def _write_three_formats(
     caption: str,
     label: str,
     analysis_type: str = "exploratory",
+    col_spec: Optional[str] = None,
+    use_tabularx: bool = False,
+    font_size: Optional[str] = None,
 ) -> List[Path]:
     """Write a DataFrame as .tex, .md, and .csv. Returns list of paths."""
     paths: List[Path] = []
@@ -140,7 +143,10 @@ def _write_three_formats(
     # --- LaTeX ---
     tex_name = _build_filename(kind, scope, topic, model, subset, version, "tex")
     tex_path = output_dir / tex_name
-    tex_lines = _dataframe_to_booktabs(df, caption, label)
+    tex_lines = _dataframe_to_booktabs(
+        df, caption, label,
+        col_spec=col_spec, use_tabularx=use_tabularx, font_size=font_size,
+    )
     tex_path.write_text(tex_lines, encoding="utf-8")
     paths.append(tex_path)
 
@@ -161,19 +167,46 @@ def _write_three_formats(
     return paths
 
 
-def _dataframe_to_booktabs(df: pd.DataFrame, caption: str, label: str) -> str:
-    """Convert DataFrame to booktabs LaTeX table."""
+def _dataframe_to_booktabs(
+    df: pd.DataFrame,
+    caption: str,
+    label: str,
+    col_spec: Optional[str] = None,
+    use_tabularx: bool = False,
+    font_size: Optional[str] = None,
+) -> str:
+    """Convert DataFrame to booktabs LaTeX table.
+
+    Parameters
+    ----------
+    col_spec : optional override for column alignment string.
+    use_tabularx : if True, emit ``tabularx`` (requires ``\\usepackage{tabularx}``
+        in the preamble).  At least one ``X`` column is expected in *col_spec*.
+    font_size : e.g. ``"small"`` or ``"footnotesize"``; wrapped around the table
+        body so the table shrinks without affecting the caption.
+    """
     n_cols = len(df.columns)
-    col_spec = "l" + "r" * (n_cols - 1)
+    if col_spec is None:
+        col_spec = "l" + "r" * (n_cols - 1)
+
+    env = "tabularx" if use_tabularx else "tabular"
+    env_open = (
+        r"\begin{tabularx}{\textwidth}{" + col_spec + "}"
+        if use_tabularx
+        else r"\begin{tabular}{" + col_spec + "}"
+    )
+    env_close = r"\end{" + env + "}"
 
     lines = [
         r"\begin{table}[htbp]",
         r"\centering",
         r"\caption{" + _escape_latex(caption) + "}",
         r"\label{" + label + "}",
-        r"\begin{tabular}{" + col_spec + "}",
-        r"\toprule",
     ]
+    if font_size:
+        lines.append("\\" + font_size)
+    lines.append(env_open)
+    lines.append(r"\toprule")
 
     # Header
     headers = " & ".join(_escape_latex(str(c)) for c in df.columns) + r" \\"
@@ -186,7 +219,9 @@ def _dataframe_to_booktabs(df: pd.DataFrame, caption: str, label: str) -> str:
         lines.append(cells)
 
     lines.append(r"\bottomrule")
-    lines.append(r"\end{tabular}")
+    lines.append(env_close)
+    if font_size:
+        lines.append(r"\normalsize")
     lines.append(r"\end{table}")
     return "\n".join(lines)
 
@@ -532,16 +567,21 @@ class TableGenerator:
                 coverage = _fmt_pct(100 * (1 - miss_diag.get("pct_missing", 0)))
 
             # BH q-value (will be applied in paper_bundle)
-            rows.append((
+            row = [
                 dim.capitalize(),
                 _fmt_pval(int_p),
                 _fmt_effect(A),
                 _fmt_effect(R),
                 f"[{_fmt_effect(ci_lo)}, {_fmt_effect(ci_hi)}]",
-                coverage,
-            ))
+            ]
+            if metric == "monetary_severity":
+                row.append(coverage)
+            rows.append(tuple(row))
 
-        df = pd.DataFrame(rows, columns=["Dimension", "Interaction p", "A (high-low)", "R (ratio)", "95% CI", "Coverage"])
+        columns = ["Dimension", "Interaction p", "A (high-low)", "R (ratio)", "95% CI"]
+        if metric == "monetary_severity":
+            columns.append("Coverage")
+        df = pd.DataFrame(rows, columns=columns)
 
         model_clean = model.replace("-", "").replace("_", "")
         metric_clean = metric.replace("_", "")
@@ -578,18 +618,15 @@ class TableGenerator:
                             display = f.get("feature_display", f.get("feature", "?"))
                             imp = f.get("importance", 0)
                             feat_strs.append(f"{display} ({imp:.0f})")
-                        # Pad to 3 columns
                         while len(feat_strs) < 3:
                             feat_strs.append("---")
                         rows.append((
                             dim.capitalize(),
                             value,
                             model,
-                            feat_strs[0],
-                            feat_strs[1],
-                            feat_strs[2],
+                            "; ".join(feat_strs),
                             _fmt_prop(auc) if auc is not None else "---",
-                            summary[:80] + ("..." if len(summary) > 80 else ""),
+                            summary,
                         ))
 
         if not rows:
@@ -597,7 +634,7 @@ class TableGenerator:
 
         df = pd.DataFrame(rows, columns=[
             "Dimension", "Value", "Model",
-            "Feature 1", "Feature 2", "Feature 3",
+            "Top 3 Features",
             "AUC", "Interpretation",
         ])
 
@@ -608,21 +645,28 @@ class TableGenerator:
             r"\small",
             r"\caption{Top text features predicting persona dimensions (LightGBM classifiers).}",
             r"\label{tab:persona_explainability}",
-            r"\begin{tabular}{>{\RaggedRight\arraybackslash}p{0.09\linewidth}",
+            r"\begin{tabular}{>{\RaggedRight\arraybackslash}p{0.14\linewidth}",
             r"                >{\RaggedRight\arraybackslash}p{0.10\linewidth}",
             r"                >{\RaggedRight\arraybackslash}p{0.10\linewidth}",
-            r"                >{\RaggedRight\arraybackslash}p{0.12\linewidth}",
-            r"                >{\RaggedRight\arraybackslash}p{0.12\linewidth}",
-            r"                >{\RaggedRight\arraybackslash}p{0.12\linewidth}",
+            r"                >{\RaggedRight\arraybackslash}p{0.28\linewidth}",
             r"                r",
-            r"                >{\RaggedRight\arraybackslash}p{0.20\linewidth}}",
+            r"                >{\RaggedRight\arraybackslash}p{0.24\linewidth}}",
             r"\toprule",
-            r"Dimension & Value & Model & Feature 1 & Feature 2 & Feature 3 & AUC & Interpretation \\",
+            r"Dimension & Value & Model & Top 3 Features & AUC & Interpretation \\",
             r"\midrule",
         ]
         for _, row in df.iterrows():
-            cells = " & ".join(_escape_latex(str(v)) for v in row.values) + r" \\"
-            tex_lines.append(cells)
+            dim_esc = _escape_latex(str(row["Dimension"]))
+            val_esc = _escape_latex(str(row["Value"]))
+            model_esc = _escape_latex(str(row["Model"]))
+            # Split features on "; " and rejoin with \newline for LaTeX line breaks
+            feat_parts = str(row["Top 3 Features"]).split("; ")
+            feats_latex = r" \newline ".join(_escape_latex(p) for p in feat_parts)
+            auc_esc = _escape_latex(str(row["AUC"]))
+            interp_esc = _escape_latex(str(row["Interpretation"]))
+            tex_lines.append(
+                f"{dim_esc} & {val_esc} & {model_esc} & {feats_latex} & {auc_esc} & {interp_esc} \\\\"
+            )
         tex_lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table}"])
 
         tex_name = _build_filename("table", "main", "persona_explainability", "na", "all", 1, "tex")
@@ -759,6 +803,7 @@ class TableGenerator:
         for model in self.models:
             paths.extend(self._tableA2_pairwise_comparisons(app_dir, model))
         paths.extend(self._tableA3_missingness_diagnostics(app_dir))
+        paths.extend(self._tableA3b_missingness_ipw_summary(app_dir))
         paths.extend(self._tableA5_prompt_inventory(app_dir))
         paths.extend(self._tableA6_text_feature_inventory(app_dir))
         for model in self.models:
@@ -867,6 +912,126 @@ class TableGenerator:
             label="tab:missingness",
         )
 
+    def _tableA3b_missingness_ipw_summary(self, out: Path) -> List[Path]:
+        """Appendix Table A3b: Monetary missingness and IPW diagnostics summary."""
+        miss_diag = self.ar.get("severity", {}).get("missingness_diagnostic", {})
+        ipw_result = self.ar.get("severity", {}).get("ipw_robustness", {})
+        if not miss_diag or miss_diag.get("skipped"):
+            return []
+
+        n_present = miss_diag.get("n_present", 0)
+        n_missing = miss_diag.get("n_missing", 0)
+        pct_present = (1 - miss_diag.get("pct_missing", 0)) * 100
+
+        # Collect absolute effect sizes from complaint characteristic tests
+        # to compute Max |SMD| and Mean |SMD|.
+        chars = miss_diag.get("complaint_characteristics", {})
+        _ES_KEY_MAP = {
+            "issue_category": "cramers_v",
+            "product_category": "cramers_v",
+            "word_count": "rank_biserial",
+            "tier_distribution": "cramers_v",
+            "mean_tier": "cohens_d",
+        }
+        abs_effects: List[float] = []
+        for test_name, es_key in _ES_KEY_MAP.items():
+            td = chars.get(test_name, {})
+            es_val = td.get(es_key)
+            if es_val is not None and is_estimable(es_val):
+                abs_effects.append(abs(float(es_val)))
+
+        max_smd = max(abs_effects) if abs_effects else None
+        mean_smd = float(np.mean(abs_effects)) if abs_effects else None
+
+        # IPW diagnostics (propensity model is shared across models)
+        prop_diag = ipw_result.get("propensity_diagnostics", {})
+        ess = prop_diag.get("effective_sample_size_M1")
+
+        rows = []
+        for model in self.models:
+            model_ipw = ipw_result.get(model, {})
+            # Build status string from available indicators
+            status_parts: List[str] = []
+            if model_ipw and not model_ipw.get("skipped"):
+                status_parts.append("W")  # Weighted analysis completed
+                # Acceptable balance: Max |SMD| < 0.25
+                if max_smd is not None and max_smd < 0.25:
+                    status_parts.append("A")
+                # Reasonable ESS retention
+                if ess is not None and n_present > 0 and (ess / n_present) > 0.10:
+                    status_parts.append("R")
+            else:
+                status_parts.append("S")  # Skipped
+
+            rows.append((
+                model,
+                _fmt_int(n_present),
+                _fmt_int(n_missing),
+                _fmt_pct(pct_present),
+                _fmt_effect(max_smd) if max_smd is not None else "---",
+                _fmt_effect(mean_smd) if mean_smd is not None else "---",
+                _fmt_int(int(ess)) if ess is not None else "---",
+                "".join(status_parts),
+            ))
+
+        df = pd.DataFrame(rows, columns=[
+            "Model", "Amt present", "Amt missing", "Present %",
+            "Max |SMD|", "Mean |SMD|", "IPW ESS", "Stat",
+        ])
+
+        # Custom compact LaTeX to fit within page width
+        note_lines = [
+            r"W = IPW analysis completed; "
+            r"A = acceptable covariate balance ($\max|\mathrm{SMD}|<0.25$); "
+            r"R = reasonable ESS retention ($>10\%$); "
+            r"S = skipped.",
+        ]
+        tex_lines = [
+            r"\begin{table}[htbp]",
+            r"\centering",
+            r"\footnotesize",
+            r"\caption{Monetary missingness and IPW diagnostics (canonical run).}",
+            r"\label{tab:missingness_ipw}",
+            r"\begin{tabular}{l r r r r r r l}",
+            r"\toprule",
+            r"Model & Amt present & Amt missing & Present\,\% "
+            r"& Max\,$|\mathrm{SMD}|$ & Mean\,$|\mathrm{SMD}|$ & IPW ESS & Stat \\",
+            r"\midrule",
+        ]
+        for _, row in df.iterrows():
+            cells = " & ".join(_escape_latex(str(v)) for v in row.values)
+            tex_lines.append(cells + r" \\")
+        tex_lines.append(r"\bottomrule")
+        tex_lines.append(r"\end{tabular}")
+        tex_lines.append(r"\par\smallskip")
+        tex_lines.append(r"{\scriptsize\textit{Note:}\enspace " + note_lines[0] + "}")
+        tex_lines.append(r"\end{table}")
+
+        tex_name = _build_filename(
+            "table", "appendix", "missingness_ipw_diagnostics", "na", "all", 1, "tex",
+        )
+        tex_path = out / tex_name
+        tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
+
+        # Markdown + CSV via standard helpers
+        md_name = _build_filename(
+            "table", "appendix", "missingness_ipw_diagnostics", "na", "all", 1, "md",
+        )
+        md_path = out / md_name
+        md_path.write_text(
+            _dataframe_to_markdown(df, "Monetary missingness and IPW diagnostics (canonical run)."),
+            encoding="utf-8",
+        )
+
+        csv_name = _build_filename(
+            "table", "appendix", "missingness_ipw_diagnostics", "na", "all", 1, "csv",
+        )
+        csv_path = out / csv_name
+        df.to_csv(csv_path, index=False, encoding="utf-8")
+
+        logger.info("Written table: missingness_ipw_diagnostics (.tex/.md/.csv)")
+        return [tex_path, md_path, csv_path]
+
     def _tableA5_prompt_inventory(self, out: Path) -> List[Path]:
         """Appendix Table A5: Prompt inventory and parameters."""
         from src.prompts import PROMPT_VERSIONS
@@ -931,7 +1096,7 @@ class TableGenerator:
             r"\caption{Text feature inventory: 23 linguistic metrics extracted per complaint.}",
             r"\label{tab:text_features}",
             r"\begin{tabular}{>{\RaggedRight\arraybackslash}p{0.10\linewidth}",
-            r"                >{\ttfamily\RaggedRight\arraybackslash}p{0.18\linewidth}",
+            r"                >{\ttfamily\RaggedRight\arraybackslash\hyphenchar\font=`\_}p{0.18\linewidth}",
             r"                >{\RaggedRight\arraybackslash}p{0.18\linewidth}",
             r"                >{\RaggedRight\arraybackslash}p{0.44\linewidth}}",
             r"\toprule",
@@ -941,7 +1106,7 @@ class TableGenerator:
         prev_group = None
         for group, fid, display, defn in rows:
             g = _escape_latex(group) if group != prev_group else ""
-            tex_lines.append(f"{g} & {fid} & {_escape_latex(display)} & {_escape_latex(defn)} \\\\")
+            tex_lines.append(f"{g} & {_escape_latex(fid)} & {_escape_latex(display)} & {_escape_latex(defn)} \\\\")
             prev_group = group
             if g and prev_group != rows[-1][0]:
                 pass  # no extra rule needed between groups in booktabs style
@@ -1122,6 +1287,9 @@ class TableGenerator:
             "na", "all", 1,
             caption="Bayesian model specification and priors.",
             label="tab:bayes_spec",
+            col_spec=r"l l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X l l",
+            use_tabularx=True,
+            font_size="footnotesize",
         )
 
     def _tableB2_bayes_amplification(self, out: Path, model: str, metric: str) -> List[Path]:
@@ -1177,6 +1345,14 @@ class TableGenerator:
             model_clean, metric_clean, 1,
             caption=f"Bayesian amplification robustness -- {model}, {metric.replace('_', ' ')}.",
             label=f"tab:bayes_amp_{model_clean}_{metric_clean}",
+            col_spec=(
+                r">{\raggedright\arraybackslash}X "
+                r"l l "
+                r">{\raggedright\arraybackslash}X "
+                r"r r r r r r l"
+            ),
+            use_tabularx=True,
+            font_size="footnotesize",
         )
 
     def _tableB3_bayes_ordinal_tiers(self, out: Path, model: str, metric: str) -> List[Path]:
@@ -1272,4 +1448,7 @@ class TableGenerator:
             model_clean, "all", 1,
             caption=f"Bayesian MCMC diagnostics -- {model}.",
             label=f"tab:bayes_diag_{model_clean}",
+            col_spec=r">{\raggedright\arraybackslash}X r r r r l",
+            use_tabularx=True,
+            font_size="footnotesize",
         )

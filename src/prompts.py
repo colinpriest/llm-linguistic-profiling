@@ -6,6 +6,8 @@ PROMPT_VERSIONS = {
     "persona_rewrite": "1.0",
     "neutralize": "1.0",
     "dollar_extract": "1.1",
+    "fact_extraction": "1.0",
+    "debiased_triage": "1.0",
 }
 
 # ---------------------------------------------------------------------------

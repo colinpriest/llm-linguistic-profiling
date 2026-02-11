@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class ResponseCache:
     """Simple file-based cache keyed on (model, task, narrative, prompt_version)."""
 
-    TASK_DIRS = ["persona_estimate", "remedy_decision", "persona_rewrite", "neutralize", "dollar_extract"]
+    TASK_DIRS = ["persona_estimate", "remedy_decision", "persona_rewrite", "neutralize", "dollar_extract", "fact_extraction", "debiased_triage"]
 
     def __init__(self, cache_dir: str = "./cache") -> None:
         self.cache_dir = Path(cache_dir)

@@ -157,7 +157,7 @@ class PaperBundleGenerator:
         logger.info("Paper bundle output: %s", self.output_root)
 
     def _build_run_id(self) -> str:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ts = self.rc.get("timestamp", datetime.now().strftime("%Y%m%d_%H%M%S"))
         seed = self.rc.get("seed", 0)
         n = self.rc.get("num_complaints", 0)
         model_str = "-".join(
