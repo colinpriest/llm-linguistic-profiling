@@ -18,10 +18,16 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from src.statistics import fdr_correction
+
 logger = logging.getLogger(__name__)
 
 SEVERITY_METRICS = ["monetary_severity", "issue_severity"]
 DIMENSIONS = ["age", "geographic", "education", "socioeconomic"]
+
+_MIN_CELL_SIZE_SUPPRESS = 10
+_FDR_ALPHA = 0.05
+_MIN_CELL_SIZE_CONCLUSIVE = 30
 
 
 # ------------------------------------------------------------------
@@ -43,15 +49,15 @@ def classify_claim(
     - "Inconclusive"
     - "Not analysable"
     """
-    if min_cell_size < 10:
+    if min_cell_size < _MIN_CELL_SIZE_SUPPRESS:
         return "Not analysable"
     if not np.isfinite(interaction_q) or not np.isfinite(A):
         return "Not analysable"
-    if interaction_q >= 0.05:
+    if interaction_q >= _FDR_ALPHA:
         return "No evidence of amplification"
     # q < 0.05
     if A > 0 and A_ci_lower > 0:
-        if min_cell_size < 30:
+        if min_cell_size < _MIN_CELL_SIZE_CONCLUSIVE:
             return "Inconclusive"
         return "Amplification supported"
     # q < 0.05 but CI includes 0
@@ -109,16 +115,14 @@ def generate_claim_classifications(
 
             # Use minimum p-value across dimensions (then apply BH)
             if p_values:
-                # For claim classification, use the best evidence
-                best_p = min(p_values)
                 # Apply BH correction conceptually (within this family)
-                from src.statistics import fdr_correction
                 adjusted = fdr_correction(p_values)
                 best_q = float(min(adjusted))
             else:
                 best_q = float("nan")
 
             A_val = float(np.mean(A_values)) if A_values else float("nan")
+            # NOTE: Averaging CI lower bounds is an approximation; not a valid CI for the mean effect.
             A_ci_lo = float(np.mean(A_ci_lowers)) if A_ci_lowers else float("nan")
 
             claims[metric][model] = classify_claim(
@@ -217,7 +221,6 @@ def _check_multiple_testing(analysis_results: Dict[str, Any]) -> str:
                         test_labels.append(f"{model}/{metric}/{dim}")
 
     if p_values:
-        from src.statistics import fdr_correction
         adjusted = fdr_correction(p_values)
         n_surviving = sum(1 for q in adjusted if q < 0.05)
         lines.append(f"\n- Total confirmatory tests: {len(p_values)}")

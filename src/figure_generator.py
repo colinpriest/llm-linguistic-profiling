@@ -17,15 +17,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import matplotlib
+if matplotlib.get_backend() != "Agg":
+    matplotlib.use("Agg")
 import numpy as np
-import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 # Grayscale-friendly palette (8 distinct grays)
 _GRAYS = ["#1a1a1a", "#4d4d4d", "#808080", "#b3b3b3",
            "#333333", "#666666", "#999999", "#cccccc"]
-_HATCHES = ["", "//", "\\\\", "xx", "..", "++", "oo", "**"]
 
 SEVERITY_LEVELS = ["low", "medium", "high"]
 DIMENSIONS = ["age", "geographic", "education", "socioeconomic"]
@@ -72,7 +73,7 @@ def _build_filename(
 
 
 def _save_figure_files(
-    fig,
+    fig: Any,
     out_dir: Path,
     topic: str,
     model: str,
@@ -91,9 +92,11 @@ def _save_figure_files(
     txt_path = out_dir / f"{base}.txt"
     json_path = out_dir / f"{base}.json"
 
-    fig.savefig(str(pdf_path), format="pdf", bbox_inches="tight", dpi=300)
-    fig.savefig(str(png_path), format="png", bbox_inches="tight", dpi=300, facecolor="white")
-    plt.close(fig)
+    try:
+        fig.savefig(str(pdf_path), format="pdf", bbox_inches="tight", dpi=300)
+        fig.savefig(str(png_path), format="png", bbox_inches="tight", dpi=300, facecolor="white")
+    finally:
+        plt.close(fig)
 
     txt_path.write_text(caption, encoding="utf-8")
     json_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
@@ -108,7 +111,7 @@ class FigureGenerator:
     def __init__(
         self,
         analysis_results: Dict[str, Any],
-        complaints: list,
+        complaints: List[Any],
         run_config: Dict[str, Any],
         output_root: Path,
     ):
@@ -131,9 +134,6 @@ class FigureGenerator:
 
     def generate_all_figures(self) -> List[Tuple[Path, Path]]:
         """Generate all main figures (1-10). Returns list of (pdf, png) paths."""
-        import matplotlib
-        matplotlib.use("Agg")
-
         results: List[Tuple[Path, Path]] = []
         fig_methods = [
             self._fig1_pipeline,
@@ -156,7 +156,7 @@ class FigureGenerator:
                 if result:
                     results.append(result)
             except Exception as e:
-                logger.warning("Figure generation failed (%s): %s", method.__name__, e)
+                logger.error("Figure generation failed (%s): %s", method.__name__, e, exc_info=True)
 
         # Bayesian appendix figures
         results.extend(self._generate_bayes_figures())
@@ -569,12 +569,20 @@ class FigureGenerator:
         meta["analysis_type"] = "descriptive"
         meta["n_present"] = n_present
         meta["n_missing"] = n_missing
+        total = n_present + n_missing
+        if total > 0:
+            caption_detail = (
+                f"(a) {n_present} complaints ({100*n_present/total:.1f}%) have extractable dollar amounts; "
+                f"{n_missing} ({100*n_missing/total:.1f}%) do not. "
+            )
+        else:
+            caption_detail = "(a) No complaints available for missingness analysis. "
+
         return _save_figure_files(
             fig, self.fig_dir, "monetary_missingness_diagnostic", "na", "all", 1,
             caption="Figure 7. Monetary severity missingness diagnostic. "
-                    f"(a) {n_present} complaints ({100*n_present/(n_present+n_missing):.1f}%) have extractable dollar amounts; "
-                    f"{n_missing} ({100*n_missing/(n_present+n_missing):.1f}%) do not. "
-                    "(b) Tier distribution differences between amount-present and amount-missing complaints.",
+                    + caption_detail
+                    + "(b) Tier distribution differences between amount-present and amount-missing complaints.",
             metadata=meta,
         )
 
@@ -981,6 +989,7 @@ class FigureGenerator:
 
         dims_to_plot = ["age", "geographic", "education", "socioeconomic", "gender", "esl"]
 
+        last_result = None
         for model in self.models:
             model_pa = pa.get(model, {})
             dims_data = model_pa.get("dimensions", {})
@@ -1052,11 +1061,10 @@ class FigureGenerator:
                     "n_panels": n_panels,
                 },
             )
-            plt.close(fig)
             # Return last model's result (both models produce separate files)
             last_result = result
 
-        return last_result if 'last_result' in dir() else None
+        return last_result
 
     def _fig_cross_model_agreement(self) -> Optional[Tuple[Path, Path]]:
         """Cross-model feature importance agreement (per-dimension Spearman correlations)."""
@@ -1158,7 +1166,6 @@ class FigureGenerator:
                 "overall_rho": overall_rho,
             },
         )
-        plt.close(fig)
         return result
 
     # ==================================================================
@@ -1275,9 +1282,11 @@ class FigureGenerator:
         base = f"fig__appendix__bayes_posterior_A__{model_clean}__{metric_clean}__v1"
         pdf_path = out_dir / f"{base}.pdf"
         png_path = out_dir / f"{base}.png"
-        fig.savefig(str(pdf_path), format="pdf", bbox_inches="tight", dpi=300)
-        fig.savefig(str(png_path), format="png", bbox_inches="tight", dpi=300, facecolor="white")
-        plt.close(fig)
+        try:
+            fig.savefig(str(pdf_path), format="pdf", bbox_inches="tight", dpi=300)
+            fig.savefig(str(png_path), format="png", bbox_inches="tight", dpi=300, facecolor="white")
+        finally:
+            plt.close(fig)
         (out_dir / f"{base}.txt").write_text(
             f"Figure B1. Posterior distribution of amplification A (Tier 2) -- {model}, "
             f"{metric.replace('_', ' ')}. Vertical dashed line at A=0. Shaded region shows 95% CrI.",

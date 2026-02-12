@@ -15,10 +15,15 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import lightgbm as lgb
+try:
+    import lightgbm as lgb
+    HAS_LIGHTGBM = True
+except ImportError:
+    HAS_LIGHTGBM = False
+    lgb = None
 from sklearn.inspection import partial_dependence
+from sklearn.ensemble import GradientBoostingClassifier
 
 from src.schemas import (
     ESTIMATE_DIMS,
@@ -142,7 +147,7 @@ def _extract_pdp_values(pd_result) -> Tuple[Optional[np.ndarray], Optional[np.nd
 
 
 def _generate_pdp_chart(
-    model: lgb.LGBMClassifier,
+    model: Any,
     X: pd.DataFrame,
     feature_name: str,
     persona_value: str,
@@ -151,6 +156,8 @@ def _generate_pdp_chart(
 
     Returns base64-encoded PNG image.
     """
+    if matplotlib.get_backend() != "Agg":
+        matplotlib.use("Agg")
     try:
         feature_idx = list(X.columns).index(feature_name)
 
@@ -169,21 +176,23 @@ def _generate_pdp_chart(
             return ""
 
         fig, ax = plt.subplots(figsize=(4, 3))
-        ax.plot(values, avg_pred, color="#3498db", linewidth=2)
-        ax.fill_between(values, avg_pred, alpha=0.2, color="#3498db")
-        ax.set_xlabel(_get_feature_name(feature_name), fontsize=9)
-        ax.set_ylabel(f"P({persona_value})", fontsize=9)
-        ax.set_title(f"Partial Dependence", fontsize=10)
-        ax.tick_params(axis="both", labelsize=8)
-        ax.grid(True, alpha=0.3)
+        try:
+            ax.plot(values, avg_pred, color="#3498db", linewidth=2)
+            ax.fill_between(values, avg_pred, alpha=0.2, color="#3498db")
+            ax.set_xlabel(_get_feature_name(feature_name), fontsize=9)
+            ax.set_ylabel(f"P({persona_value})", fontsize=9)
+            ax.set_title(f"Partial Dependence", fontsize=10)
+            ax.tick_params(axis="both", labelsize=8)
+            ax.grid(True, alpha=0.3)
 
-        plt.tight_layout()
+            plt.tight_layout()
 
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
-        plt.close(fig)
-        buf.seek(0)
-        return base64.b64encode(buf.read()).decode("utf-8")
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
+            buf.seek(0)
+            return base64.b64encode(buf.read()).decode("utf-8")
+        finally:
+            plt.close(fig)
 
     except Exception as e:
         logger.warning("Failed to generate PDP for %s: %s", feature_name, e)
@@ -192,7 +201,7 @@ def _generate_pdp_chart(
 
 def _describe_feature_effect(
     feature_name: str,
-    model: lgb.LGBMClassifier,
+    model: Any,
     X: pd.DataFrame,
     persona_value: str,
 ) -> str:
@@ -343,19 +352,30 @@ def analyze_persona_for_model(
                 continue
 
             try:
-                # Build LightGBM model
-                lgb_model = lgb.LGBMClassifier(
-                    n_estimators=100,
-                    max_depth=4,
-                    learning_rate=0.1,
-                    num_leaves=15,
-                    min_child_samples=max(10, n_positive // 10),
-                    subsample=0.8,
-                    colsample_bytree=0.8,
-                    random_state=42,
-                    verbose=-1,
-                    force_col_wise=True,
-                )
+                # Build classifier model (LightGBM preferred, sklearn fallback)
+                if HAS_LIGHTGBM:
+                    lgb_model = lgb.LGBMClassifier(
+                        n_estimators=100,
+                        max_depth=4,
+                        learning_rate=0.1,
+                        num_leaves=15,
+                        min_child_samples=max(10, n_positive // 10),
+                        subsample=0.8,
+                        colsample_bytree=0.8,
+                        random_state=42,
+                        verbose=-1,
+                        force_col_wise=True,
+                    )
+                else:
+                    logger.info("lightgbm not available; using sklearn GradientBoostingClassifier")
+                    lgb_model = GradientBoostingClassifier(
+                        n_estimators=100,
+                        max_depth=4,
+                        learning_rate=0.1,
+                        min_samples_leaf=max(10, n_positive // 10),
+                        subsample=0.8,
+                        random_state=42,
+                    )
 
                 lgb_model.fit(X, y)
 
@@ -412,7 +432,7 @@ def analyze_persona_for_model(
                     ],
                     "pdp_charts": pdp_charts,
                     "summary": summary,
-                    "auc": float(auc) if auc is not None else None,
+                    "training_auc": float(auc) if auc is not None else None,
                 }
 
                 logger.info("Analyzed %s=%s: top features = %s",

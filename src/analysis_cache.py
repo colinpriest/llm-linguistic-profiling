@@ -21,10 +21,13 @@ Results are stored as JSON files in cache/analysis/{analysis_type}/.
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import inspect
 import json
 import logging
 import os
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -111,7 +114,7 @@ def _hash_dataframe(
         case_ids = sorted(df["case_id"].dropna().unique().tolist())
         # Include count AND hash of case_ids for both debugging and collision resistance
         parts.append(f"n_cases:{len(case_ids)}")
-        parts.append(f"case_hash:{hashlib.md5(str(case_ids).encode()).hexdigest()[:16]}")
+        parts.append(f"case_hash:{hashlib.blake2b(str(case_ids).encode(), digest_size=8).hexdigest()}")
 
     # Hash value distributions for categorical columns
     categorical_cols = ["model", "tier", "confidence", "monetary_severity", "issue_severity",
@@ -133,7 +136,7 @@ def _hash_dataframe(
         df_sorted = df.sort_values("case_id").reset_index(drop=True)
         sample_df = df_sorted.iloc[sample_indices][cols_to_hash]
         sample_str = sample_df.to_json(orient="records")
-        parts.append(f"sample:{hashlib.md5(sample_str.encode()).hexdigest()[:16]}")
+        parts.append(f"sample:{hashlib.blake2b(sample_str.encode(), digest_size=8).hexdigest()}")
 
     content = "|".join(parts)
     return f"{name}:{hashlib.blake2b(content.encode(), digest_size=16).hexdigest()}"
@@ -393,13 +396,25 @@ def _json_loads_with_ne(text: str) -> Any:
 
 # Global instance (created lazily)
 _analysis_cache: Optional[AnalysisCache] = None
+_analysis_cache_lock = threading.Lock()
 
 
 def get_analysis_cache(cache_dir: str = "./cache") -> AnalysisCache:
     """Get or create the global analysis cache instance."""
     global _analysis_cache
     if _analysis_cache is None:
-        _analysis_cache = AnalysisCache(cache_dir)
+        with _analysis_cache_lock:
+            if _analysis_cache is None:
+                _analysis_cache = AnalysisCache(cache_dir)
+    else:
+        # Warn if caller passes a different cache_dir than the existing singleton
+        existing_dir = str(_analysis_cache.cache_dir.parent)
+        if str(Path(cache_dir) / "analysis") != str(_analysis_cache.cache_dir):
+            logger.warning(
+                "get_analysis_cache() called with cache_dir=%r but singleton "
+                "already exists with cache_dir=%r; ignoring new value",
+                cache_dir, existing_dir,
+            )
     return _analysis_cache
 
 
@@ -477,7 +492,7 @@ class OperationCache:
 
             if available_cols:
                 # Hash based on sorted values in relevant columns
-                subset = df[available_cols].copy()
+                subset = df[available_cols]
                 if "case_id" in subset.columns:
                     subset = subset.sort_values("case_id")
 
@@ -557,9 +572,6 @@ class OperationCache:
             return result
         """
         def decorator(func: Callable[..., T]) -> Callable[..., T]:
-            import functools
-            import inspect
-
             @functools.wraps(func)
             def wrapper(*args: Any, **kwargs: Any) -> T:
                 # Get function signature to map args to names
@@ -642,11 +654,23 @@ class OperationCache:
 
 # Global operation cache instance
 _operation_cache: Optional[OperationCache] = None
+_operation_cache_lock = threading.Lock()
 
 
 def get_operation_cache(cache_dir: str = "./cache") -> OperationCache:
     """Get or create the global operation cache instance."""
     global _operation_cache
     if _operation_cache is None:
-        _operation_cache = OperationCache(cache_dir)
+        with _operation_cache_lock:
+            if _operation_cache is None:
+                _operation_cache = OperationCache(cache_dir)
+    else:
+        # Warn if caller passes a different cache_dir than the existing singleton
+        existing_dir = str(_operation_cache.cache_dir.parent)
+        if str(Path(cache_dir) / "operations") != str(_operation_cache.cache_dir):
+            logger.warning(
+                "get_operation_cache() called with cache_dir=%r but singleton "
+                "already exists with cache_dir=%r; ignoring new value",
+                cache_dir, existing_dir,
+            )
     return _operation_cache

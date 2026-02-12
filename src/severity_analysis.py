@@ -15,7 +15,7 @@ import logging
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -39,6 +39,8 @@ SEVERITY_METRICS = ["monetary_severity", "issue_severity"]
 SEVERITY_ORDINAL: Dict[str, int] = {"low": 1, "medium": 2, "high": 3}
 
 _MIN_CELL_SIZE = 30  # flag cells with fewer observations
+_MONETARY_LOW_MAX = 100
+_MONETARY_MEDIUM_MAX = 1000
 
 
 # ---------------------------------------------------------------------------
@@ -242,10 +244,10 @@ def _cohens_d(a: np.ndarray, b: np.ndarray) -> float:
     """Cohen's d for two independent samples."""
     n1, n2 = len(a), len(b)
     if n1 < 2 or n2 < 2:
-        return 0.0
+        return float("nan")
     var1, var2 = a.var(ddof=1), b.var(ddof=1)
     pooled_std = np.sqrt(((n1 - 1) * var1 + (n2 - 1) * var2) / (n1 + n2 - 2))
-    if pooled_std == 0:
+    if pooled_std < 1e-15:
         return 0.0
     return float((a.mean() - b.mean()) / pooled_std)
 
@@ -270,7 +272,7 @@ def _cohens_kappa(y1: np.ndarray, y2: np.ndarray) -> Any:
         return NE.insufficient_n(n=0, min_required=1, context="kappa")
     # Build confusion matrix
     k = len(labels)
-    label_idx = {l: i for i, l in enumerate(labels)}
+    label_idx = {lbl: i for i, lbl in enumerate(labels)}
     mat = np.zeros((k, k), dtype=int)
     for a, b in zip(y1, y2):
         mat[label_idx[a], label_idx[b]] += 1
@@ -307,7 +309,7 @@ def severity_descriptives(
     result["monetary_severity"] = {
         "coverage": float(len(m_valid) / n) if n else 0.0,
         "distribution": {l: int(m_dist.get(l, 0)) for l in SEVERITY_LEVELS + ["unknown"]},
-        "thresholds": {"low_max": 100, "medium_max": 1000},
+        "thresholds": {"low_max": _MONETARY_LOW_MAX, "medium_max": _MONETARY_MEDIUM_MAX},
     }
 
     # --- issue_severity ---
@@ -319,27 +321,27 @@ def severity_descriptives(
     }
 
     # Breakdown by product/issue within each severity level
-    for metric, col in [("issue_severity", "issue_severity")]:
-        by_product: Dict[str, Dict[str, int]] = {}
-        by_issue: Dict[str, Dict[str, int]] = {}
-        top_combos: Dict[str, list] = {}
-        for level in SEVERITY_LEVELS:
-            sub = complaints_df[complaints_df[col] == level]
-            by_product[level] = sub["product_category"].value_counts().head(10).to_dict()
-            by_issue[level] = sub["issue_category"].value_counts().head(10).to_dict()
-            combo = (
-                sub.groupby(["product_category", "issue_category"])
-                .size()
-                .sort_values(ascending=False)
-                .head(10)
-            )
-            top_combos[level] = [
-                {"product": p, "issue": i, "count": int(c)}
-                for (p, i), c in combo.items()
-            ]
-        result["issue_severity"]["by_product"] = by_product
-        result["issue_severity"]["by_issue"] = by_issue
-        result["issue_severity"]["top_combos"] = top_combos
+    col = "issue_severity"
+    by_product: Dict[str, Dict[str, int]] = {}
+    by_issue: Dict[str, Dict[str, int]] = {}
+    top_combos: Dict[str, List[Dict[str, Any]]] = {}
+    for level in SEVERITY_LEVELS:
+        sub = complaints_df[complaints_df[col] == level]
+        by_product[level] = sub["product_category"].value_counts().head(10).to_dict()
+        by_issue[level] = sub["issue_category"].value_counts().head(10).to_dict()
+        combo = (
+            sub.groupby(["product_category", "issue_category"])
+            .size()
+            .sort_values(ascending=False)
+            .head(10)
+        )
+        top_combos[level] = [
+            {"product": p, "issue": i, "count": int(c)}
+            for (p, i), c in combo.items()
+        ]
+    result["issue_severity"]["by_product"] = by_product
+    result["issue_severity"]["by_issue"] = by_issue
+    result["issue_severity"]["top_combos"] = top_combos
 
     # --- Agreement between metrics (exclude unknown monetary) ---
     both = complaints_df[complaints_df["monetary_severity"].isin(SEVERITY_LEVELS)].copy()
@@ -879,12 +881,13 @@ def amplification_ratio(
         }
 
     # Bootstrap CI: resample at complaint (case_id) level
-    rng = np.random.RandomState(seed)
+    rng = np.random.default_rng(seed)
     case_ids = df["case_id"].unique()
     boot_ratios = []
+    grouped = {cid: sub_df for cid, sub_df in df.groupby("case_id")}
     for _ in tqdm(range(n_boot), desc="  bootstrap(amplification)", leave=False, delay=1):
         sample_ids = rng.choice(case_ids, size=len(case_ids), replace=True)
-        boot_df = df[df["case_id"].isin(sample_ids)]
+        boot_df = pd.concat([grouped[sid] for sid in sample_ids], ignore_index=True)
         b_low = _bias_at_level(boot_df, "low")
         b_high = _bias_at_level(boot_df, "high")
         # Skip non-estimable bootstrap samples
@@ -1093,12 +1096,13 @@ def dimension_severity_interaction(
         return result
 
     # Bootstrap CI on amplification ratio
-    rng = np.random.RandomState(seed)
+    rng = np.random.default_rng(seed)
     case_ids = df["case_id"].unique()
     boot_ratios: list = []
+    grouped = {cid: sub_df for cid, sub_df in df.groupby("case_id")}
     for _ in tqdm(range(n_boot), desc=f"  bootstrap(dim={dimension})", leave=False, delay=1):
         sample_ids = rng.choice(case_ids, size=len(case_ids), replace=True)
-        boot_df = df[df["case_id"].isin(sample_ids)]
+        boot_df = pd.concat([grouped[sid] for sid in sample_ids], ignore_index=True)
         b_low_means = boot_df[boot_df[severity_metric] == "low"].groupby(dimension)["tier"].mean()
         b_high_means = boot_df[boot_df[severity_metric] == "high"].groupby(dimension)["tier"].mean()
         if len(b_low_means) >= 2 and len(b_high_means) >= 2:
@@ -1155,7 +1159,7 @@ def dimension_severity_all(
         for dim in dimensions
     ]
 
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=4) as executor:
         futures = {
             executor.submit(
                 dimension_severity_interaction,
@@ -2200,39 +2204,37 @@ def run_severity_analysis(
     # is NOT thread-safe, so per-function guards inside ThreadPoolExecutor workers
     # are unreliable.  Setting the filters here in the main thread ensures they
     # are in effect for all child threads (they share the global filter list).
-    _warning_ctx = warnings.catch_warnings()
-    _warning_ctx.__enter__()
-    warnings.filterwarnings(
-        "ignore", category=RuntimeWarning,
-        message=".*Precision loss.*catastrophic cancellation.*",
-    )
-    warnings.filterwarnings("ignore", category=UserWarning, module="statsmodels")
-    warnings.filterwarnings("ignore", category=FutureWarning, module="statsmodels")
-    # statsmodels ValueWarning for rank-deficient covariance of constraints
-    try:
-        from statsmodels.tools.sm_exceptions import ValueWarning as _SmValueWarning
-        warnings.filterwarnings("ignore", category=_SmValueWarning)
-    except ImportError:
-        pass
-    warnings.filterwarnings(
-        "ignore",
-        message=".*covariance of constraints does not have full rank.*",
-    )
-
     progress = tqdm(total=n_sections, desc="Severity analysis", delay=0.5)
 
-    try:
-        result = _run_severity_analysis_inner(
-            baseline_df, persona_decisions_df, personas_df, complaints_df,
-            models, n_boot, seed, neutralized_df, has_neutralized, progress,
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", category=RuntimeWarning,
+            message=".*Precision loss.*catastrophic cancellation.*",
         )
-        # Cache the result
-        if use_cache:
-            cache.put("severity_analysis", dataframes, params, result)
-        return result
-    finally:
-        progress.close()
-        _warning_ctx.__exit__(None, None, None)
+        warnings.filterwarnings("ignore", category=UserWarning, module="statsmodels")
+        warnings.filterwarnings("ignore", category=FutureWarning, module="statsmodels")
+        # statsmodels ValueWarning for rank-deficient covariance of constraints
+        try:
+            from statsmodels.tools.sm_exceptions import ValueWarning as _SmValueWarning
+            warnings.filterwarnings("ignore", category=_SmValueWarning)
+        except ImportError:
+            pass
+        warnings.filterwarnings(
+            "ignore",
+            message=".*covariance of constraints does not have full rank.*",
+        )
+
+        try:
+            result = _run_severity_analysis_inner(
+                baseline_df, persona_decisions_df, personas_df, complaints_df,
+                models, n_boot, seed, neutralized_df, has_neutralized, progress,
+            )
+            # Cache the result
+            if use_cache:
+                cache.put("severity_analysis", dataframes, params, result)
+            return result
+        finally:
+            progress.close()
 
 
 def _run_severity_analysis_inner(
@@ -2304,6 +2306,7 @@ def _run_severity_analysis_inner(
 
     # 3-t2. Tier 2 rate interaction analysis
     progress.set_postfix_str("interactions (tier2)")
+    baseline_df = baseline_df.copy()
     baseline_df["tier2"] = (baseline_df["tier"] >= 2).astype(int)
     interactions_tier2: Dict[str, Any] = {m: {} for m in SEVERITY_METRICS}
 
@@ -2400,6 +2403,7 @@ def _run_severity_analysis_inner(
     mitigation_severity_tier2: Dict[str, Any] = {}
     if has_neutralized:
         progress.set_postfix_str("mitigation severity (tier2)")
+        neutralized_df = neutralized_df.copy()
         neutralized_df["tier2"] = (neutralized_df["tier"] >= 2).astype(int)
         mitigation_severity_tier2 = {m: {} for m in SEVERITY_METRICS}
         with ThreadPoolExecutor() as executor:

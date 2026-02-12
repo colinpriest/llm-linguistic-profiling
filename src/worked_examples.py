@@ -10,7 +10,6 @@ import html as html_mod
 import json
 import logging
 from collections import Counter
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -157,7 +156,7 @@ def _has_severity_amplification(
     High-severity complaints where persona variation is present.
     """
     c: Complaint = case_data["complaint"]
-    if c.monetary_severity not in ("high",) and c.issue_severity not in ("high",):
+    if c.monetary_severity != "high" and c.issue_severity != "high":
         return False
     return _tier_variation(case_data, models) > 0
 
@@ -524,7 +523,6 @@ def _render_example_tab(example: Dict[str, Any], models: List[str]) -> str:
 
     # --- Two-column model comparison ---
     n_models = len(models)
-    col_width = f"{100 // max(n_models, 1)}%"
     parts.append(f'<div style="display:grid;grid-template-columns:repeat({n_models}, 1fr);gap:20px">')
 
     for m in models:
@@ -542,7 +540,7 @@ def _render_example_tab(example: Dict[str, Any], models: List[str]) -> str:
                 f'Age: {_esc(est.age)} | Geo: {_esc(est.geographic)} | '
                 f'Edu: {_esc(est.education)} | SES: {_esc(est.socioeconomic)} | '
                 f'Gender: {_esc(est.gender)} | ESL: {_esc(est.esl)} | '
-                f'Confidence: {est.confidence:.2f}</div>'
+                f'Confidence: {f"{est.confidence:.2f}" if est.confidence is not None else "N/A"}</div>'
                 f'</div>'
             )
 
@@ -594,7 +592,7 @@ def _render_example_tab(example: Dict[str, Any], models: List[str]) -> str:
                     inferred_html = (
                         f'<div style="font-size:0.82rem;color:#555;margin-top:4px">'
                         f'Inferred persona: <strong>{_esc(re_est.persona_label)}</strong> '
-                        f'(confidence: {re_est.confidence:.2f})'
+                        f'(confidence: {f"{re_est.confidence:.2f}" if re_est.confidence is not None else "N/A"})'
                         f'{_match_flag(matches_target, "matches target", "does not match target")}'
                         f'{_match_flag(matches_original, "matches original", "differs from original")}'
                         f'</div>'
@@ -633,7 +631,7 @@ def _render_example_tab(example: Dict[str, Any], models: List[str]) -> str:
             parts.append(
                 f'<div style="font-size:0.82rem;color:#555;margin-top:4px">'
                 f'Inferred persona: <strong>{_esc(n_est.persona_label)}</strong> '
-                f'(confidence: {n_est.confidence:.2f})</div>'
+                f'(confidence: {f"{n_est.confidence:.2f}" if n_est.confidence is not None else "N/A"})</div>'
             )
         if nd:
             neutral_tier_flag = ""

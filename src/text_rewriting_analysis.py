@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+from src.schemas import parse_persona_label
 import pandas as pd
 from scipy import stats
 
@@ -245,7 +246,14 @@ def compute_cohens_d(
     if paired and n1 == n2:
         # Paired Cohen's d (dz)
         diff = group1 - group2
-        d = np.mean(diff) / np.std(diff, ddof=1) if np.std(diff, ddof=1) > 0 else 0.0
+        mean = np.mean(diff)
+        std = np.std(diff, ddof=1)
+        if std > 0:
+            d = mean / std
+        elif mean != 0:
+            d = float("nan")  # effect exists but std is 0
+        else:
+            d = 0.0  # no effect
         # SE for paired d
         se = np.sqrt((1 / n1) + (d ** 2 / (2 * n1)))
     else:
@@ -255,7 +263,12 @@ def compute_cohens_d(
         var1 = np.var(group1, ddof=1)
         var2 = np.var(group2, ddof=1)
         pooled_std = np.sqrt(((n1 - 1) * var1 + (n2 - 1) * var2) / (n1 + n2 - 2))
-        d = mean_diff / pooled_std if pooled_std > 0 else 0.0
+        if pooled_std > 0:
+            d = mean_diff / pooled_std
+        elif mean_diff != 0:
+            d = float("nan")  # effect exists but std is 0
+        else:
+            d = 0.0  # no effect
         # SE for independent d
         se = np.sqrt((n1 + n2) / (n1 * n2) + (d ** 2 / (2 * (n1 + n2))))
 
@@ -449,7 +462,7 @@ def analyze_overall_rewriting_effects(
     )
 
     if len(merged) < 10:
-        logger.warning(f"Only {len(merged)} paired observations for rewriting analysis")
+        logger.warning("Only %d paired observations for rewriting analysis", len(merged))
         return comparisons, len(original_df), len(rewritten_df)
 
     # Compare each feature
@@ -593,15 +606,7 @@ def analyze_dimension_effects(
 
     # Parse persona labels into components
     def parse_persona(label: str) -> Optional[Dict[str, str]]:
-        parts = label.split("_")
-        if len(parts) >= 4:
-            return {
-                "age": parts[0],
-                "geographic": parts[1],
-                "education": parts[2],
-                "socioeconomic": parts[3],
-            }
-        return None
+        return parse_persona_label(label)
 
     parsed_profiles = {}
     for label, profile in profiles.items():
@@ -739,11 +744,12 @@ def run_text_rewriting_analysis(
     n_sig = len(results.significant_features)
     n_total = len(overall_comparisons)
     logger.info(
-        f"Text rewriting analysis complete: {n_sig}/{n_total} features significantly "
-        f"changed after rewriting (FDR-corrected)"
+        "Text rewriting analysis complete: %d/%d features significantly "
+        "changed after rewriting (FDR-corrected)",
+        n_sig, n_total,
     )
 
     if results.significant_features:
-        logger.info(f"  Significant features: {', '.join(results.significant_features)}")
+        logger.info("  Significant features: %s", ", ".join(results.significant_features))
 
     return results.to_dict()

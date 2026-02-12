@@ -16,9 +16,7 @@ import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-import pandas as pd
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +137,7 @@ class PaperBundleGenerator:
     def __init__(
         self,
         analysis_results: Dict[str, Any],
-        complaints: list,
+        complaints: List[Any],
         run_config: Dict[str, Any],
         output_root: Path,
     ):
@@ -170,37 +168,29 @@ class PaperBundleGenerator:
         logger.info("=" * 60)
         logger.info("Generating paper bundle: %s", self.run_id)
 
-        # 1. Create folder structure
-        self._create_folders()
+        manifest_errors: List[Dict[str, str]] = []
 
-        # 2. Reproducibility bundle
-        self._generate_reproducibility()
+        steps = [
+            ("create_folders", self._create_folders),
+            ("reproducibility", self._generate_reproducibility),
+            ("stats_artifacts", self._save_stats_artifacts),
+            ("tables", self._generate_tables),
+            ("figures", self._generate_figures),
+            ("qualitative_cards", self._generate_qualitative_cards),
+            ("reports", self._generate_reports),
+            ("paper_pack", self._populate_paper_pack),
+            ("index_files", self._generate_index_files),
+            ("final_manifest", self._generate_final_manifest),
+        ]
 
-        # 3. Save stats artifacts
-        self._save_stats_artifacts()
+        for step_name, step_fn in steps:
+            try:
+                step_fn()
+            except Exception as e:
+                logger.error("Paper bundle step '%s' failed: %s", step_name, e, exc_info=True)
+                manifest_errors.append({"step": step_name, "error": str(e)})
 
-        # 4. Tables
-        self._generate_tables()
-
-        # 5. Figures
-        self._generate_figures()
-
-        # 6. Qualitative cards
-        self._generate_qualitative_cards()
-
-        # 7. Reports (prereg compliance + summary)
-        self._generate_reports()
-
-        # 8. Paper pack
-        self._populate_paper_pack()
-
-        # 9. Index files
-        self._generate_index_files()
-
-        # 10. Final manifest (must be last — hashes all outputs)
-        self._generate_final_manifest()
-
-        # 11. Acceptance checklist
+        # Acceptance checklist
         missing = _acceptance_checklist(self.output_root, self.models)
         if missing:
             logger.warning("Acceptance checklist: %d items missing:", len(missing))
@@ -216,6 +206,7 @@ class PaperBundleGenerator:
             "run_id": self.run_id,
             "output_root": str(self.output_root),
             "acceptance_missing": missing,
+            "errors": manifest_errors,
         }
 
     # ------------------------------------------------------------------
@@ -391,7 +382,7 @@ class PaperBundleGenerator:
                 case.narrative[:500] + ("..." if len(case.narrative) > 500 else "")
             )
             tex_lines = [
-                f"\\subsection{{Worked Example: {card_id}}}",
+                f"\\subsection{{Worked Example: {_latex_escape(card_id)}}}",
                 f"\\label{{sec:worked-example-{card_id}}}",
                 "",
                 "\\begin{description}",

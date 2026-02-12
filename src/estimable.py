@@ -95,6 +95,9 @@ NE_SHORT_CODES: Dict[NECode, str] = {
 class NEValue:
     """A non-estimable value with reason code and optional detail.
 
+    Note: float(NEValue) returns NaN. Direct comparison of NEValue instances
+    uses dataclass field equality, not float comparison.
+
     Attributes
     ----------
     code : NECode
@@ -403,10 +406,10 @@ def make_footnote_row(ne_values: List[NEValue], colspan: int = 1) -> str:
 
 
 def sanitize_for_json(obj: Any) -> Any:
-    """Convert NEValue objects to float(nan) for JSON serialization.
+    """Convert NEValue objects to None for JSON serialization.
 
-    Recursively walks dicts and lists, converting any NEValue to float("nan").
-    This preserves backwards compatibility with existing JSON output format.
+    Recursively walks dicts and lists, converting any NEValue to None,
+    which is valid JSON (serialised as ``null``).
 
     Parameters
     ----------
@@ -416,10 +419,10 @@ def sanitize_for_json(obj: Any) -> Any:
     Returns
     -------
     Any
-        Object with NEValue replaced by float("nan").
+        Object with NEValue replaced by None.
     """
     if isinstance(obj, NEValue):
-        return float("nan")
+        return None
     if isinstance(obj, dict):
         return {k: sanitize_for_json(v) for k, v in obj.items()}
     if isinstance(obj, list):

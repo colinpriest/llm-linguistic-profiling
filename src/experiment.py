@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import random
-from dataclasses import asdict
+import shutil
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -41,6 +42,7 @@ from src.prompts import (
     REMEDY_DECISION_SYSTEM,
     REMEDY_DECISION_USER,
     format_persona_rewrite_user,
+    safe_narrative_format,
 )
 from src.schemas import (
     CAUSAL_DIMS,
@@ -171,7 +173,6 @@ class Experiment:
             # Also clear the data pipeline cache
             pipeline_dir = Path(data_path).parent / ".pipeline"
             if pipeline_dir.exists():
-                import shutil
                 shutil.rmtree(pipeline_dir)
                 logger.info("Pipeline cache cleared: %s", pipeline_dir)
             # Clear analysis cache (severity, Bayesian)
@@ -233,6 +234,16 @@ class Experiment:
         self.persona_decisions: List[RemedyDecision] = []
         self.neutralized: List[NeutralizedComplaint] = []
         self.neutralized_decisions: List[RemedyDecision] = []
+        self.causal_sample: List[Complaint] = []
+        self.rewrite_persona_estimates: List[Tuple[str, str, PersonaEstimate]] = []
+        self.neutralized_persona_estimates: List[PersonaEstimate] = []
+
+        # Debiased extraction data: model -> case_id -> FactSet/TriageDecision
+        self.debiased_orig_fs: Dict[str, Dict[str, Any]] = {}
+        self.debiased_orig_dec: Dict[str, Dict[str, Any]] = {}
+        self.debiased_rw_fs: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self.debiased_rw_dec: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self.debiased_rewrite_texts: Dict[str, Dict[str, Optional[str]]] = {}
 
         # DataFrames built during analysis
         self.personas_df: Optional[pd.DataFrame] = None
@@ -277,10 +288,17 @@ class Experiment:
         logger.info("Dollar amount extraction complete")
 
         # Run steps
-        for step in range(1, 8):
+        for step in range(1, 9):
             if step in self.skip_steps:
                 logger.info("Skipping Step %d", step)
                 continue
+            deps = self._STEP_DEPENDENCIES.get(step, set())
+            skipped_deps = deps & self.skip_steps
+            if skipped_deps:
+                logger.warning(
+                    "Step %d depends on skipped step(s) %s; results may be incomplete",
+                    step, sorted(skipped_deps),
+                )
             logger.info("-" * 40)
             logger.info("Step %d starting", step)
             getattr(self, f"_step_{step}")()
@@ -349,13 +367,28 @@ class Experiment:
                     len(result["acceptance_missing"]),
                 )
         except Exception as e:
-            logger.error("Paper bundle generation failed: %s", e)
+            logger.error("Paper bundle generation failed: %s", e, exc_info=True)
             self.analysis_results["paper_bundle"] = {"error": str(e)}
-            raise
 
     # ------------------------------------------------------------------
     # Batch result validation
     # ------------------------------------------------------------------
+
+    # Step dependency map: step -> set of prerequisite steps
+    _STEP_DEPENDENCIES: Dict[int, Set[int]] = {
+        3: {1, 2},  # Step 3 needs personas (1) and baseline decisions (2)
+        5: {4},     # Step 5 needs persona rewrites (4)
+        7: {6},     # Step 7 needs neutralized text (6)
+        8: {4},     # Step 8 needs rewrites from cache (4)
+    }
+
+    # Fixed model for dollar-amount extraction; gpt-4o-mini is used because
+    # extraction is a simple structured task that doesn't need a larger model,
+    # and results are cached across all experimental conditions.
+    DOLLAR_EXTRACT_MODEL = "gpt-4o-mini"
+
+    # Model used for generating interpretive commentary paragraphs
+    COMMENTARY_MODEL = "gpt-5.2"
 
     # Maximum number of retry rounds for timeout failures
     RETRY_ROUNDS = 3
@@ -376,9 +409,9 @@ class Experiment:
         Returns the (possibly updated) responses list.
         """
         # Build index so we can update responses in-place
-        resp_by_idx = {i: resp for i, resp in enumerate(responses)}
-        req_by_idx = {i: req for i, req in enumerate(requests)}
-        narr_by_idx = {i: narr for i, narr in enumerate(narratives)}
+        resp_by_idx = dict(enumerate(responses))
+        req_by_idx = dict(enumerate(requests))
+        narr_by_idx = dict(enumerate(narratives))
 
         base_timeout = self.llm.config.timeout
 
@@ -518,7 +551,7 @@ class Experiment:
         across experimental conditions and reruns.  Only ``--clear-cache``
         will invalidate them.
         """
-        model = "gpt-4o-mini"
+        model = self.DOLLAR_EXTRACT_MODEL
         requests: List[LLMRequest] = []
         narratives: List[str] = []
 
@@ -529,13 +562,13 @@ class Experiment:
                 model=model,
                 task="dollar_extract",
                 prompt_system=DOLLAR_EXTRACT_SYSTEM,
-                prompt_user=DOLLAR_EXTRACT_USER.format(narrative=c.narrative),
+                prompt_user=safe_narrative_format(DOLLAR_EXTRACT_USER, c.narrative),
                 expected_schema=DollarAmountResponse,
             )
             requests.append(req)
             narratives.append(c.narrative)
 
-        desc = "Dollar amount extraction [gpt-4o-mini]"
+        desc = f"Dollar amount extraction [{model}]"
         responses = self.llm.execute_batch(requests, narratives, desc=desc)
         responses = self._check_batch_results(responses, requests, narratives, desc)
 
@@ -726,7 +759,7 @@ class Experiment:
                     model=model,
                     task="persona_estimate",
                     prompt_system=PERSONA_ESTIMATE_SYSTEM,
-                    prompt_user=PERSONA_ESTIMATE_USER.format(narrative=c.narrative),
+                    prompt_user=safe_narrative_format(PERSONA_ESTIMATE_USER, c.narrative),
                     expected_schema=PersonaEstimateResponse,
                 )
                 requests.append(req)
@@ -775,9 +808,7 @@ class Experiment:
                 _log_value_counts(f"{dim} distribution", m[dim])
             # Full persona label counts (include zeros for missing personas)
             vc = m["persona_label"].value_counts()
-            all_personas = pd.Series(0, index=PERSONA_LABELS)
-            all_personas.update(vc)
-            all_personas = all_personas.sort_index()
+            all_personas = vc.reindex(PERSONA_LABELS, fill_value=0).sort_index()
             rows = [(str(k), str(int(v))) for k, v in all_personas.items()]
             _log_table("Full persona type counts (%d/%d present)" % (int((all_personas > 0).sum()), len(PERSONA_LABELS)), rows)
             # Confidence histogram
@@ -802,7 +833,7 @@ class Experiment:
                     model=model,
                     task="remedy_decision",
                     prompt_system=REMEDY_DECISION_SYSTEM,
-                    prompt_user=REMEDY_DECISION_USER.format(narrative=c.narrative),
+                    prompt_user=safe_narrative_format(REMEDY_DECISION_USER, c.narrative),
                     expected_schema=RemedyDecisionResponse,
                     variant="baseline",
                 )
@@ -1001,7 +1032,7 @@ class Experiment:
         req = LLMRequest(
             request_id=LLMRequest.new_id(),
             case_id="step3_commentary",
-            model="gpt-5.2",
+            model=self.COMMENTARY_MODEL,
             task="commentary",
             prompt_system=system_prompt,
             prompt_user=user_prompt,
@@ -1031,6 +1062,7 @@ class Experiment:
         rng = random.Random(self.seed)
         n_sample = max(1, int(len(self.complaints) * self.causal_sample_pct))
         sample = rng.sample(self.complaints, n_sample)
+        self.causal_sample = sample
         logger.info("Step 4: Rewriting %d complaints × 36 personas = %d rewrites", n_sample, n_sample * 36)
 
         for model in self.models:
@@ -1059,11 +1091,11 @@ class Experiment:
             responses = self.llm.execute_batch(requests, narratives, desc=desc)
             responses = self._check_batch_results(responses, requests, narratives, desc)
 
+            sample_lookup = {c.case_id: c for c in sample}
             for resp, req in zip(responses, requests):
                 if resp.success and resp.response_parsed:
                     p = resp.response_parsed
-                    # Find the original complaint
-                    orig = next((c for c in sample if c.case_id == resp.case_id), None)
+                    orig = sample_lookup.get(resp.case_id)
                     if orig:
                         self.persona_rewrites.append(PersonaRewrite(
                             case_id=resp.case_id,
@@ -1082,7 +1114,7 @@ class Experiment:
         if not self.persona_rewrites:
             return
         logger.info("── Step 4 Summary: Persona re-estimation on rewrites ──")
-        self.rewrite_persona_estimates: List[Tuple[str, str, PersonaEstimate]] = []  # (intended_label, model, estimate)
+        self.rewrite_persona_estimates = []  # (intended_label, model, estimate)
 
         for model in self.models:
             model_rewrites = [r for r in self.persona_rewrites if r.model == model]
@@ -1096,7 +1128,7 @@ class Experiment:
                     model=model,
                     task="persona_estimate",
                     prompt_system=PERSONA_ESTIMATE_SYSTEM,
-                    prompt_user=PERSONA_ESTIMATE_USER.format(narrative=rw.rewritten_narrative),
+                    prompt_user=safe_narrative_format(PERSONA_ESTIMATE_USER, rw.rewritten_narrative),
                     expected_schema=PersonaEstimateResponse,
                     variant=rw.persona_label,
                 )
@@ -1175,7 +1207,7 @@ class Experiment:
                     model=model,
                     task="remedy_decision",
                     prompt_system=REMEDY_DECISION_SYSTEM,
-                    prompt_user=REMEDY_DECISION_USER.format(narrative=rw.rewritten_narrative),
+                    prompt_user=safe_narrative_format(REMEDY_DECISION_USER, rw.rewritten_narrative),
                     expected_schema=RemedyDecisionResponse,
                     variant=rw.persona_label,
                 )
@@ -1235,13 +1267,14 @@ class Experiment:
             logger.info("  Model: %s (%d persona decisions)", model, len(m))
 
             # Parse variant into dimensions (4 causal dims)
-            parts = m["variant"].str.split("_", expand=True)
-            if parts.shape[1] >= 4:
+            parsed = m["variant"].apply(parse_persona_label)
+            valid = parsed.notna()
+            if valid.any():
                 m = m.copy()
-                m["age"] = parts[0]
-                m["geographic"] = parts[1]
-                m["education"] = parts[2]
-                m["socioeconomic"] = parts[3]
+                parsed_df = pd.DataFrame(parsed[valid].tolist(), index=parsed[valid].index)
+                for col in ["age", "geographic", "education", "socioeconomic"]:
+                    if col in parsed_df.columns:
+                        m.loc[parsed_df.index, col] = parsed_df[col]
 
                 # 2-way crosstab: persona × tier (top 10)
                 ct = pd.crosstab(m["variant"], m["tier"])
@@ -1263,7 +1296,7 @@ class Experiment:
             info_rate = need_info / len(m) if len(m) > 0 else 0.0
             logger.info("  ── Process Discrimination Rate ──")
             logger.info("    Info request rate: %d/%d (%.3f)", need_info, len(m), info_rate)
-            if parts.shape[1] >= 4:
+            if valid.any():
                 for dim in CAUSAL_DIMS:
                     if dim in m.columns:
                         dim_rates = m.groupby(dim)["confidence"].apply(
@@ -1287,7 +1320,7 @@ class Experiment:
                     model=model,
                     task="neutralize",
                     prompt_system=NEUTRALIZE_SYSTEM,
-                    prompt_user=NEUTRALIZE_USER.format(narrative=c.narrative),
+                    prompt_user=safe_narrative_format(NEUTRALIZE_USER, c.narrative),
                     expected_schema=NeutralizeResponse,
                     variant="neutralized",
                 )
@@ -1298,10 +1331,11 @@ class Experiment:
             responses = self.llm.execute_batch(requests, narratives, desc=desc)
             responses = self._check_batch_results(responses, requests, narratives, desc)
 
+            complaints_lookup = {c.case_id: c for c in self.complaints}
             for resp in responses:
-                if resp.response_parsed:
+                if resp.success and resp.response_parsed:
                     p = resp.response_parsed
-                    orig = next((c for c in self.complaints if c.case_id == resp.case_id), None)
+                    orig = complaints_lookup.get(resp.case_id)
                     if orig:
                         self.neutralized.append(NeutralizedComplaint(
                             case_id=resp.case_id,
@@ -1319,7 +1353,7 @@ class Experiment:
         if not self.neutralized:
             return
         logger.info("── Step 6 Summary: Persona re-estimation on neutralized ──")
-        self.neutralized_persona_estimates: List[PersonaEstimate] = []
+        self.neutralized_persona_estimates = []
 
         for model in self.models:
             model_neutral = [n for n in self.neutralized if n.model == model]
@@ -1333,7 +1367,7 @@ class Experiment:
                     model=model,
                     task="persona_estimate",
                     prompt_system=PERSONA_ESTIMATE_SYSTEM,
-                    prompt_user=PERSONA_ESTIMATE_USER.format(narrative=nc.neutralized_narrative),
+                    prompt_user=safe_narrative_format(PERSONA_ESTIMATE_USER, nc.neutralized_narrative),
                     expected_schema=PersonaEstimateResponse,
                     variant="neutralized",
                 )
@@ -1418,7 +1452,7 @@ class Experiment:
                     model=model,
                     task="remedy_decision",
                     prompt_system=REMEDY_DECISION_SYSTEM,
-                    prompt_user=REMEDY_DECISION_USER.format(narrative=nc.neutralized_narrative),
+                    prompt_user=safe_narrative_format(REMEDY_DECISION_USER, nc.neutralized_narrative),
                     expected_schema=RemedyDecisionResponse,
                     variant="neutralized",
                 )
@@ -1525,6 +1559,189 @@ class Experiment:
                 logger.info("    Delta: %.3f", neut_info_rate - orig_info_rate)
 
     # ------------------------------------------------------------------
+    # Step 8: Debiased Fact Extraction
+    # ------------------------------------------------------------------
+
+    def _get_causal_sample(self) -> List[Complaint]:
+        """Return the causal sample, re-deriving it deterministically if needed."""
+        if self.causal_sample:
+            return self.causal_sample
+        rng = random.Random(self.seed)
+        n_sample = max(1, int(len(self.complaints) * self.causal_sample_pct))
+        self.causal_sample = rng.sample(self.complaints, n_sample)
+        return self.causal_sample
+
+    def _load_rewrites_from_cache(
+        self, sample: List[Complaint], model: str,
+    ) -> Optional[Dict[str, Dict[str, Optional[str]]]]:
+        """Load persona rewrites from cache for the given sample.
+
+        Returns dict: case_id -> persona_label -> rewritten_text.
+        Returns None if any rewrites are missing.
+        """
+        rewrite_texts: Dict[str, Dict[str, Optional[str]]] = defaultdict(dict)
+        missing: List[str] = []
+
+        for c in sample:
+            for persona in PERSONA_GRID:
+                plabel = persona_label(**persona)
+                narrative_key = format_persona_rewrite_user(
+                    c.narrative,
+                    persona["age"], persona["geo"], persona["edu"], persona["ses"],
+                )
+                cached = self.cache.get(model, "persona_rewrite", narrative_key)
+                if cached is None:
+                    missing.append(f"{model}/{c.case_id}/{plabel}")
+                else:
+                    try:
+                        parsed = PersonaRewriteResponse(**cached)
+                        rewrite_texts[c.case_id][plabel] = parsed.rewritten_complaint
+                    except Exception as exc:
+                        missing.append(f"{model}/{c.case_id}/{plabel} (parse: {exc})")
+
+        if missing:
+            logger.error(
+                "Step 8: %d persona rewrite(s) missing for %s. "
+                "Run Step 4 first.", len(missing), model,
+            )
+            for m in missing[:10]:
+                logger.error("  %s", m)
+            if len(missing) > 10:
+                logger.error("  ... and %d more", len(missing) - 10)
+            return None
+
+        return dict(rewrite_texts)
+
+    def _step_8(self) -> None:
+        """Debiased fact extraction on causal sample and persona rewrites."""
+        from src.debiased_triage import (
+            FactSetResponse,
+            build_stage_1_prompt,
+            heuristic_triage,
+            parse_factset,
+            ReasonCategory,
+            Tier,
+            TriageDecision,
+        )
+
+        sample = self._get_causal_sample()
+        if not sample:
+            logger.warning("Step 8: No causal sample available (did Step 4 run?)")
+            return
+
+        n_personas = len(PERSONA_GRID)
+        complaint_meta = {c.case_id: (c.product, c.issue) for c in sample}
+
+        fail_decision = TriageDecision(
+            tier=Tier.NO_ACTION,
+            primary_reason=ReasonCategory.INSUFFICIENT_EVIDENCE,
+            explanation="Extraction failed.",
+            confidence="low",
+        )
+
+        # Initialise per-model dicts
+        for model in self.models:
+            self.debiased_orig_fs[model] = {}
+            self.debiased_orig_dec[model] = {}
+            self.debiased_rw_fs[model] = {}
+            self.debiased_rw_dec[model] = {}
+
+        # Collect rewrite texts across models (they are model-specific in cache)
+        all_rewrite_texts: Dict[str, Dict[str, Dict[str, Optional[str]]]] = {}
+
+        for model in self.models:
+            # -- 8a: Extract facts from originals --
+            requests: List[LLMRequest] = []
+            narratives: List[str] = []
+            for c in sample:
+                sys_msg, usr_msg = build_stage_1_prompt(c.narrative, c.product, c.issue)
+                requests.append(LLMRequest(
+                    request_id=LLMRequest.new_id(),
+                    case_id=c.case_id,
+                    model=model,
+                    task="fact_extraction",
+                    prompt_system=sys_msg,
+                    prompt_user=usr_msg,
+                    expected_schema=FactSetResponse,
+                ))
+                narratives.append(c.narrative)
+
+            desc = f"Step 8 [{model}] Extract facts from originals"
+            responses = self.llm.execute_batch(requests, narratives, desc=desc)
+            responses = self._check_batch_results(responses, requests, narratives, desc)
+
+            for c, resp in zip(sample, responses):
+                if resp.success and resp.response_parsed is not None:
+                    fs = parse_factset(resp.response_parsed)
+                    self.debiased_orig_fs[model][c.case_id] = fs
+                    self.debiased_orig_dec[model][c.case_id] = heuristic_triage(fs)
+                else:
+                    self.debiased_orig_fs[model][c.case_id] = None
+                    self.debiased_orig_dec[model][c.case_id] = fail_decision
+
+            # -- 8b: Load persona rewrites from cache --
+            rewrite_texts = self._load_rewrites_from_cache(sample, model)
+            if rewrite_texts is None:
+                logger.error("Step 8: Skipping rewrite extraction for %s (missing rewrites).", model)
+                continue
+            all_rewrite_texts[model] = rewrite_texts
+
+            # -- 8c: Extract facts from rewrites --
+            requests = []
+            narratives = []
+            fact_keys: List[Tuple[str, str]] = []
+            for case_id, personas in rewrite_texts.items():
+                product, issue = complaint_meta[case_id]
+                for plabel, text in personas.items():
+                    if text is None:
+                        continue
+                    sys_msg, usr_msg = build_stage_1_prompt(text, product, issue)
+                    requests.append(LLMRequest(
+                        request_id=LLMRequest.new_id(),
+                        case_id=case_id,
+                        model=model,
+                        task="fact_extraction",
+                        prompt_system=sys_msg,
+                        prompt_user=usr_msg,
+                        expected_schema=FactSetResponse,
+                    ))
+                    narratives.append(text)
+                    fact_keys.append((case_id, plabel))
+
+            desc = f"Step 8 [{model}] Extract facts from rewrites ({len(requests)})"
+            responses = self.llm.execute_batch(requests, narratives, desc=desc)
+            responses = self._check_batch_results(responses, requests, narratives, desc)
+
+            rw_ok = rw_fail = 0
+            for (case_id, plabel), resp in zip(fact_keys, responses):
+                if case_id not in self.debiased_rw_fs[model]:
+                    self.debiased_rw_fs[model][case_id] = {}
+                    self.debiased_rw_dec[model][case_id] = {}
+                if resp.success and resp.response_parsed is not None:
+                    fs = parse_factset(resp.response_parsed)
+                    self.debiased_rw_fs[model][case_id][plabel] = fs
+                    self.debiased_rw_dec[model][case_id][plabel] = heuristic_triage(fs)
+                    rw_ok += 1
+                else:
+                    self.debiased_rw_fs[model][case_id][plabel] = None
+                    self.debiased_rw_dec[model][case_id][plabel] = fail_decision
+                    rw_fail += 1
+
+            orig_ok = sum(1 for v in self.debiased_orig_fs[model].values() if v is not None)
+            logger.info("Step 8 [%s]: originals %d ok / %d fail, rewrites %d ok / %d fail",
+                        model, orig_ok, len(sample) - orig_ok, rw_ok, rw_fail)
+
+        # Merge rewrite texts across models (use first model's texts as canonical)
+        # All models share the same rewrites, just use whichever was loaded
+        for model_rw in all_rewrite_texts.values():
+            for case_id, personas in model_rw.items():
+                if case_id not in self.debiased_rewrite_texts:
+                    self.debiased_rewrite_texts[case_id] = personas
+
+        logger.info("Step 8: Debiased extraction complete for %d complaints × %d model(s)",
+                    len(sample), len(self.models))
+
+    # ------------------------------------------------------------------
     # Build DataFrames
     # ------------------------------------------------------------------
 
@@ -1568,7 +1785,7 @@ class Experiment:
                 if valid.any():
                     parsed_df = pd.DataFrame(parsed[valid].tolist(), index=parsed[valid].index)
                     for col in ["age", "geographic", "education", "socioeconomic"]:
-                        self.persona_decisions_df[col] = parsed_df[col]
+                        self.persona_decisions_df[col] = parsed_df[col].reindex(self.persona_decisions_df.index)
                     logger.debug("Parsed dimension columns from variant (%d/%d rows)", valid.sum(), len(parsed))
 
         if self.neutralized_decisions:
@@ -1717,7 +1934,7 @@ class Experiment:
 
             results[model] = model_results
 
-        self.analysis_results = results
+        self.analysis_results.update(results)
         self._run_power_analysis()
         self._run_severity_analysis()
         self._run_bayes_robustness()
@@ -1727,6 +1944,7 @@ class Experiment:
         self._run_mitigation_effectiveness_analysis()
         self._run_persona_analysis()
         self._run_text_rewriting_analysis()
+        self._run_debiased_consistency_analysis()
         self._display_analysis_results()
 
     # ------------------------------------------------------------------
@@ -1806,7 +2024,7 @@ class Experiment:
                     n_boot=1000,
                     seed=self.seed,
                 )
-                self.analysis_results["severity"]["ipw_robustness"] = ipw_result
+                self.analysis_results.setdefault("severity", {})["ipw_robustness"] = ipw_result
                 logger.info("IPW robustness analysis complete")
             except Exception as e:
                 logger.critical("IPW robustness analysis failed: %s", e)
@@ -1833,10 +2051,10 @@ class Experiment:
                                 df_for_gee, metric, model, dim,
                             )
                     gee_interactions[metric][model] = model_gee
-            self.analysis_results["severity"]["gee_interactions_tier2"] = gee_interactions
+            self.analysis_results.setdefault("severity", {})["gee_interactions_tier2"] = gee_interactions
             logger.info("Logistic GEE interaction tests complete")
         except Exception as e:
-            logger.warning("GEE interaction tests failed: %s", e)
+            logger.error("GEE interaction tests failed: %s", e, exc_info=True)
 
         # Console summary: missingness diagnostic
         miss_diag = result.get("missingness_diagnostic", {})
@@ -1993,10 +2211,8 @@ class Experiment:
             how="left",
         )
 
-        # Determine output dir for artifacts (if paper bundle will be generated)
-        output_dir = None
-        if hasattr(self, "output_dir"):
-            output_dir = Path(self.output_dir)
+        # Output dir for artifacts
+        output_dir = self.output_dir
 
         bayes_result = run_bayes_robustness(
             baseline_sev=baseline_sev,
@@ -2005,7 +2221,7 @@ class Experiment:
             output_dir=output_dir,
             cache_dir=self.cache_dir,
         )
-        self.analysis_results["severity"]["bayesian_robustness"] = bayes_result
+        self.analysis_results.setdefault("severity", {})["bayesian_robustness"] = bayes_result
         logger.info("Bayesian robustness analysis complete")
 
     # ------------------------------------------------------------------
@@ -2094,7 +2310,6 @@ class Experiment:
             corr = mr.get("correlation", {})
             dim_tests = [k for k in corr if k.endswith("_chi2")]
             if dim_tests:
-                import numpy as np
                 p_vals = [corr[k].get("p_value", 1.0) for k in dim_tests]
                 adj = fdr_correction(p_vals)
                 n_surv = int((np.array(adj) < 0.05).sum())
@@ -2332,7 +2547,7 @@ class Experiment:
             logger.info("  Supporting examples: %d", n_examples)
 
         except Exception as e:
-            logger.warning("Mitigation effectiveness analysis failed: %s", e)
+            logger.error("Mitigation effectiveness analysis failed: %s", e, exc_info=True)
             get_diagnostics().error(
                 category=DiagnosticCategory.COMPUTATION,
                 module="experiment",
@@ -2372,7 +2587,7 @@ class Experiment:
                         logger.info("    %s: %d values analyzed", dim, len(values))
 
         except Exception as e:
-            logger.warning("Persona analysis failed: %s", e)
+            logger.error("Persona analysis failed: %s", e, exc_info=True)
             get_diagnostics().error(
                 category=DiagnosticCategory.COMPUTATION,
                 module="experiment",
@@ -2433,7 +2648,7 @@ class Experiment:
                         logger.info("    %s: d=%.3f (%.1f%% change)", feat, d, pct)
 
         except Exception as e:
-            logger.warning("Text rewriting analysis failed: %s", e)
+            logger.error("Text rewriting analysis failed: %s", e, exc_info=True)
             get_diagnostics().error(
                 category=DiagnosticCategory.COMPUTATION,
                 module="experiment",
@@ -2441,6 +2656,44 @@ class Experiment:
                 fallback_action=None,
             )
             self.analysis_results["text_rewriting"] = {"error": str(e)}
+
+    # ------------------------------------------------------------------
+    # Debiased extraction consistency analysis
+    # ------------------------------------------------------------------
+
+    def _run_debiased_consistency_analysis(self) -> None:
+        """Run debiased extraction consistency analysis (Analyses 1-5)."""
+        if not self.debiased_orig_fs:
+            logger.info("Skipping debiased consistency analysis (no Step 8 data)")
+            return
+
+        from src.debiased_analysis import analyze_extraction_consistency
+
+        sample = self._get_causal_sample()
+        results = analyze_extraction_consistency(
+            orig_fs=self.debiased_orig_fs,
+            orig_dec=self.debiased_orig_dec,
+            rw_fs=self.debiased_rw_fs,
+            rw_dec=self.debiased_rw_dec,
+            rewrite_texts=self.debiased_rewrite_texts,
+            complaints=sample,
+            models=self.models,
+        )
+        self.analysis_results["debiased_consistency"] = results.to_dict()
+
+        # Console summary
+        avgs = results.model_averages
+        for model, avg in avgs.items():
+            logger.info("── Debiased Consistency [%s] ──", model)
+            logger.info("  Avg tier match:    %.1f%%", avg["tier"] * 100)
+            logger.info("  Avg entity match:  %.1f%%", avg["entity"] * 100)
+            logger.info("  Avg conduct match: %.1f%%", avg["conduct"] * 100)
+            logger.info("  Avg harm match:    %.1f%%", avg["harm"] * 100)
+
+        if results.worked_example_rows:
+            logger.info("  Worked example found (%d rows)", len(results.worked_example_rows))
+
+        logger.info("Debiased consistency analysis complete")
 
     # ------------------------------------------------------------------
     # Display analysis results
@@ -2848,7 +3101,7 @@ class Experiment:
         req = LLMRequest(
             request_id=LLMRequest.new_id(),
             case_id="commentary",
-            model="gpt-5.2",
+            model=self.COMMENTARY_MODEL,
             task="commentary",
             prompt_system=system_prompt,
             prompt_user=user_prompt,
@@ -2891,9 +3144,7 @@ class Experiment:
                     lines.append(f"  {k}  {v}")
             # Full persona label counts
             vc = m["persona_label"].value_counts()
-            all_personas = pd.Series(0, index=PERSONA_LABELS)
-            all_personas.update(vc)
-            all_personas = all_personas.sort_index()
+            all_personas = vc.reindex(PERSONA_LABELS, fill_value=0).sort_index()
             present = int((all_personas > 0).sum())
             lines.append(f"── Full persona type counts ({present}/{len(PERSONA_LABELS)} present) ──")
             for k, v in all_personas.items():
@@ -2926,13 +3177,14 @@ class Experiment:
             if m.empty:
                 continue
             lines.append(f"Model: {model} ({len(m)} persona decisions)")
-            parts = m["variant"].str.split("_", expand=True)
-            if parts.shape[1] >= 4:
+            parsed = m["variant"].apply(parse_persona_label)
+            valid = parsed.notna()
+            if valid.any():
                 m = m.copy()
-                m["age"] = parts[0]
-                m["geographic"] = parts[1]
-                m["education"] = parts[2]
-                m["socioeconomic"] = parts[3]
+                parsed_df = pd.DataFrame(parsed[valid].tolist(), index=parsed[valid].index)
+                for col in ["age", "geographic", "education", "socioeconomic"]:
+                    if col in parsed_df.columns:
+                        m.loc[parsed_df.index, col] = parsed_df[col]
                 # Top 10 persona × tier crosstab
                 ct = pd.crosstab(m["variant"], m["tier"])
                 top10 = ct.sum(axis=1).nlargest(10).index
@@ -2960,7 +3212,7 @@ class Experiment:
             info_rate = need_info / len(m) if len(m) > 0 else 0.0
             lines.append("── Process Discrimination Rate ──")
             lines.append(f"  Info request rate: {need_info}/{len(m)} ({info_rate:.3f})")
-            if parts.shape[1] >= 4:
+            if valid.any():
                 for dim in CAUSAL_DIMS:
                     if dim in m.columns:
                         dim_rates = m.groupby(dim)["confidence"].apply(
@@ -3059,7 +3311,7 @@ class Experiment:
             for dim_name, dim_data in dims.items():
                 for value, val_data in dim_data.items():
                     top_feats = val_data.get("top_features", [])
-                    auc = val_data.get("auc", 0)
+                    auc = val_data.get("training_auc", 0)
                     summary = val_data.get("summary", "")
                     feat_str = ", ".join(
                         f"{f['feature_display']} ({f['importance']:.0f})"
@@ -3581,7 +3833,7 @@ class Experiment:
         req = LLMRequest(
             request_id=LLMRequest.new_id(),
             case_id=f"exec_{section_name}",
-            model="gpt-5.2",
+            model=self.COMMENTARY_MODEL,
             task="executive_summary",
             prompt_system=system_prompt,
             prompt_user=user_prompt,
@@ -3761,9 +4013,9 @@ class Experiment:
             )
             if text:
                 sections["conclusion"] = text
-                logger.info("  Section 7 generated (%d chars)", len(text))
+                logger.info("  Section 8 generated (%d chars)", len(text))
             else:
-                logger.warning("  Section 7 generation failed")
+                logger.warning("  Section 8 generation failed")
 
         return sections
 
@@ -3854,7 +4106,54 @@ class Experiment:
             summary_path.write_text("\n".join(lines), encoding="utf-8")
             logger.info("Executive summary written to %s", summary_path)
 
+        # Debiased consistency Excel workbook
+        debiased = self.analysis_results.get("debiased_consistency")
+        if debiased:
+            self._save_debiased_excel(debiased)
+
         # Failed requests
         # (collected from LLM responses with success=False — tracked internally)
 
         logger.info("Artifacts saved to %s", self.output_dir)
+
+    def _save_debiased_excel(self, debiased: Dict[str, Any]) -> None:
+        """Save debiased consistency results as Excel workbook."""
+        xlsx_path = self.output_dir / f"debias-analysis-{self.timestamp}.xlsx"
+        try:
+            with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
+                consistency = debiased.get("consistency", [])
+                if consistency:
+                    pd.DataFrame(consistency).to_excel(
+                        writer, sheet_name="Extraction Consistency", index=False,
+                    )
+                cross_model = debiased.get("cross_model", [])
+                if cross_model:
+                    pd.DataFrame(cross_model).to_excel(
+                        writer, sheet_name="Cross-Model Comparison", index=False,
+                    )
+                by_dim = debiased.get("by_dimension", [])
+                if by_dim:
+                    pd.DataFrame(by_dim).to_excel(
+                        writer, sheet_name="Consistency by Dimension", index=False,
+                    )
+                cross_dim = debiased.get("cross_model_by_dimension", [])
+                if cross_dim:
+                    pd.DataFrame(cross_dim).to_excel(
+                        writer, sheet_name="Cross-Model by Dimension", index=False,
+                    )
+                worked = debiased.get("worked_example", [])
+                if worked:
+                    # Flatten the nested vals dict for Excel
+                    flat_rows = []
+                    for row in worked:
+                        flat = {"variant": row["variant"], "text": row.get("text", "")}
+                        for model, vals in row.get("vals", {}).items():
+                            for k, v in vals.items():
+                                flat[k] = v
+                        flat_rows.append(flat)
+                    pd.DataFrame(flat_rows).to_excel(
+                        writer, sheet_name="Worked Example", index=False,
+                    )
+            logger.info("Debiased Excel report saved: %s", xlsx_path)
+        except Exception as exc:
+            logger.warning("Failed to save debiased Excel report: %s", exc)

@@ -12,8 +12,6 @@ TableGenerator.generate_all_tables  Generate all main, appendix, and
 
 from __future__ import annotations
 
-import csv
-import io
 import json
 import logging
 from pathlib import Path
@@ -104,8 +102,11 @@ def _resolve_variance_change(block: Dict[str, Any]) -> Dict[str, Any]:
 
 def _escape_latex(s: str) -> str:
     """Escape special LaTeX characters."""
+    s = s.replace("\\", "\\textbackslash{}")
     for char in ["&", "%", "$", "#", "_", "{", "}"]:
         s = s.replace(char, f"\\{char}")
+    s = s.replace("~", "\\textasciitilde{}")
+    s = s.replace("^", "\\textasciicircum{}")
     return s
 
 
@@ -250,7 +251,7 @@ class TableGenerator:
     def __init__(
         self,
         analysis_results: Dict[str, Any],
-        complaints: list,
+        complaints: List[Any],
         run_config: Dict[str, Any],
         output_root: Path,
     ):
@@ -266,6 +267,7 @@ class TableGenerator:
         all_paths.extend(self._generate_main_tables())
         all_paths.extend(self._generate_appendix_tables())
         all_paths.extend(self._generate_robustness_tables())
+        all_paths.extend(self._generate_debiased_tables())
         return all_paths
 
     # ==================================================================
@@ -611,7 +613,7 @@ class TableGenerator:
                 for value, val_data in sorted(dim_data.items()):
                     if isinstance(val_data, dict) and "top_features" in val_data:
                         feats = val_data["top_features"]
-                        auc = val_data.get("auc")
+                        auc = val_data.get("training_auc")
                         summary = val_data.get("summary", "")
                         feat_strs = []
                         for f in feats[:3]:
@@ -843,9 +845,7 @@ class TableGenerator:
             return []
 
         # Sort by absolute effect and take top 20
-        for p in pairwise:
-            p["abs_effect"] = abs(p.get("rate_1", 0) - p.get("rate_2", 0))
-        sorted_pairs = sorted(pairwise, key=lambda x: x.get("abs_effect", 0), reverse=True)[:20]
+        sorted_pairs = sorted(pairwise, key=lambda p: abs(p.get("rate_1", 0) - p.get("rate_2", 0)), reverse=True)[:20]
 
         rows = []
         ne_pair = NE.missing_data(context="pairwise comparison")
@@ -1035,7 +1035,6 @@ class TableGenerator:
     def _tableA5_prompt_inventory(self, out: Path) -> List[Path]:
         """Appendix Table A5: Prompt inventory and parameters."""
         from src.prompts import PROMPT_VERSIONS
-        import hashlib
 
         rows = []
         for task, version in PROMPT_VERSIONS.items():
@@ -1108,8 +1107,6 @@ class TableGenerator:
             g = _escape_latex(group) if group != prev_group else ""
             tex_lines.append(f"{g} & {_escape_latex(fid)} & {_escape_latex(display)} & {_escape_latex(defn)} \\\\")
             prev_group = group
-            if g and prev_group != rows[-1][0]:
-                pass  # no extra rule needed between groups in booktabs style
         tex_lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table}"])
 
         tex_name = _build_filename("table", "appendix", "text_feature_inventory", "na", "all", 1, "tex")
@@ -1384,7 +1381,7 @@ class TableGenerator:
             t2 = band_data.get("P_tier2", {})
 
             ne_cri = NE.missing_data(context="CrI")
-            def _fmt_cri(d: dict) -> str:
+            def _fmt_cri(d: Dict[str, Any]) -> str:
                 m = d.get("mean", ne_cri)
                 lo = d.get("ci_low", ne_cri)
                 hi = d.get("ci_high", ne_cri)
@@ -1452,3 +1449,310 @@ class TableGenerator:
             use_tabularx=True,
             font_size="footnotesize",
         )
+
+    # ==================================================================
+    # DEBIASED EXTRACTION CONSISTENCY TABLES
+    # ==================================================================
+
+    def _generate_debiased_tables(self) -> List[Path]:
+        """Generate debiased extraction consistency tables."""
+        debiased = self.ar.get("debiased_consistency")
+        if not debiased:
+            return []
+
+        paths: List[Path] = []
+        main_dir = self.output_root / "analysis" / "tables" / "main"
+        main_dir.mkdir(parents=True, exist_ok=True)
+        app_dir = self.output_root / "analysis" / "tables" / "appendix"
+        app_dir.mkdir(parents=True, exist_ok=True)
+
+        # Table: Extraction Consistency (per model)
+        for model in self.models:
+            paths.extend(self._table_debiased_extraction_consistency(main_dir, model, debiased))
+
+        # Table: Cross-Model Comparison
+        if len(self.models) >= 2:
+            paths.extend(self._table_debiased_cross_model(main_dir, debiased))
+
+        # Table: Consistency by Dimension (per model)
+        for model in self.models:
+            paths.extend(self._table_debiased_consistency_by_dim(main_dir, model, debiased))
+
+        # Table: Cross-Model by Dimension
+        if len(self.models) >= 2:
+            paths.extend(self._table_debiased_cross_model_by_dim(main_dir, debiased))
+
+        # Table: Worked Example (appendix)
+        paths.extend(self._table_debiased_worked_example(app_dir, debiased))
+
+        return paths
+
+    def _table_debiased_extraction_consistency(
+        self, out: Path, model: str, debiased: Dict[str, Any],
+    ) -> List[Path]:
+        """Extraction consistency: original vs. 36 persona rewrites (per model)."""
+        consistency = debiased.get("consistency", [])
+        model_rows = [r for r in consistency if r["model"] == model]
+        if not model_rows:
+            return []
+
+        rows = []
+        for r in model_rows:
+            is_avg = r["case_id"] == "AVERAGE"
+            rows.append({
+                "Case ID": r["case_id"] if not is_avg else "AVERAGE",
+                "Orig": str(r["orig_tier"]) if r["orig_tier"] != "" else "",
+                "Tier %": _fmt_pct(float(r["tier"]) * 100) if r["tier"] != "" else "",
+                "Entity %": _fmt_pct(float(r["entity"]) * 100) if r["entity"] != "" else "",
+                "Nexus %": _fmt_pct(float(r["nexus"]) * 100) if r["nexus"] != "" else "",
+                "Conduct %": _fmt_pct(float(r["conduct"]) * 100) if r["conduct"] != "" else "",
+                "Harm %": _fmt_pct(float(r["harm"]) * 100) if r["harm"] != "" else "",
+                "Evid %": _fmt_pct(float(r["evid"]) * 100) if r["evid"] != "" else "",
+                "N": str(r["n"]) if r["n"] != "" else "",
+            })
+
+        df = pd.DataFrame(rows)
+        model_clean = model.replace("-", "").replace("_", "")
+        return _write_three_formats(
+            df, out, "table", "main", "debiased_extraction_consistency",
+            model_clean, "matched", 1,
+            caption=f"Debiased extraction consistency: original vs. 36 persona rewrites -- {model}.",
+            label=f"tab:debiased_consistency_{model_clean}",
+            use_tabularx=True,
+            col_spec=r"l >{\raggedright\arraybackslash}X c r r r r r r r",
+            font_size="footnotesize",
+        )
+
+    def _table_debiased_cross_model(
+        self, out: Path, debiased: Dict[str, Any],
+    ) -> List[Path]:
+        """Cross-model comparison on originals + rewrites."""
+        cross_model = debiased.get("cross_model", [])
+        if not cross_model:
+            return []
+
+        m1 = self.models[0] if self.models else ""
+        m2 = self.models[1] if len(self.models) >= 2 else ""
+
+        rows = []
+        for r in cross_model:
+            def _fmt_agree(v: Any) -> str:
+                if isinstance(v, bool):
+                    return "Y" if v else "N"
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    return _fmt_pct(float(v) * 100)
+                if v == "":
+                    return ""
+                return str(v)
+
+            rows.append({
+                "Section": r["section"],
+                "Case ID": r["case_id"],
+                f"T {m1}": str(r.get("tier_m1", "")),
+                f"T {m2}": str(r.get("tier_m2", "")),
+                "Tier": _fmt_agree(r["tier_agree"]),
+                "Entity": _fmt_agree(r["entity_agree"]),
+                "Nexus": _fmt_agree(r["nexus_agree"]),
+                "Conduct": _fmt_agree(r["conduct_agree"]),
+                "Harm": _fmt_agree(r["harm_agree"]),
+            })
+
+        df = pd.DataFrame(rows)
+        return _write_three_formats(
+            df, out, "table", "main", "debiased_cross_model",
+            "na", "matched", 1,
+            caption=f"Cross-model comparison: {_escape_latex(m1)} vs. {_escape_latex(m2)}.",
+            label="tab:debiased_cross_model",
+            use_tabularx=True,
+            col_spec=r"l >{\raggedright\arraybackslash}X c c r r r r r",
+            font_size="footnotesize",
+        )
+
+    def _table_debiased_consistency_by_dim(
+        self, out: Path, model: str, debiased: Dict[str, Any],
+    ) -> List[Path]:
+        """Extraction consistency grouped by persona dimension (per model)."""
+        by_dim = debiased.get("by_dimension", [])
+        model_rows = [r for r in by_dim if r["model"] == model]
+        if not model_rows:
+            return []
+
+        rows = []
+        for r in model_rows:
+            rows.append({
+                "Dim": r["dimension"],
+                "Value": r["value"],
+                "Tier %": _fmt_pct(float(r["tier"]) * 100),
+                "Entity %": _fmt_pct(float(r["entity"]) * 100),
+                "Nexus %": _fmt_pct(float(r["nexus"]) * 100),
+                "Conduct %": _fmt_pct(float(r["conduct"]) * 100),
+                "Harm %": _fmt_pct(float(r["harm"]) * 100),
+                "Evid %": _fmt_pct(float(r["evid"]) * 100),
+                "N": _fmt_int(r["n"]),
+            })
+
+        df = pd.DataFrame(rows)
+        model_clean = model.replace("-", "").replace("_", "")
+        return _write_three_formats(
+            df, out, "table", "main", "debiased_consistency_by_dim",
+            model_clean, "matched", 1,
+            caption=f"Extraction consistency by persona dimension -- {model}.",
+            label=f"tab:debiased_dim_{model_clean}",
+            use_tabularx=True,
+            col_spec=r"l l r r r r r r r",
+            font_size="footnotesize",
+        )
+
+    def _table_debiased_cross_model_by_dim(
+        self, out: Path, debiased: Dict[str, Any],
+    ) -> List[Path]:
+        """Cross-model agreement by persona dimension."""
+        cross_dim = debiased.get("cross_model_by_dimension", [])
+        if not cross_dim:
+            return []
+
+        rows = []
+        for r in cross_dim:
+            rows.append({
+                "Dim": r["dimension"],
+                "Value": r["value"],
+                "Tier %": _fmt_pct(float(r["tier"]) * 100),
+                "Entity %": _fmt_pct(float(r["entity"]) * 100),
+                "Nexus %": _fmt_pct(float(r["nexus"]) * 100),
+                "Conduct %": _fmt_pct(float(r["conduct"]) * 100),
+                "Harm %": _fmt_pct(float(r["harm"]) * 100),
+                "N": _fmt_int(r["n"]),
+            })
+
+        df = pd.DataFrame(rows)
+        return _write_three_formats(
+            df, out, "table", "main", "debiased_cross_model_by_dim",
+            "na", "matched", 1,
+            caption="Cross-model agreement by persona dimension.",
+            label="tab:debiased_cross_dim",
+            use_tabularx=True,
+            col_spec=r"l l r r r r r r",
+            font_size="footnotesize",
+        )
+
+    def _table_debiased_worked_example(
+        self, out: Path, debiased: Dict[str, Any],
+    ) -> List[Path]:
+        """Worked example: fact extraction across persona rewrites (appendix)."""
+        worked = debiased.get("worked_example", [])
+        if not worked or len(self.models) < 2:
+            return []
+
+        m1, m2 = self.models[0], self.models[1]
+
+        # Build custom LaTeX (multi-row header with cmidrule)
+        m1_h = _escape_latex(m1)
+        m2_h = _escape_latex(m2)
+        tex_lines = [
+            r"% Required packages: tabularx, booktabs, array, multirow",
+            r"% \newcolumntype{Y}{>{\raggedright\arraybackslash}X}",
+            "",
+            r"\begin{table}[htbp]",
+            r"\centering",
+            r"\scriptsize",
+            r"\caption{Worked Example: Fact Extraction Across Persona Rewrites}",
+            r"\label{tab:debiased_worked_example}",
+            r"\begin{tabularx}{\textwidth}{l Y c l c Y Y c l c Y Y}",
+            r"\toprule",
+            (
+                r" & "
+                rf"& \multicolumn{{5}}{{c}}{{\textbf{{{m1_h}}}}} "
+                rf"& \multicolumn{{5}}{{c}}{{\textbf{{{m2_h}}}}} \\"
+            ),
+            r"\cmidrule(lr){3-7} \cmidrule(lr){8-12}",
+            (
+                r"\textbf{Variant} & \textbf{Text} "
+                r"& \textbf{T} & \textbf{Ent} & \textbf{Nexus} "
+                r"& \textbf{Conduct} & \textbf{Harm} "
+                r"& \textbf{T} & \textbf{Ent} & \textbf{Nexus} "
+                r"& \textbf{Conduct} & \textbf{Harm} \\"
+            ),
+            r"\midrule",
+        ]
+
+        for r in worked:
+            full_text = str(r.get("text", ""))
+            text_trunc = full_text[:100] + ("..." if len(full_text) > 100 else "")
+            vals = r.get("vals", {})
+            v1 = vals.get(m1, {})
+            v2 = vals.get(m2, {})
+            row = [
+                _escape_latex(r["variant"]),
+                _escape_latex(text_trunc),
+                str(v1.get(f"{m1}_tier", "")),
+                _escape_latex(str(v1.get(f"{m1}_entity", ""))),
+                str(v1.get(f"{m1}_nexus", "")),
+                _escape_latex(str(v1.get(f"{m1}_conduct", ""))),
+                _escape_latex(str(v1.get(f"{m1}_harm", ""))),
+                str(v2.get(f"{m2}_tier", "")),
+                _escape_latex(str(v2.get(f"{m2}_entity", ""))),
+                str(v2.get(f"{m2}_nexus", "")),
+                _escape_latex(str(v2.get(f"{m2}_conduct", ""))),
+                _escape_latex(str(v2.get(f"{m2}_harm", ""))),
+            ]
+            tex_lines.append(" & ".join(row) + r" \\")
+
+        tex_lines += [
+            r"\bottomrule",
+            r"\end{tabularx}",
+            r"\end{table}",
+            "",
+        ]
+
+        # Write .tex manually (custom multi-row header)
+        tex_name = _build_filename(
+            "table", "appendix", "debiased_worked_example", "na", "matched", 1, "tex"
+        )
+        tex_path = out / tex_name
+        tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
+        paths = [tex_path]
+
+        # Also write .md and .csv (flat format)
+        flat_rows = []
+        for r in worked:
+            full_text = str(r.get("text", ""))
+            text_trunc = full_text[:100] + ("..." if len(full_text) > 100 else "")
+            vals = r.get("vals", {})
+            v1 = vals.get(m1, {})
+            v2 = vals.get(m2, {})
+            flat_rows.append({
+                "Variant": r["variant"],
+                "Text": text_trunc,
+                f"{m1} Tier": v1.get(f"{m1}_tier", ""),
+                f"{m1} Entity": v1.get(f"{m1}_entity", ""),
+                f"{m1} Nexus": v1.get(f"{m1}_nexus", ""),
+                f"{m1} Conduct": v1.get(f"{m1}_conduct", ""),
+                f"{m1} Harm": v1.get(f"{m1}_harm", ""),
+                f"{m2} Tier": v2.get(f"{m2}_tier", ""),
+                f"{m2} Entity": v2.get(f"{m2}_entity", ""),
+                f"{m2} Nexus": v2.get(f"{m2}_nexus", ""),
+                f"{m2} Conduct": v2.get(f"{m2}_conduct", ""),
+                f"{m2} Harm": v2.get(f"{m2}_harm", ""),
+            })
+
+        if flat_rows:
+            df = pd.DataFrame(flat_rows)
+            md_name = _build_filename(
+                "table", "appendix", "debiased_worked_example", "na", "matched", 1, "md"
+            )
+            md_path = out / md_name
+            md_path.write_text(
+                _dataframe_to_markdown(df, "Worked Example: Fact Extraction Across Persona Rewrites"),
+                encoding="utf-8",
+            )
+            paths.append(md_path)
+
+            csv_name = _build_filename(
+                "table", "appendix", "debiased_worked_example", "na", "matched", 1, "csv"
+            )
+            csv_path = out / csv_name
+            df.to_csv(csv_path, index=False, encoding="utf-8")
+            paths.append(csv_path)
+
+        logger.info("Written table: debiased_worked_example (.tex/.md/.csv)")
+        return paths

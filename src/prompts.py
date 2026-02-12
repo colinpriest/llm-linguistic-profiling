@@ -1,5 +1,26 @@
 """Prompt templates for the LLM fairness experiment."""
 
+from __future__ import annotations
+
+from typing import Dict
+
+
+def _escape_braces(text: str) -> str:
+    """Escape literal ``{`` and ``}`` so they survive ``str.format``."""
+    return text.replace("{", "{{").replace("}", "}}")
+
+
+def safe_narrative_format(template: str, narrative: str) -> str:
+    """Format a prompt template safely, escaping curly braces in the narrative.
+
+    Plain ``str.format(narrative=text)`` crashes when *text* contains literal
+    ``{`` or ``}`` characters (common in financial complaints).  This helper
+    escapes those characters in the narrative before formatting.
+    """
+    safe_narrative = _escape_braces(narrative)
+    return template.format(narrative=safe_narrative)
+
+
 PROMPT_VERSIONS = {
     "persona_estimate": "1.0",
     "remedy_decision": "1.0",
@@ -229,9 +250,19 @@ def format_persona_rewrite_user(
     edu: str,
     ses: str,
 ) -> str:
-    """Build the user prompt for persona rewriting with demographic descriptions."""
+    """Build the user prompt for persona rewriting with demographic descriptions.
+
+    Raises ``ValueError`` if any dimension value is not in
+    :data:`DEMOGRAPHIC_DESCRIPTIONS`.
+    """
+    _validate_dimension("age", age, DEMOGRAPHIC_DESCRIPTIONS["age"])
+    _validate_dimension("geo", geo, DEMOGRAPHIC_DESCRIPTIONS["geo"])
+    _validate_dimension("edu", edu, DEMOGRAPHIC_DESCRIPTIONS["edu"])
+    _validate_dimension("ses", ses, DEMOGRAPHIC_DESCRIPTIONS["ses"])
+
+    safe_narrative = _escape_braces(narrative)
     return PERSONA_REWRITE_USER.format(
-        narrative=narrative,
+        narrative=safe_narrative,
         age_value=age,
         age_description=DEMOGRAPHIC_DESCRIPTIONS["age"][age],
         geo_value=geo,
@@ -241,3 +272,11 @@ def format_persona_rewrite_user(
         ses_value=ses,
         ses_description=DEMOGRAPHIC_DESCRIPTIONS["ses"][ses],
     )
+
+
+def _validate_dimension(name: str, value: str, allowed: Dict[str, str]) -> None:
+    """Raise ``ValueError`` if *value* is not a key in *allowed*."""
+    if value not in allowed:
+        raise ValueError(
+            f"Invalid {name} value {value!r}; expected one of {sorted(allowed)}"
+        )

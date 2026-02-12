@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from src.estimable import NE, NEValue, is_estimable
+from src.estimable import NE, is_estimable
 
 logger = logging.getLogger(__name__)
 
@@ -398,13 +398,14 @@ def ipw_amplification_analysis(
             }
 
             # --- Bootstrap CIs (clustered by complaint) ---
-            rng = np.random.RandomState(seed)
+            rng = np.random.default_rng(seed)
             case_ids = model_df["case_id"].unique()
             boot_A_uw, boot_A_w, boot_R_uw, boot_R_w = [], [], [], []
+            grouped = {cid: sub_df for cid, sub_df in model_df.groupby("case_id")}
 
             for _ in tqdm(range(n_boot), desc=f"  bootstrap(IPW,{dim})", leave=False, delay=1):
                 sample_ids = rng.choice(case_ids, size=len(case_ids), replace=True)
-                boot_df = model_df[model_df["case_id"].isin(sample_ids)]
+                boot_df = pd.concat([grouped[sid] for sid in sample_ids], ignore_index=True)
 
                 # Unweighted bootstrap
                 bl_uw = _weighted_dim_bias_at_level(boot_df.assign(w=1.0), severity_metric, "low", dim, "w")
@@ -473,8 +474,6 @@ def ipw_to_panel_payload(
     -------
     Dict conforming to panel_ipw_robustness.schema.json
     """
-    from src.estimable import is_estimable
-
     propensity_diag = ipw_result.get("propensity_diagnostics", {})
     n_m1 = propensity_diag.get("n_M1", 0)
     max_weight = propensity_diag.get("weight_range_M1", [0, 0])[1] if propensity_diag.get("weight_range_M1") else 0

@@ -7,22 +7,21 @@ import html
 import io
 import logging
 import re
+import threading
 import warnings
-from collections import Counter
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-import matplotlib.colors as mcolors  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import seaborn as sns  # noqa: E402
 
 from src.schemas import Complaint, ESTIMATE_DIMS, CAUSAL_DIMS, PERSONA_LABELS
 from src.estimable import (
-    NEValue, NE, NECode, is_estimable, get_ne_reason,
-    format_value, format_value_plain, collect_footnotes, make_footnote_row,
+    NEValue, NE, is_estimable,
+    format_value, collect_footnotes, make_footnote_row,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,11 +52,13 @@ FLAG_BG = {
 def _fig_to_base64(fig: plt.Figure, dpi: int = 100) -> str:
     """Render a matplotlib figure to a base64-encoded PNG string."""
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight",
-                facecolor="white", edgecolor="none")
-    plt.close(fig)
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode("ascii")
+    try:
+        fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight",
+                    facecolor="white", edgecolor="none")
+        buf.seek(0)
+        return base64.b64encode(buf.read()).decode("ascii")
+    finally:
+        plt.close(fig)
 
 
 def _safe_get(d: Any, *keys: str, default: Any = None) -> Any:
@@ -71,6 +72,14 @@ def _safe_get(d: Any, *keys: str, default: Any = None) -> Any:
     return current
 
 
+def _is_finite_number(x: Any) -> bool:
+    """Check if x is a finite number (not NEValue, not NaN, not inf)."""
+    try:
+        return np.isfinite(float(x))
+    except (TypeError, ValueError):
+        return False
+
+
 # ---------------------------------------------------------------------------
 # NE-aware formatting functions
 # ---------------------------------------------------------------------------
@@ -79,18 +88,21 @@ def _safe_get(d: Any, *keys: str, default: Any = None) -> Any:
 
 # Collector for NE values encountered during rendering (reset per section)
 _ne_collector: List[NEValue] = []
+_ne_collector_lock = threading.Lock()
 
 
 def _reset_ne_collector() -> None:
     """Reset the NE value collector (call at start of each section)."""
     global _ne_collector
-    _ne_collector = []
+    with _ne_collector_lock:
+        _ne_collector = []
 
 
 def _get_collected_footnotes() -> str:
     """Get HTML footnotes for all collected NE values."""
     global _ne_collector
-    return collect_footnotes(_ne_collector)
+    with _ne_collector_lock:
+        return collect_footnotes(_ne_collector)
 
 
 def _fmt(val: Any, precision: int = 4, collect: bool = True) -> str:
@@ -690,6 +702,7 @@ def _chart_feature_violins(text_features_df: Optional[pd.DataFrame]) -> str:
             sns.violinplot(data=plot_df, x="variant", y=feat, ax=ax, inner="box",
                            palette="Set2", cut=0)
         except Exception:
+            logger.debug("Violin plot failed for %s, falling back to boxplot", feat)
             sns.boxplot(data=plot_df, x="variant", y=feat, ax=ax, palette="Set2")
         ax.set_title(feat.replace("_", " ").title(), fontsize=10)
         ax.set_xlabel("")
@@ -1279,8 +1292,15 @@ def _md_to_html(md: str) -> str:
         text = re.sub(r"(?<!\w)_(.+?)_(?!\w)", r"<em>\1</em>", text)
         # Inline code: `code`
         text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
-        # Links: [text](url)
-        text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
+        # Links: [text](url) — with URL validation to block javascript:/data:/vbscript:
+        def _safe_href(match):
+            link_text = match.group(1)
+            url = match.group(2)
+            # Block javascript: and data: schemes
+            if re.match(r'(?i)\s*(javascript|data|vbscript):', url):
+                return html.escape(match.group(0))  # render as plain text
+            return f'<a href="{html.escape(url, quote=True)}">{link_text}</a>'
+        text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", _safe_href, text)
         return text
 
     out: List[str] = []
@@ -2010,8 +2030,8 @@ def _build_tab_text_features(
             for i, words in enumerate(topic_words):
                 parts.append(f"<tr><td>Topic {i}</td><td>{html.escape(', '.join(words))}</td></tr>")
             parts.append("</tbody></table>")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Topic top words unavailable: %s", e)
 
     topic_heatmap = _chart_topic_persona_heatmap(text_features_df)
     if topic_heatmap:
@@ -2397,7 +2417,7 @@ def _build_tab_persona_analysis(
                 n_samples = value_data.get("n_samples", 0)
                 n_total = value_data.get("n_total", 0)
                 prevalence = value_data.get("prevalence", 0)
-                auc = value_data.get("auc")
+                auc = value_data.get("training_auc")
                 summary = value_data.get("summary", "")
                 top_features = value_data.get("top_features", [])
                 pdp_charts = value_data.get("pdp_charts", [])
@@ -2619,15 +2639,6 @@ def _build_comparison_rows(
     # Repeated-measures model results (per-model rows)
     rm = analysis_results.get("repeated_measures", {})
     if rm and not rm.get("skipped"):
-        def _rm_extractor(*keys):
-            def extractor(mr_unused):
-                # mr_unused is the per-model analysis_results[model] dict,
-                # but repeated-measures results are stored under analysis_results["repeated_measures"][model].
-                # We iterate models in the row builder, so just return None here;
-                # the actual per-model values are added below.
-                return None
-            return extractor
-
         # Add per-model ICC row manually
         row_icc = {"label": "LMM ICC (complaint clustering)"}
         for m in models:
@@ -2977,7 +2988,8 @@ def _chart_severity_crosstab(sev: Dict[str, Any]) -> Optional[str]:
         # Keep only rows that exist in the data
         row_order = [r for r in row_order if r in ct.index]
         ct = ct.reindex(index=row_order, columns=col_order).fillna(0)
-    except Exception:
+    except Exception as e:
+        logger.debug("Severity crosstab chart failed: %s", e)
         return None
 
     fig, ax = plt.subplots(figsize=(5, 4.5))
@@ -3123,7 +3135,7 @@ def _chart_process_severity(sev: Dict[str, Any], models: List[str]) -> Optional[
             model_data = metric_proc.get(model, {})
             rates = model_data.get("rates_by_severity", {})
             disparities = [rates.get(l, {}).get("disparity", 0) for l in levels]
-            valid = [(i, d) for i, d in enumerate(disparities) if d > 0 or True]
+            valid = list(enumerate(disparities))
             if valid:
                 ax.plot([levels[i].title() for i, _ in valid],
                         [d for _, d in valid], marker="o", label=model)
@@ -3223,7 +3235,7 @@ def _chart_missingness_distributions(distributions: Dict[str, Any]) -> Optional[
 
 def _build_tab_severity(
     analysis_results: Dict[str, Any],
-    complaints: list,
+    complaints: List[Any],
     models: List[str],
 ) -> str:
     """Build the Severity Analysis tab HTML (6 panels)."""
@@ -3333,9 +3345,10 @@ def _build_tab_severity(
     miss_diag = sev.get("missingness_diagnostic", {})
     if miss_diag and not miss_diag.get("skipped"):
         parts.append('<h3>Monetary Severity: Missingness Diagnostic</h3>')
-        parts.append('<p>About {:.0%} of complaints have no extractable dollar amount. '
+        pct_missing = miss_diag.get("pct_missing", 0)
+        parts.append(f'<p>About {pct_missing:.0%} of complaints have no extractable dollar amount. '
                      'This diagnostic tests whether that subset differs systematically '
-                     'from complaints with known amounts.</p>'.format(miss_diag.get("pct_missing", 0)))
+                     'from complaints with known amounts.</p>')
 
         chars = miss_diag.get("complaint_characteristics", {})
         m_type = chars.get("missingness_type", "unknown")
@@ -4448,9 +4461,9 @@ def _build_tab_severity(
 
                         # Highlight strong evidence of amplification
                         row_style = ""
-                        if np.isfinite(p_gt0) and p_gt0 > 0.95:
+                        if _is_finite_number(p_gt0) and p_gt0 > 0.95:
                             row_style = ' style="background:#fdecea;"'
-                        elif np.isfinite(p_gt0) and p_gt0 < 0.05:
+                        elif _is_finite_number(p_gt0) and p_gt0 < 0.05:
                             row_style = ' style="background:#eafaf1;"'
 
                         parts.append(f'<tr{row_style}>')
@@ -4461,8 +4474,8 @@ def _build_tab_severity(
                         parts.append(f'<td>{_fmt(a_mean, 4)}</td>')
                         parts.append(f'<td>[{_fmt(a_lo, 4)}, {_fmt(a_hi, 4)}]</td>')
                         # Color-code P(A>0)
-                        p_color = "#e74c3c" if np.isfinite(p_gt0) and p_gt0 > 0.95 else (
-                            "#2ecc71" if np.isfinite(p_gt0) and p_gt0 < 0.05 else "#333")
+                        p_color = "#e74c3c" if _is_finite_number(p_gt0) and p_gt0 > 0.95 else (
+                            "#2ecc71" if _is_finite_number(p_gt0) and p_gt0 < 0.05 else "#333")
                         parts.append(f'<td style="color:{p_color};font-weight:bold;">{_pct(p_gt0)}</td>')
                         parts.append(f'<td>{_fmt(d_low, 4)}</td>')
                         parts.append(f'<td>{_fmt(d_high, 4)}</td>')
@@ -5290,7 +5303,7 @@ def _build_tab_repeated_measures(
         lmm = pooled.get("linear_mixed_model", {})
         if lmm and not lmm.get("skipped"):
             icc = lmm.get("icc", 0)
-            icc_pct = icc * 100 if np.isfinite(icc) else 0
+            icc_pct = icc * 100 if _is_finite_number(icc) else 0
             parts.append(f'<p><strong>Pooled LMM ICC:</strong> {_fmtf(icc, ".3f")} ({_fmtf(icc_pct, ".1f")}% of tier variance is between complaints)</p>')
             _render_coefficient_table(parts, lmm)
 
@@ -6080,7 +6093,9 @@ def generate_report(
     logger.info("Generating HTML report -> %s", output_path)
 
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        warnings.filterwarnings("ignore", category=DeprecationWarning)
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
 
         # Build each tab's content
         tab_exec = _build_tab_executive_summary(

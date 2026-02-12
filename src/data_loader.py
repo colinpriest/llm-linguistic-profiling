@@ -12,9 +12,10 @@ import hashlib
 import logging
 import os
 import re
+import threading
 import uuid
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -28,12 +29,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _ft_model = None
+_ft_model_lock = threading.Lock()
 FASTTEXT_MODEL_PATH = Path(__file__).parent.parent / "data" / "lid.176.ftz"
 FASTTEXT_SHA256_PATH = FASTTEXT_MODEL_PATH.with_suffix(".ftz.sha256")
 FASTTEXT_SHA256_ENV = "FASTTEXT_LID176_SHA256"
 
 
-def _read_expected_fasttext_hash() -> str | None:
+def _read_expected_fasttext_hash() -> Optional[str]:
     """Return expected sha256 hash for the fasttext model, if provided."""
     env_hash = os.getenv(FASTTEXT_SHA256_ENV, "").strip()
     if env_hash:
@@ -45,8 +47,6 @@ def _read_expected_fasttext_hash() -> str | None:
 
 def _sha256sum(path: Path) -> str:
     """Compute sha256 checksum for a file."""
-    import hashlib
-
     sha = hashlib.sha256()
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
@@ -72,29 +72,32 @@ def _verify_fasttext_model(model_path: Path) -> None:
         )
 
 
-def _get_fasttext_model():
+def _get_fasttext_model() -> Any:
     """Lazy-load the fasttext language-identification model."""
     global _ft_model
     if _ft_model is None:
-        import fasttext
-        import urllib.request
+        with _ft_model_lock:
+            if _ft_model is None:
+                import fasttext
 
-        if not FASTTEXT_MODEL_PATH.exists():
-            _download_fasttext_model(FASTTEXT_MODEL_PATH)
-        else:
-            _verify_fasttext_model(FASTTEXT_MODEL_PATH)
-        try:
-            _ft_model = fasttext.load_model(str(FASTTEXT_MODEL_PATH))
-        except Exception as exc:
-            logger.warning("Fasttext model load failed (%s); re-downloading...", exc)
-            if FASTTEXT_MODEL_PATH.exists():
-                FASTTEXT_MODEL_PATH.unlink()
-            _download_fasttext_model(FASTTEXT_MODEL_PATH)
-            _ft_model = fasttext.load_model(str(FASTTEXT_MODEL_PATH))
+                if not FASTTEXT_MODEL_PATH.exists():
+                    _download_fasttext_model(FASTTEXT_MODEL_PATH)
+                else:
+                    _verify_fasttext_model(FASTTEXT_MODEL_PATH)
+                try:
+                    _ft_model = fasttext.load_model(str(FASTTEXT_MODEL_PATH))
+                except Exception as exc:
+                    logger.warning("Fasttext model load failed (%s); re-downloading...", exc)
+                    if FASTTEXT_MODEL_PATH.exists():
+                        FASTTEXT_MODEL_PATH.unlink()
+                    _download_fasttext_model(FASTTEXT_MODEL_PATH)
+                    _ft_model = fasttext.load_model(str(FASTTEXT_MODEL_PATH))
     return _ft_model
 
 
 def _download_fasttext_model(model_path: Path) -> None:
+    import urllib.request
+
     logger.info("Downloading fasttext language-id model (once)...")
     url = "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz"
     model_path.parent.mkdir(parents=True, exist_ok=True)
@@ -351,14 +354,30 @@ def _step_is_cached(data_path: str, step: int, suffix: str = "") -> bool:
 def _save_step(df: pd.DataFrame, data_path: str, step: int, suffix: str = "") -> None:
     """Persist a DataFrame as the checkpoint for *step*."""
     path = _step_cache_path(data_path, step, suffix)
-    df.to_parquet(path, index=False)
+    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+    try:
+        df.to_parquet(tmp_path, index=False)
+        os.replace(tmp_path, path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        raise
     logger.info("  ✓ Clean %d cached (%d rows) → %s", step, len(df), path.name)
 
 
 def _load_step(data_path: str, step: int, suffix: str = "") -> pd.DataFrame:
     """Load a previously cached step checkpoint."""
     path = _step_cache_path(data_path, step, suffix)
-    df = pd.read_parquet(path)
+    try:
+        df = pd.read_parquet(path)
+    except Exception as e:
+        logger.warning("Corrupt parquet cache for step %d (%s); deleting and re-running", step, e)
+        path.unlink(missing_ok=True)
+        raise  # Let caller handle re-running
+    if "narrative" not in df.columns:
+        logger.warning("Stale parquet cache for step %d (missing 'narrative' column); deleting", step)
+        path.unlink(missing_ok=True)
+        raise ValueError(f"Stale cache for step {step}: missing required columns")
     logger.info("  ✓ Clean %d loaded from cache (%d rows)", step, len(df))
     return df
 
@@ -385,7 +404,7 @@ def _step_0_load(data_path: str) -> pd.DataFrame:
         dtype={"Complaint ID": "Int64"},
         low_memory=False,
     )
-    df.rename(columns=COLUMN_MAP, inplace=True)
+    df = df.rename(columns=COLUMN_MAP)
     logger.info("  Loaded %d raw records", len(df))
     df = df.dropna(subset=["narrative"])
     df = df.dropna(subset=["complaint_id"])
@@ -415,12 +434,11 @@ def _step_3_language(df: pd.DataFrame) -> pd.DataFrame:
     """Step 3: Language detection – keep English only."""
     n = len(df)
     logger.info("[Data Clean 3/10] Language detection (%d texts)...", n)
+    df = df.copy()
     try:
-        df = df.copy()
         df["_lang"] = _detect_lang_batch(df["narrative"].tolist())
     except Exception as e:
         logger.warning("  fasttext unavailable (%s), falling back to langid...", e)
-        df = df.copy()
         df["_lang"] = _detect_lang_fallback(df["narrative"].tolist())
     df = df[df["_lang"] == "en"].drop(columns=["_lang"]).copy()
     logger.info("  After English filter: %d", len(df))
@@ -483,6 +501,9 @@ def _step_6b_repetition(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+_MAX_X_RATIO = 0.20
+
+
 def _step_6c_redaction(df: pd.DataFrame) -> pd.DataFrame:
     """Step 6c: Filter narratives where redaction markers dominate.
 
@@ -490,13 +511,12 @@ def _step_6c_redaction(df: pd.DataFrame) -> pd.DataFrame:
     complaints are mostly redacted text, causing the LLM to reproduce
     thousands of X characters in its output and hit token limits.
     """
-    MAX_X_RATIO = 0.20
     logger.info("[Data Clean 8/10] Redaction ratio filter (%d rows)...", len(df))
     x_ratios = df["narrative"].apply(
         lambda t: t.count("X") / len(t) if len(t) > 0 else 0.0
     )
-    df = df[x_ratios < MAX_X_RATIO].copy()
-    logger.info("  After redaction filter (X < %d%%): %d", int(MAX_X_RATIO * 100), len(df))
+    df = df[x_ratios < _MAX_X_RATIO].copy()
+    logger.info("  After redaction filter (X < %d%%): %d", int(_MAX_X_RATIO * 100), len(df))
     return df
 
 
@@ -562,6 +582,9 @@ def load_and_clean(
         df = step_fn(df)
         _save_step(df, data_path, step_num)
 
+    if len(df) == 0:
+        logger.warning("Data pipeline: all rows were filtered out during cleaning (0 complaints remaining)")
+
     # --- Step 9: ID generation (seed-dependent, cached with seed suffix) ---
     s9_suffix = f"_seed{seed}"
     if _step_is_cached(data_path, 9, s9_suffix):
@@ -621,18 +644,18 @@ def load_and_clean(
     # Convert to Complaint objects
     complaints = [
         Complaint(
-            case_id=row["case_id"],
-            complaint_id=int(row["complaint_id"]),
-            narrative=row["narrative"],
-            product=row["product"],
-            issue=row["issue"],
-            date_received=str(row["date_received"]),
-            year=str(row["year"]),
-            product_category=row["product_category"],
-            issue_category=row["issue_category"],
-            issue_severity=compute_issue_severity(row["product"], row["issue"]),
+            case_id=row.case_id,
+            complaint_id=int(row.complaint_id),
+            narrative=row.narrative,
+            product=row.product,
+            issue=row.issue,
+            date_received=str(row.date_received),
+            year=str(row.year),
+            product_category=row.product_category,
+            issue_category=row.issue_category,
+            issue_severity=compute_issue_severity(row.product, row.issue),
         )
-        for _, row in sampled.iterrows()
+        for row in sampled.itertuples(index=False)
     ]
 
     logger.info(

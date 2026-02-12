@@ -51,9 +51,16 @@ import pandas as pd
 from scipy import stats as sp_stats
 from tqdm import tqdm
 
+from src.schemas import parse_persona_label
 from src.statistics import bootstrap_ci, fdr_correction, friedman_test
 
 logger = logging.getLogger(__name__)
+
+# Ordinal encoding for severity bins used across all model-fitting functions.
+_SEVERITY_ORD_MAP: Dict[str, int] = {"low": 0, "medium": 1, "high": 2}
+
+# Maximum persona disadvantage score: age(1) + geo(2) + edu(1) + ses(2) = 6.
+_MAX_PERSONA_SCORE: float = 6.0
 
 # ---------------------------------------------------------------------------
 # 1. Long-format data builder
@@ -137,10 +144,15 @@ def build_long_format(
     long["severity_bin"] = long["issue_severity"]
     mask = ~long["severity_bin"].isin(["low", "medium", "high"])
     long.loc[mask, "severity_bin"] = long.loc[mask, "monetary_severity"]
-    # Drop rows where severity is still unknown
-    long["severity_bin"] = long["severity_bin"].where(
-        long["severity_bin"].isin(["low", "medium", "high"]), other="medium"
-    )
+    # Impute rows where severity is still unknown to "medium" and log the count
+    imputed_mask = ~long["severity_bin"].isin(["low", "medium", "high"])
+    n_imputed = imputed_mask.sum()
+    if n_imputed > 0:
+        logger.warning(
+            "Imputed %d rows (%.1f%%) to severity_bin='medium'",
+            n_imputed, 100 * n_imputed / len(long),
+        )
+    long["severity_bin"] = long["severity_bin"].where(~imputed_mask, other="medium")
 
     # Keep canonical columns
     keep = [
@@ -201,28 +213,8 @@ def ordinal_mixed_model(
     if len(df) < 30 or df["outcome_tier"].nunique() < 2:
         return {"skipped": True, "reason": "insufficient data or tier variation"}
 
-    # Parse persona dimensions from persona_id
-    _add_persona_dims(df)
-
-    # Build design: persona dims + severity + condition + interaction
-    df["sev_ord"] = df["severity_bin"].map({"low": 0, "medium": 1, "high": 2}).fillna(1).astype(int)
-    df["condition_code"] = (df["condition"] == "neutralised").astype(int)
-
-    # Interaction: severity × persona (use a product term on ordinal severity
-    # and a summarised persona "disadvantage" score for parsimony)
-    _add_persona_score(df)
-    df["persona_x_severity"] = df["persona_score"] * df["sev_ord"]
-
-    # If multiple LLM models present, add model dummy
-    if df["model"].nunique() >= 2:
-        model_dummies = pd.get_dummies(df["model"], prefix="mdl", drop_first=True, dtype=float)
-        df = pd.concat([df, model_dummies], axis=1)
-        exog_cols = (
-            ["sev_ord", "condition_code", "persona_score", "persona_x_severity"]
-            + list(model_dummies.columns)
-        )
-    else:
-        exog_cols = ["sev_ord", "condition_code", "persona_score", "persona_x_severity"]
+    # Build design: persona dims + severity + condition + interaction + model dummies
+    df, exog_cols = _prepare_model_columns(df)
 
     exog = df[exog_cols].astype(float)
     endog = df["outcome_tier"].astype(float)
@@ -337,7 +329,7 @@ def ordinal_mixed_model(
 
     return {
         "skipped": True,
-        "reason": str(e),
+        "reason": f"attempt1: {e}, attempt2: {e2}",
         "estimand_status": "not_estimable",
         "diagnostics": {
             "preflight_issues": preflight_issues,
@@ -398,18 +390,7 @@ def conditional_logistic_favourable(
         return {"skipped": True, "reason": "insufficient within-complaint variation",
                 "estimand_status": "not_estimable"}
 
-    _add_persona_dims(df)
-
-    df["sev_ord"] = df["severity_bin"].map({"low": 0, "medium": 1, "high": 2}).fillna(1).astype(int)
-    df["condition_code"] = (df["condition"] == "neutralised").astype(int)
-    _add_persona_score(df)
-    df["persona_x_severity"] = df["persona_score"] * df["sev_ord"]
-
-    exog_cols = ["sev_ord", "condition_code", "persona_score", "persona_x_severity"]
-    if df["model"].nunique() >= 2:
-        model_dummies = pd.get_dummies(df["model"], prefix="mdl", drop_first=True, dtype=float)
-        df = pd.concat([df, model_dummies], axis=1)
-        exog_cols += list(model_dummies.columns)
+    df, exog_cols = _prepare_model_columns(df)
 
     exog = df[exog_cols].astype(float)
     endog = df["favourable"].astype(float)
@@ -537,17 +518,7 @@ def logistic_mixed_model_favourable(
         return {"skipped": True, "reason": "insufficient data or outcome variation",
                 "estimand_status": "not_estimable"}
 
-    _add_persona_dims(df)
-    df["sev_ord"] = df["severity_bin"].map({"low": 0, "medium": 1, "high": 2}).fillna(1).astype(int)
-    df["condition_code"] = (df["condition"] == "neutralised").astype(int)
-    _add_persona_score(df)
-    df["persona_x_severity"] = df["persona_score"] * df["sev_ord"]
-
-    exog_cols = ["sev_ord", "condition_code", "persona_score", "persona_x_severity"]
-    if df["model"].nunique() >= 2:
-        model_dummies = pd.get_dummies(df["model"], prefix="mdl", drop_first=True, dtype=float)
-        df = pd.concat([df, model_dummies], axis=1)
-        exog_cols += list(model_dummies.columns)
+    df, exog_cols = _prepare_model_columns(df)
 
     # Sort by complaint_id for GEE grouping
     df = df.sort_values("complaint_id").reset_index(drop=True)
@@ -598,12 +569,13 @@ def logistic_mixed_model_favourable(
             all_fallbacks.extend(extra_fallbacks)
         diag_status = "OK" if not all_fallbacks and not preflight_issues else "WARN"
 
+        ci_df = fit.conf_int()
         return {
             "coefficients": fit.params.to_dict(),
             "std_errors": fit.bse.to_dict(),
             "p_values": fit.pvalues.to_dict(),
             "conf_int": {
-                name: [float(fit.conf_int().loc[name, 0]), float(fit.conf_int().loc[name, 1])]
+                name: [float(ci_df.loc[name, 0]), float(ci_df.loc[name, 1])]
                 for name in fit.params.index
             },
             "odds_ratios": np.exp(fit.params).to_dict(),
@@ -679,17 +651,7 @@ def logistic_mixed_model_info_request(
         return {"skipped": True, "reason": "insufficient data or outcome variation",
                 "estimand_status": "not_estimable"}
 
-    _add_persona_dims(df)
-    df["sev_ord"] = df["severity_bin"].map({"low": 0, "medium": 1, "high": 2}).fillna(1).astype(int)
-    df["condition_code"] = (df["condition"] == "neutralised").astype(int)
-    _add_persona_score(df)
-    df["persona_x_severity"] = df["persona_score"] * df["sev_ord"]
-
-    exog_cols = ["sev_ord", "condition_code", "persona_score", "persona_x_severity"]
-    if df["model"].nunique() >= 2:
-        model_dummies = pd.get_dummies(df["model"], prefix="mdl", drop_first=True, dtype=float)
-        df = pd.concat([df, model_dummies], axis=1)
-        exog_cols += list(model_dummies.columns)
+    df, exog_cols = _prepare_model_columns(df)
 
     df = df.sort_values("complaint_id").reset_index(drop=True)
     exog = df[exog_cols].astype(float)
@@ -739,12 +701,13 @@ def logistic_mixed_model_info_request(
             all_fallbacks.extend(extra_fallbacks)
         diag_status = "OK" if not all_fallbacks and not preflight_issues_ir else "WARN"
 
+        ci_df = fit.conf_int()
         return {
             "coefficients": fit.params.to_dict(),
             "std_errors": fit.bse.to_dict(),
             "p_values": fit.pvalues.to_dict(),
             "conf_int": {
-                name: [float(fit.conf_int().loc[name, 0]), float(fit.conf_int().loc[name, 1])]
+                name: [float(ci_df.loc[name, 0]), float(ci_df.loc[name, 1])]
                 for name in fit.params.index
             },
             "odds_ratios": np.exp(fit.params).to_dict(),
@@ -824,17 +787,7 @@ def linear_mixed_model_tier(
         return {"skipped": True, "reason": "insufficient data or tier variation",
                 "estimand_status": "not_estimable"}
 
-    _add_persona_dims(df)
-    df["sev_ord"] = df["severity_bin"].map({"low": 0, "medium": 1, "high": 2}).fillna(1).astype(int)
-    df["condition_code"] = (df["condition"] == "neutralised").astype(int)
-    _add_persona_score(df)
-    df["persona_x_severity"] = df["persona_score"] * df["sev_ord"]
-
-    exog_cols = ["sev_ord", "condition_code", "persona_score", "persona_x_severity"]
-    if df["model"].nunique() >= 2:
-        model_dummies = pd.get_dummies(df["model"], prefix="mdl", drop_first=True, dtype=float)
-        df = pd.concat([df, model_dummies], axis=1)
-        exog_cols += list(model_dummies.columns)
+    df, exog_cols = _prepare_model_columns(df)
 
     import statsmodels.api as sm
     exog = df[exog_cols].astype(float)
@@ -1078,8 +1031,8 @@ def _pairwise_wilcoxon(pivot: pd.DataFrame, max_pairs: int = 100) -> Dict[str, A
                     "p_value": float(p),
                 })
                 p_values.append(p)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Wilcoxon test failed: %s", e)
 
     if p_values:
         adj = fdr_correction(p_values)
@@ -1132,8 +1085,8 @@ def _pairwise_mcnemar_binary(pivot: pd.DataFrame, max_pairs: int = 100) -> Dict[
                     "p_value": test["p_value"],
                 })
                 p_values.append(test["p_value"])
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("McNemar test failed: %s", e)
 
     if p_values:
         adj = fdr_correction(p_values)
@@ -1202,25 +1155,23 @@ def run_repeated_measures_analysis(
     # is NOT thread-safe, so per-function guards inside ThreadPoolExecutor workers
     # are unreliable.  Setting the filters here in the main thread ensures they
     # are in effect for all child threads (they share the global filter list).
-    _warning_ctx = warnings.catch_warnings()
-    _warning_ctx.__enter__()
-    warnings.filterwarnings(
-        "ignore", category=RuntimeWarning,
-        message=".*Precision loss.*catastrophic cancellation.*",
-    )
-    warnings.filterwarnings("ignore", category=UserWarning, module="statsmodels")
-    warnings.filterwarnings("ignore", category=FutureWarning, module="statsmodels")
-    try:
-        from statsmodels.tools.sm_exceptions import ValueWarning as _SmValueWarning
-        warnings.filterwarnings("ignore", category=_SmValueWarning)
-    except ImportError:
-        pass
-    warnings.filterwarnings(
-        "ignore",
-        message=".*covariance of constraints does not have full rank.*",
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", category=RuntimeWarning,
+            message=".*Precision loss.*catastrophic cancellation.*",
+        )
+        warnings.filterwarnings("ignore", category=UserWarning, module="statsmodels")
+        warnings.filterwarnings("ignore", category=FutureWarning, module="statsmodels")
+        try:
+            from statsmodels.tools.sm_exceptions import ValueWarning as _SmValueWarning
+            warnings.filterwarnings("ignore", category=_SmValueWarning)
+        except ImportError:
+            pass
+        warnings.filterwarnings(
+            "ignore",
+            message=".*covariance of constraints does not have full rank.*",
+        )
 
-    try:
         result = _run_repeated_measures_inner(
             baseline_df, persona_decisions_df, neutralized_df,
             personas_df, severity_df, models,
@@ -1229,14 +1180,16 @@ def run_repeated_measures_analysis(
         if use_cache:
             cache.put("repeated_measures", dataframes, params, result)
         return result
-    finally:
-        _warning_ctx.__exit__(None, None, None)
 
 
 def _run_repeated_measures_inner(
-    baseline_df, persona_decisions_df, neutralized_df,
-    personas_df, severity_df, models,
-):
+    baseline_df: pd.DataFrame,
+    persona_decisions_df: Optional[pd.DataFrame],
+    neutralized_df: Optional[pd.DataFrame],
+    personas_df: pd.DataFrame,
+    severity_df: pd.DataFrame,
+    models: List[str],
+) -> Dict[str, Any]:
     """Inner implementation of run_repeated_measures_analysis (called inside warning guard)."""
     # Build long format
     long = build_long_format(
@@ -1323,25 +1276,55 @@ def _run_pooled_suite(long: pd.DataFrame) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Helpers (persona dimension parsing)
+# Helpers (persona dimension parsing & model column preparation)
 # ---------------------------------------------------------------------------
 
-def _drop_constant_columns(exog: pd.DataFrame) -> pd.DataFrame:
-    """Drop columns with zero variance (constant) to avoid rank deficiency."""
-    varying = [c for c in exog.columns if exog[c].nunique() > 1]
-    return exog[varying]
+
+def _prepare_model_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
+    """Prepare standard model columns: persona dims, severity, condition, interaction.
+
+    Adds sev_ord, condition_code, persona_score, persona_x_severity columns
+    to *df* (in-place) and creates model dummies if multiple LLM models are
+    present.
+
+    Returns
+    -------
+    df : DataFrame with new columns appended (may be a new object if dummies added).
+    exog_cols : List of exogenous column names ready for model fitting.
+    """
+    _add_persona_dims(df)
+    df["sev_ord"] = df["severity_bin"].map(_SEVERITY_ORD_MAP).fillna(1).astype(int)
+    df["condition_code"] = (df["condition"] == "neutralised").astype(int)
+    _add_persona_score(df)
+    df["persona_x_severity"] = df["persona_score"] * df["sev_ord"]
+
+    exog_cols = ["sev_ord", "condition_code", "persona_score", "persona_x_severity"]
+    if df["model"].nunique() >= 2:
+        model_dummies = pd.get_dummies(df["model"], prefix="mdl", drop_first=True, dtype=float)
+        df = pd.concat([df, model_dummies], axis=1)
+        exog_cols += list(model_dummies.columns)
+
+    return df, exog_cols
 
 
 def _add_persona_dims(df: pd.DataFrame) -> None:
-    """Parse persona_id (e.g. 'young_urban_college_high') into dimension columns."""
+    """Parse persona_id (e.g. 'young_urban_college_high') into dimension columns.
+
+    Uses :func:`parse_persona_label` to correctly handle multi-word values
+    like ``high_school`` instead of naive underscore splitting.
+    """
     if "persona_id" not in df.columns:
         return
-    parts = df["persona_id"].str.split("_", expand=True)
-    if parts.shape[1] >= 4:
-        df["p_age"] = parts[0]
-        df["p_geo"] = parts[1]
-        df["p_edu"] = parts[2]
-        df["p_ses"] = parts[3]
+
+    def _extract_dims(x):
+        d = parse_persona_label(str(x)) if pd.notna(x) else {}
+        return d.get("age"), d.get("geographic"), d.get("education"), d.get("socioeconomic")
+
+    extracted = df["persona_id"].apply(_extract_dims)
+    df["p_age"] = extracted.str[0]
+    df["p_geo"] = extracted.str[1]
+    df["p_edu"] = extracted.str[2]
+    df["p_ses"] = extracted.str[3]
 
 
 def _add_persona_score(df: pd.DataFrame) -> None:
@@ -1365,5 +1348,5 @@ def _add_persona_score(df: pd.DataFrame) -> None:
     if "p_ses" in df.columns:
         score += df["p_ses"].map(ses_map).fillna(0)
 
-    # Normalise to 0-1 range (max possible = 1+2+1+2 = 6)
-    df["persona_score"] = score / 6.0
+    # Normalise to 0-1 range
+    df["persona_score"] = score / _MAX_PERSONA_SCORE

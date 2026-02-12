@@ -53,27 +53,29 @@ class _TextFeatureCache:
         if not self.enabled:
             return None
         path = self._path(text, variant)
-        if path.exists():
-            try:
-                with self._lock:
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                    self._hits += 1
-                return data
-            except (json.JSONDecodeError, KeyError):
-                self._delete(path)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, PermissionError, json.JSONDecodeError, KeyError, OSError):
+            with self._lock:
+                self._misses += 1
+            return None
         with self._lock:
-            self._misses += 1
-        return None
+            self._hits += 1
+        return data
 
     def put(self, text: str, variant: str, features: Dict[str, Any]) -> None:
         if not self.enabled:
             return
         path = self._path(text, variant)
         payload = json.dumps(features, ensure_ascii=False)
-        with self._lock:
-            tmp = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        tmp = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        try:
             tmp.write_text(payload, encoding="utf-8")
             os.replace(tmp, path)
+        except (PermissionError, OSError) as e:
+            logger.debug("cache put failed: %s", e)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     def clear(self) -> int:
         if not self.enabled:
@@ -81,8 +83,11 @@ class _TextFeatureCache:
         count = 0
         for f in self._dir.iterdir():
             if f.is_file():
-                f.unlink()
-                count += 1
+                try:
+                    f.unlink()
+                    count += 1
+                except (FileNotFoundError, PermissionError):
+                    pass
         return count
 
     def stats_summary(self) -> str:
@@ -103,17 +108,26 @@ class _TextFeatureCache:
     def _path(self, text: str, variant: str) -> Path:
         return self._dir / f"{self._key(text, variant)}.json"  # type: ignore[union-attr]
 
+    def delete(self, text: str, variant: str) -> None:
+        """Remove a cached entry by text content and variant."""
+        self._delete(self._path(text, variant))
+
     def _delete(self, path: Path) -> None:
-        with self._lock:
-            if path.exists():
-                path.unlink()
+        try:
+            path.unlink()
+        except (FileNotFoundError, PermissionError, OSError):
+            pass
 
 
 text_feature_cache = _TextFeatureCache()
 
 # Lazy-loaded heavy modules
 _nltk_ready = False
+_nltk_lock = threading.Lock()
 _vader_analyzer = None
+_vader_lock = threading.Lock()
+_lexical_richness_class = None
+_lexical_richness_lock = threading.Lock()
 _lda_model = None
 _vectorizer = None
 _topic_count = 10
@@ -123,21 +137,36 @@ def _ensure_nltk() -> None:
     global _nltk_ready
     if _nltk_ready:
         return
-    import nltk
-    for resource in ["punkt", "punkt_tab"]:
-        try:
-            nltk.data.find(f"tokenizers/{resource}")
-        except LookupError:
-            nltk.download(resource, quiet=True)
-    _nltk_ready = True
+    with _nltk_lock:
+        if _nltk_ready:
+            return
+        import nltk
+        for resource in ["punkt", "punkt_tab"]:
+            try:
+                nltk.data.find(f"tokenizers/{resource}")
+            except LookupError:
+                nltk.download(resource, quiet=True)
+        _nltk_ready = True
 
 
-def _get_vader():
+def _get_vader() -> Any:
     global _vader_analyzer
     if _vader_analyzer is None:
-        from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-        _vader_analyzer = SentimentIntensityAnalyzer()
+        with _vader_lock:
+            if _vader_analyzer is None:
+                from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+                _vader_analyzer = SentimentIntensityAnalyzer()
     return _vader_analyzer
+
+
+def _get_lexical_richness_class() -> Any:
+    global _lexical_richness_class
+    if _lexical_richness_class is None:
+        with _lexical_richness_lock:
+            if _lexical_richness_class is None:
+                from lexicalrichness import LexicalRichness
+                _lexical_richness_class = LexicalRichness
+    return _lexical_richness_class
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +194,7 @@ def _length_features(text: str) -> Dict[str, Any]:
 def _complexity_features(text: str) -> Dict[str, float]:
     import textstat
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+        warnings.filterwarnings("ignore", category=UserWarning, module="textstat")
         return {
             "flesch_reading_ease": textstat.flesch_reading_ease(text),
             "flesch_kincaid_grade": textstat.flesch_kincaid_grade(text),
@@ -188,16 +217,16 @@ def _vocabulary_features(text: str) -> Dict[str, float]:
     mtld_val = 0.0
     hdd_val = 0.0
     try:
-        from lexicalrichness import LexicalRichness
+        LexicalRichness = _get_lexical_richness_class()
         lr = LexicalRichness(text)
         try:
             mtld_val = lr.mtld()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("vocabulary metric failed: %s", e)
         try:
             hdd_val = lr.hdd()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("vocabulary metric failed: %s", e)
     except ImportError:
         pass
 
@@ -303,10 +332,14 @@ def get_topic_top_words(n_words: int = 10) -> List[List[str]]:
 
 def extract_features(text: str, case_id: str, variant: str) -> TextFeatures:
     """Extract all text features for a single document (cached)."""
-    # Check cache (topic features excluded — they depend on the fitted model)
+    # Check cache (includes topic features — model is fitted once before extraction)
     cached = text_feature_cache.get(text, variant)
     if cached is not None:
-        return TextFeatures(case_id=case_id, variant=variant, **cached)
+        try:
+            return TextFeatures(case_id=case_id, variant=variant, **cached)
+        except TypeError:
+            logger.debug("stale cache entry for %s/%s, re-extracting", case_id, variant)
+            text_feature_cache.delete(text, variant)
 
     length = _length_features(text)
     complexity = _complexity_features(text)
@@ -332,13 +365,18 @@ def extract_features_batch(
     variant: str,
 ) -> List[TextFeatures]:
     """Extract features for a list of texts."""
+    if len(texts) != len(case_ids):
+        raise ValueError(
+            f"texts and case_ids must have the same length, "
+            f"got {len(texts)} and {len(case_ids)}"
+        )
     results = []
     for text, cid in tqdm(zip(texts, case_ids), total=len(texts),
                           desc=f"Text features ({variant})", unit="doc"):
         try:
             results.append(extract_features(text, cid, variant))
         except Exception as e:
-            logger.warning("Feature extraction failed for %s: %s", cid, e)
+            logger.error("Feature extraction failed for %s (zero-vector fallback): %s", cid, e)
             results.append(TextFeatures(case_id=cid, variant=variant))
     return results
 

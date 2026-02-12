@@ -11,10 +11,45 @@ import argparse
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+
+def _log_token_usage(llm: object, log: logging.Logger) -> None:
+    """Log per-model and total token usage and cost to the console."""
+    summary = llm.usage_summary()  # type: ignore[attr-defined]
+    totals = summary["totals"]
+    log.info("Token usage:")
+    for model, stats in summary["per_model"].items():
+        cost_str = (
+            f"${stats['estimated_cost_usd']:.4f}"
+            if stats.get("estimated_cost_usd") is not None
+            else "unknown"
+        )
+        log.info(
+            "  %s: %s requests, %s prompt + %s completion = %s tokens, cost: %s",
+            model,
+            f"{stats['requests']:,}",
+            f"{stats['prompt_tokens']:,}",
+            f"{stats['completion_tokens']:,}",
+            f"{stats['prompt_tokens'] + stats['completion_tokens']:,}",
+            cost_str,
+        )
+    total_cost_str = (
+        f"${totals['estimated_cost_usd']:.4f}"
+        if totals.get("estimated_cost_usd") is not None
+        else "unknown"
+    )
+    log.info(
+        "  TOTAL: %s requests, %s prompt + %s completion = %s tokens, cost: %s",
+        f"{totals['requests']:,}",
+        f"{totals['prompt_tokens']:,}",
+        f"{totals['completion_tokens']:,}",
+        f"{totals['total_tokens']:,}",
+        total_cost_str,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -86,11 +121,12 @@ def parse_args() -> argparse.Namespace:
 
 def setup_logging(output_dir: str, verbose: bool) -> None:
     """Configure console and file logging."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     log_path = Path(output_dir) / f"experiment_{timestamp}.log"
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     root = logging.getLogger()
+    root.handlers.clear()
     root.setLevel(logging.DEBUG if verbose else logging.INFO)
 
     # Silence noisy third-party loggers
@@ -177,25 +213,48 @@ def main() -> None:
 
     try:
         analysis_results = experiment.run()
-    except RuntimeError as e:
-        logger.error("FATAL: %s", e)
+    except Exception as e:
+        logger.error("FATAL: %s", e, exc_info=True)
+        # Always report token usage before exiting on failure
+        try:
+            _log_token_usage(experiment.llm, logger)
+            experiment.llm.write_usage_log(
+                output_dir=Path("token-usage"),
+                run_metadata={
+                    "timestamp": experiment.timestamp,
+                    "models": args.models,
+                    "num_complaints": args.num_complaints,
+                    "threads": args.threads,
+                    "seed": args.seed,
+                    "data_path": args.data_path,
+                    "cache_dir": args.cache_dir,
+                    "status": "failed",
+                    "error": str(e),
+                },
+            )
+        except Exception:
+            pass  # Don't mask the original error
         sys.exit(1)
 
     # Generate HTML report
-    from src.reporter import generate_report
+    report_path = None
+    try:
+        from src.reporter import generate_report
 
-    report_path = generate_report(
-        analysis_results=analysis_results,
-        text_features_df=experiment.text_features_df,
-        complaints=experiment.complaints,
-        output_path=str(Path(args.output_dir) / f"fairness_report_{experiment.timestamp}.html"),
-        models=args.models,
-        num_complaints=args.num_complaints,
-        seed=args.seed,
-        materiality_threshold=args.materiality_threshold,
-        timestamp=experiment.timestamp,
-    )
-    logger.info("HTML report generated: %s", report_path)
+        report_path = generate_report(
+            analysis_results=analysis_results,
+            text_features_df=experiment.text_features_df,
+            complaints=experiment.complaints,
+            output_path=str(Path(args.output_dir) / f"fairness_report_{experiment.timestamp}.html"),
+            models=args.models,
+            num_complaints=args.num_complaints,
+            seed=args.seed,
+            materiality_threshold=args.materiality_threshold,
+            timestamp=experiment.timestamp,
+        )
+        logger.info("HTML report generated: %s", report_path)
+    except Exception as e:
+        logger.warning("Report generation failed (results still saved): %s", e)
 
     usage_log_path = experiment.llm.write_usage_log(
         output_dir=Path("token-usage"),
@@ -235,12 +294,14 @@ def main() -> None:
     # Summary
     logger.info("=" * 60)
     logger.info("EXPERIMENT COMPLETE")
-    logger.info("Report: %s", report_path)
+    if report_path:
+        logger.info("Report: %s", report_path)
     if examples_html:
         logger.info("Worked examples: %s", examples_html)
     bundle_info = analysis_results.get("paper_bundle", {})
     if bundle_info and not bundle_info.get("error"):
         logger.info("Paper bundle: %s", bundle_info.get("output_root", ""))
+    _log_token_usage(experiment.llm, logger)
     logger.info("=" * 60)
 
 

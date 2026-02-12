@@ -5,11 +5,45 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Dict, Optional, Tuple, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Balanced-brace JSON extraction
+# ---------------------------------------------------------------------------
+
+def _extract_balanced_json(text: str) -> Optional[str]:
+    """Extract the first balanced JSON object from text."""
+    start = text.find('{')
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escape_next = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if escape_next:
+            escape_next = False
+            continue
+        if c == '\\' and in_string:
+            escape_next = True
+            continue
+        if c == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                return text[start:i+1]
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +74,12 @@ def extract_json(response_text: str) -> Optional[str]:
     if match:
         return match.group(1)
 
-    # Pattern 2: Raw JSON object (greedy match for outermost braces)
+    # Pattern 2: Balanced-brace extraction (handles arbitrary nesting depth)
+    balanced = _extract_balanced_json(response_text)
+    if balanced:
+        return balanced
+
+    # Pattern 2b: Regex fallback for one level of nesting
     match = re.search(r'(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})', response_text, re.DOTALL)
     if match:
         return match.group(1)
@@ -71,7 +110,7 @@ def _close_brackets(json_str: str) -> str:
 
 def _escape_newlines_in_strings(json_str: str) -> str:
     """Escape newlines that appear inside JSON string values."""
-    result: list[str] = []
+    result: List[str] = []
     in_string = False
     escape_next = False
 
@@ -94,7 +133,7 @@ def _escape_newlines_in_strings(json_str: str) -> str:
 
 
 # Ordered list of (name, repair_function) pairs
-_REPAIR_STRATEGIES: list[tuple[str, Any]] = [
+_REPAIR_STRATEGIES: List[Tuple[str, Any]] = [
     ("trailing_comma_removal", lambda s: re.sub(r',\s*([}\]])', r'\1', s)),
     ("single_quote_replacement", lambda s: s.replace("'", '"')),
     ("unquoted_key_fix", lambda s: re.sub(r'(?<=[{,])\s*(\w+)\s*:', r' "\1":', s)),
@@ -104,12 +143,12 @@ _REPAIR_STRATEGIES: list[tuple[str, Any]] = [
 ]
 
 
-def repair_json(json_str: str) -> Tuple[Optional[str], list[str]]:
+def repair_json(json_str: str) -> Tuple[Optional[str], List[str]]:
     """Attempt to repair malformed JSON.
 
     Returns (repaired_string_or_None, list_of_strategies_applied).
     """
-    strategies_applied: list[str] = []
+    strategies_applied: List[str] = []
 
     # Try each repair individually first
     for name, fn in _REPAIR_STRATEGIES:
@@ -118,8 +157,8 @@ def repair_json(json_str: str) -> Tuple[Optional[str], list[str]]:
             json.loads(repaired)
             strategies_applied.append(name)
             return repaired, strategies_applied
-        except (json.JSONDecodeError, Exception):
-            pass
+        except Exception as e:
+            logger.debug("JSON repair attempt failed: %s", e)
 
     # Apply repairs cumulatively
     current = json_str
@@ -127,8 +166,8 @@ def repair_json(json_str: str) -> Tuple[Optional[str], list[str]]:
         try:
             current = fn(current)
             strategies_applied.append(name)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Repair strategy %s failed: %s", name, e)
 
     # Final attempt with all repairs applied
     try:
@@ -161,7 +200,7 @@ def validate_response(
 def parse_llm_response(
     response_text: str,
     expected_schema: Type[BaseModel],
-) -> Tuple[Any, str, bool, list[str]]:
+) -> Tuple[Any, str, bool, List[str]]:
     """Parse an LLM response string into a validated Pydantic object.
 
     Returns:
@@ -179,7 +218,7 @@ def parse_llm_response(
         )
 
     repair_applied = False
-    strategies_used: list[str] = []
+    strategies_used: List[str] = []
 
     try:
         parsed = json.loads(json_str)

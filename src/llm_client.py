@@ -11,20 +11,21 @@ import logging
 import time
 from concurrent.futures import (
     ThreadPoolExecutor,
-    as_completed,
     wait,
     FIRST_COMPLETED,
     CancelledError,
 )
-from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional
 
 import httpx
 import instructor
-from openai import BadRequestError, OpenAI
+from openai import (
+    AuthenticationError, BadRequestError, NotFoundError,
+    OpenAI, PermissionDeniedError,
+)
 from pydantic import BaseModel
 from tqdm import tqdm
 
@@ -37,6 +38,12 @@ logger = logging.getLogger(__name__)
 # Models whose API rejects temperature / max_tokens and requires
 # max_completion_tokens instead.
 _REASONING_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+
+# Tasks whose input length varies — truncation on these may be transient
+# and should not abort the entire batch on reasoning models.
+_VARIABLE_INPUT_TASKS = frozenset({
+    "neutralize", "rewrite", "remedy", "persona_estimate",
+})
 
 
 class LLMClient:
@@ -66,6 +73,7 @@ class LLMClient:
                 max_keepalive_connections=20,  # keep few idle connections to avoid stale sockets
             ),
         )
+        self._http_client = http_client
         raw_client = OpenAI(
             api_key=config.api_key,
             http_client=http_client,
@@ -90,6 +98,20 @@ class LLMClient:
         # Token usage tracking (thread-safe)
         self._usage_lock = Lock()
         self._usage_by_model: Dict[str, Dict[str, int]] = {}
+
+    # ------------------------------------------------------------------
+    # Resource management
+    # ------------------------------------------------------------------
+
+    def close(self) -> None:
+        """Close the underlying httpx client and release connections."""
+        self._http_client.close()
+
+    def __enter__(self) -> "LLMClient":
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
 
     # ------------------------------------------------------------------
     # Single request (with retry)
@@ -153,13 +175,13 @@ class LLMClient:
             Use ``max_attempts=1`` for escalated-timeout retries to avoid
             compounding the timeout (e.g. 3 attempts × 240s = 720s).
         """
-        MAX_ATTEMPTS = max_attempts if max_attempts is not None else self.config.max_retries
-        effective_timeout = timeout_override or self.config.timeout
+        max_attempts_eff = max_attempts if max_attempts is not None else self.config.max_retries
+        effective_timeout = timeout_override if timeout_override is not None else self.config.timeout
 
         # Track truncation failures for retry prompt modification (escalating hints)
         truncation_failure_count = 0
 
-        for attempt in range(1, MAX_ATTEMPTS + 1):
+        for attempt in range(1, max_attempts_eff + 1):
             t0 = time.perf_counter()
             try:
                 # Build model-appropriate kwargs
@@ -250,6 +272,15 @@ class LLMClient:
                     f"Fatal API error for model {request.model!r}: {short_err}"
                 ) from e
 
+            except (AuthenticationError, NotFoundError, PermissionDeniedError) as e:
+                # Non-retryable auth/permission/resource errors — retrying will
+                # never succeed without configuration changes.
+                short_err = str(e).split("\n", 1)[0][:200]
+                self._record_failure(request.task)
+                raise RuntimeError(
+                    f"Non-retryable API error for model {request.model!r}: {short_err}"
+                ) from e
+
             except Exception as e:
                 latency_ms = int((time.perf_counter() - t0) * 1000)
                 err_str = str(e).lower()
@@ -271,16 +302,12 @@ class LLMClient:
                     or "incomplete" in err_str
                 )
                 if is_truncation:
-                    is_reasoning = request.model.startswith(_REASONING_PREFIXES)
                     # Tasks whose input length varies (neutralize, rewrite,
                     # remedy) can hit the token ceiling on outlier-long
                     # narratives even on reasoning models.  Only abort the
                     # batch for fixed-length tasks (e.g. commentary) where
                     # truncation signals a systematic budget problem.
-                    _variable_input_tasks = {
-                        "neutralize", "rewrite", "remedy", "persona_estimate",
-                    }
-                    if is_reasoning and request.task not in _variable_input_tasks:
+                    if is_reasoning and request.task not in _VARIABLE_INPUT_TASKS:
                         # Systematic budget problem — abort the batch.
                         short_err = str(e).split("\n", 1)[0][:200]
                         raise RuntimeError(
@@ -289,7 +316,7 @@ class LLMClient:
                         ) from e
                     # Allow retries for incomplete responses (may be transient).
                     # Only fail definitively after all attempts exhausted.
-                    if attempt < MAX_ATTEMPTS:
+                    if attempt < max_attempts_eff:
                         # Log full error on retry to help diagnose persistent failures
                         full_err = str(e)[:500]
                         logger.debug(
@@ -300,16 +327,16 @@ class LLMClient:
                         time.sleep(self.config.retry_delay * (2 ** (attempt - 1)))
                         continue
                     # All retries exhausted — record the failure with clear messaging.
-                    prompt_chars = len(request.prompt_system) + len(request.prompt_user)
                     narrative_chars = len(request.prompt_user)
                     # Capture more error context (not just first line)
                     err_full = str(e)[:500]
                     # Store warning for deferred logging (avoid breaking tqdm)
-                    self._deferred_warnings.append(
-                        f"Response truncated for {request.case_id} ({request.model}/{request.task}) "
-                        f"after {MAX_ATTEMPTS} attempts: narrative={narrative_chars} chars, "
-                        f"API error: {err_full}"
-                    )
+                    with self._stats_lock:
+                        self._deferred_warnings.append(
+                            f"Response truncated for {request.case_id} ({request.model}/{request.task}) "
+                            f"after {max_attempts_eff} attempts: narrative={narrative_chars} chars, "
+                            f"API error: {err_full}"
+                        )
                     self._record_failure(request.task)
                     return LLMResponse(
                         request_id=request.request_id,
@@ -318,7 +345,7 @@ class LLMClient:
                         task=request.task,
                         success=False,
                         error_message=(
-                            f"Response truncated/incomplete after {MAX_ATTEMPTS} attempts: "
+                            f"Response truncated/incomplete after {max_attempts_eff} attempts: "
                             f"narrative={narrative_chars} chars. "
                             f"API error: {err_full}"
                         ),
@@ -326,7 +353,7 @@ class LLMClient:
                         timestamp=datetime.now(),
                         attempt_number=attempt,
                     )
-                if attempt < MAX_ATTEMPTS:
+                if attempt < max_attempts_eff:
                     logger.debug(
                         "Attempt %d failed for %s (%s): %s. Retrying...",
                         attempt, request.case_id, request.task, e,
@@ -337,7 +364,7 @@ class LLMClient:
                     self._record_failure(request.task)
                     logger.debug(
                         "All %d attempts failed for %s (%s): %s",
-                        MAX_ATTEMPTS, request.case_id, request.task, e,
+                        max_attempts_eff, request.case_id, request.task, e,
                     )
                     return LLMResponse(
                         request_id=request.request_id,
@@ -348,7 +375,7 @@ class LLMClient:
                         response_raw=None,
                         response_parsed=None,
                         error_message=(
-                            f"Failed after {MAX_ATTEMPTS} attempts "
+                            f"Failed after {max_attempts_eff} attempts "
                             f"(prompt_len={len(request.prompt_user)} chars, "
                             f"timeout={effective_timeout}s): {e}"
                         ),
@@ -400,12 +427,13 @@ class LLMClient:
                     timestamp=datetime.now(),
                     attempt_number=0,  # 0 = cache hit
                 )
-            except Exception:
+            except Exception as e:
                 logger.warning(
                     "Invalid cache entry for %s/%s (%s); deleting and re-fetching",
                     request.model,
                     request.task,
                     request.case_id,
+                    exc_info=True,
                 )
                 self.cache.delete(request.model, request.task, narrative)
 
@@ -456,6 +484,7 @@ class LLMClient:
         responses: List[Optional[LLMResponse]] = [None] * len(requests)
         completed = 0
         failed = 0
+        breaker_checked = False
 
         logger.info("Submitting %d requests (%s) with %d workers",
                      len(requests), desc, self.max_workers)
@@ -548,7 +577,8 @@ class LLMClient:
 
                         # Circuit breaker: abort if early results are mostly failures
                         window = min(self.CIRCUIT_BREAKER_WINDOW, len(requests))
-                        if completed == window and failed > window * self.CIRCUIT_BREAKER_THRESHOLD:
+                        if not breaker_checked and completed >= window and failed > window * self.CIRCUIT_BREAKER_THRESHOLD:
+                            breaker_checked = True
                             for f in pending:
                                 f.cancel()
                             force_shutdown = True
@@ -558,9 +588,16 @@ class LLMClient:
                             )
         finally:
             pool.shutdown(wait=not force_shutdown, cancel_futures=force_shutdown)
+            # Flush deferred warnings after tqdm completes (avoids breaking progress bar)
+            self._flush_deferred_warnings()
 
-        # Flush deferred warnings after tqdm completes (avoids breaking progress bar)
-        self._flush_deferred_warnings()
+        # Log warning if any slots were not filled
+        none_count = sum(1 for r in responses if r is None)
+        if none_count > 0:
+            logger.warning(
+                "%d of %d responses were None and will be dropped from results",
+                none_count, len(responses),
+            )
 
         return [r for r in responses if r is not None]
 
@@ -625,8 +662,9 @@ class LLMClient:
 
     def _flush_deferred_warnings(self) -> None:
         """Log any warnings that were deferred during batch execution."""
-        warnings = self._deferred_warnings
-        self._deferred_warnings = []
+        with self._stats_lock:
+            warnings = self._deferred_warnings
+            self._deferred_warnings = []
         for msg in warnings:
             logger.warning(msg)
 

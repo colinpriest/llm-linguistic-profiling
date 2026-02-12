@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 class ResponseCache:
     """Simple file-based cache keyed on (model, task, narrative, prompt_version)."""
 
-    TASK_DIRS = ["persona_estimate", "remedy_decision", "persona_rewrite", "neutralize", "dollar_extract", "fact_extraction", "debiased_triage"]
+    TASK_DIRS = ("persona_estimate", "remedy_decision", "persona_rewrite", "neutralize", "dollar_extract", "fact_extraction", "debiased_triage")
 
     def __init__(self, cache_dir: str = "./cache") -> None:
         self.cache_dir = Path(cache_dir)
@@ -49,15 +49,16 @@ class ResponseCache:
         """
         key = self._key(model, task, narrative)
         path = self._path(task, key)
-        if path.exists():
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                # Counter race is benign — stats only, not correctness.
-                self._hits += 1
-                return data.get("response")
-            except (json.JSONDecodeError, KeyError):
-                logger.warning("Corrupt cache entry %s – ignoring", path)
-                self._delete_path(path)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            # Counter race is benign — stats only, not correctness.
+            self._hits += 1
+            return data["response"]
+        except FileNotFoundError:
+            pass
+        except (json.JSONDecodeError, KeyError, PermissionError, OSError):
+            logger.warning("Corrupt cache entry %s – ignoring", path)
+            self._delete_path(path)
         self._misses += 1
         return None
 
@@ -96,20 +97,24 @@ class ResponseCache:
             "prompt_version": PROMPT_VERSIONS.get(task, "1.0"),
         }
         payload = json.dumps(entry, ensure_ascii=False, indent=2)
+        path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = path.with_suffix(f"{path.suffix}.{uuid.uuid4().hex}.tmp")
-        tmp_path.write_text(payload, encoding="utf-8")
-        for attempt in range(5):
+        try:
+            tmp_path.write_text(payload, encoding="utf-8")
+            for attempt in range(5):
+                try:
+                    os.replace(tmp_path, path)
+                    return
+                except PermissionError:
+                    # Windows: target file held open by a concurrent reader
+                    time.sleep(0.05 * (2 ** attempt))  # 50ms, 100ms, 200ms, 400ms, 800ms
+            # Final attempt — let it raise if still blocked
             try:
                 os.replace(tmp_path, path)
-                return
             except PermissionError:
-                # Windows: target file held open by a concurrent reader
-                time.sleep(0.05 * (2 ** attempt))  # 50ms, 100ms, 200ms, 400ms, 800ms
-        # Final attempt — let it raise if still blocked
-        try:
-            os.replace(tmp_path, path)
-        except PermissionError:
-            logger.warning("Cache put failed (file locked): %s", path.name)
+                logger.warning("Cache put failed (file locked): %s", path.name)
+        finally:
+            # Clean up orphaned temp file if it still exists
             self._delete_path(tmp_path)
 
     def delete(self, model: str, task: str, narrative: str) -> None:
@@ -120,13 +125,17 @@ class ResponseCache:
     def clear(self) -> int:
         """Delete all cached files. Returns number of files removed."""
         count = 0
-        for task_dir in self.TASK_DIRS:
-            d = self.cache_dir / task_dir
-            if d.exists():
+        if not self.cache_dir.exists():
+            return count
+        for d in self.cache_dir.iterdir():
+            if d.is_dir():
                 for f in d.iterdir():
                     if f.is_file():
-                        f.unlink()
-                        count += 1
+                        try:
+                            f.unlink()
+                            count += 1
+                        except (FileNotFoundError, PermissionError):
+                            pass
         logger.info("Cache cleared: %d files removed", count)
         return count
 
@@ -154,16 +163,14 @@ class ResponseCache:
         return hashlib.blake2b(content.encode(), digest_size=16).hexdigest()
 
     def _path(self, task: str, key: str) -> Path:
-        task_dir = self.cache_dir / task
-        task_dir.mkdir(parents=True, exist_ok=True)
-        return task_dir / f"{key}.json"
+        return self.cache_dir / task / f"{key}.json"
 
     def _delete_path(self, path: Path) -> None:
         # EAFP instead of lock-protected exists()+unlink() — avoids
         # TOCTOU race and doesn't need a lock.
         try:
             path.unlink()
-        except FileNotFoundError:
+        except (FileNotFoundError, PermissionError):
             pass
 
     def _ensure_dirs(self) -> None:

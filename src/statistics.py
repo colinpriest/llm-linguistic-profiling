@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -40,17 +40,30 @@ def fdr_correction(p_values: List[float]) -> np.ndarray:
     arr = np.array(p_values, dtype=float)
     if len(arr) == 0:
         return arr
+
+    # Filter out NaN p-values, correct the valid ones, then map back
+    valid_mask = ~np.isnan(arr)
+    valid_p = arr[valid_mask]
+    if len(valid_p) == 0:
+        return arr  # all NaN — return as-is
+
     try:
         from scipy.stats import false_discovery_control
     except (ImportError, AttributeError):
         from statsmodels.stats.multitest import multipletests
-        return multipletests(arr, method="fdr_bh")[1]
-    return false_discovery_control(arr, method="bh")
+        corrected_valid = multipletests(valid_p, method="fdr_bh")[1]
+    else:
+        corrected_valid = false_discovery_control(valid_p, method="bh")
+
+    result = np.full_like(arr, np.nan)
+    result[valid_mask] = corrected_valid
+    return result
 
 
 def fdr_correction_with_tracking(
     p_values: List[float],
     family_label: str = "",
+    alpha: float = 0.05,
 ) -> Dict[str, Any]:
     """BH FDR correction with metadata for reporting.
 
@@ -64,10 +77,10 @@ def fdr_correction_with_tracking(
     return {
         "p_adjusted": adjusted,
         "n_tests": len(arr),
-        "n_surviving": int((adjusted < 0.05).sum()),
+        "n_surviving": int((adjusted < alpha).sum()),
         "family_label": family_label,
         "method": "Benjamini-Hochberg",
-        "alpha": 0.05,
+        "alpha": alpha,
     }
 
 
@@ -188,8 +201,8 @@ def interpret_effect_size(value: float, metric: str, **kwargs: Any) -> str:
     if not np.isfinite(value):
         return "N/A"
     dispatch = {
-        "cohens_d": lambda v: interpret_cohens_d(v),
-        "eta_sq": lambda v: interpret_eta_sq(v),
+        "cohens_d": interpret_cohens_d,
+        "eta_sq": interpret_eta_sq,
         "cramers_v": lambda v: interpret_cramers_v(v, kwargs.get("df_min", 1)),
     }
     fn = dispatch.get(metric)
@@ -280,8 +293,8 @@ def power_analysis(
                 "min_detectable_eta_sq": eta_sq,
                 "interpretation": interpret_eta_sq(eta_sq),
             }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("ANOVA power solve failed for %s: %s", dim, e)
     result["anova"] = anova_results
 
     # 4. Sample summary
@@ -303,7 +316,7 @@ def chi_squared_test(
     contingency: pd.DataFrame,
 ) -> Dict[str, Any]:
     """Chi-squared test of independence on a contingency table."""
-    chi2, p, dof, expected = sp_stats.chi2_contingency(contingency.values)
+    chi2, p, dof, _ = sp_stats.chi2_contingency(contingency.values)
     n = contingency.values.sum()
     k = min(contingency.shape) - 1
     cramers_v = np.sqrt(chi2 / (n * k)) if n * k > 0 else 0.0
@@ -320,7 +333,7 @@ def fisher_exact_test(table_2x2: np.ndarray) -> Dict[str, Any]:
 def mcnemar_test(table_2x2: np.ndarray) -> Dict[str, Any]:
     """McNemar's test for paired categorical data."""
     from statsmodels.stats.contingency_tables import mcnemar
-    result = mcnemar(table_2x2, exact=table_2x2.sum() < 25)
+    result = mcnemar(table_2x2, exact=(table_2x2[0, 1] + table_2x2[1, 0]) < 25)
     return {"statistic": result.statistic, "p_value": result.pvalue}
 
 
@@ -390,16 +403,18 @@ def one_way_anova(
 
 def bootstrap_ci(
     data: np.ndarray,
-    statistic_fn=np.mean,
+    statistic_fn: Callable[[np.ndarray], float] = np.mean,
     n_boot: int = 1000,
     alpha: float = 0.05,
     seed: int = 42,
 ) -> Tuple[float, float, float]:
     """Bootstrap confidence interval. Returns (estimate, lower, upper)."""
-    rng = np.random.RandomState(seed)
+    if len(data) < 2:
+        return (float("nan"), float("nan"), float("nan"))
+    rng = np.random.default_rng(seed)
     n = len(data)
     boot_stats = np.array([
-        statistic_fn(data[rng.randint(0, n, size=n)]) for _ in range(n_boot)
+        statistic_fn(data[rng.integers(0, n, size=n)]) for _ in range(n_boot)
     ])
     lo = np.percentile(boot_stats, 100 * alpha / 2)
     hi = np.percentile(boot_stats, 100 * (1 - alpha / 2))
@@ -581,28 +596,28 @@ def _firth_logit(
     correction for separation in logistic regression.
     """
     try:
-        import statsmodels.api as sm
-
         vals_X = X.values.astype(float)
         vals_y = y.values.astype(float)
         n, p = vals_X.shape
         beta = np.zeros(p)
+        converged = False
 
         for iteration in range(maxiter):
             eta = vals_X @ beta
             mu = 1.0 / (1.0 + np.exp(-eta))
             mu = np.clip(mu, 1e-10, 1 - 1e-10)
-            W = np.diag(mu * (1 - mu))
-            # Fisher information
-            XtWX = vals_X.T @ W @ vals_X
+            w = mu * (1 - mu)
+            # Fisher information (X'WX) using element-wise weight broadcast
+            XtWX = (vals_X * w[:, np.newaxis]).T @ vals_X
             try:
                 XtWX_inv = np.linalg.inv(XtWX)
             except np.linalg.LinAlgError:
                 return None  # truly singular, can't do Firth
 
-            # Hat matrix diagonal (leverage)
-            H = vals_X @ XtWX_inv @ vals_X.T @ W
-            h = np.diag(H)
+            # Hat matrix diagonal only: h_i = w_i * x_i' (X'WX)^{-1} x_i
+            # Vectorised as row-wise dot product — O(N*p^2), no N×N matrices
+            XW = vals_X * w[:, np.newaxis]          # N x p
+            h = np.sum((vals_X @ XtWX_inv) * XW, axis=1)  # N-vector
 
             # Firth-adjusted working response
             y_adj = vals_y + h * (0.5 - mu)
@@ -611,14 +626,15 @@ def _firth_logit(
 
             beta += delta
             if np.max(np.abs(delta)) < tol:
+                converged = True
                 break
 
         # Compute standard errors from the final Fisher information
         eta = vals_X @ beta
         mu = 1.0 / (1.0 + np.exp(-eta))
         mu = np.clip(mu, 1e-10, 1 - 1e-10)
-        W = np.diag(mu * (1 - mu))
-        XtWX = vals_X.T @ W @ vals_X
+        w = mu * (1 - mu)
+        XtWX = (vals_X * w[:, np.newaxis]).T @ vals_X
         try:
             cov = np.linalg.inv(XtWX)
         except np.linalg.LinAlgError:
@@ -636,7 +652,7 @@ def _firth_logit(
             "p_values": dict(zip(param_names, p_vals.tolist())),
             "odds_ratios": dict(zip(param_names, np.exp(beta).tolist())),
             "method": "Firth penalised logit (bias-reduced)",
-            "converged": True,
+            "converged": converged,
             "diagnostics": {
                 "preflight_issues": preflight_issues or [],
                 "fallback_actions": fallback_actions or [],
@@ -746,7 +762,7 @@ def correlation_analysis(
             "decisions_df": decisions_df,
             "personas_df": personas_df,
         }
-        params = {"dims": dims if dims else ESTIMATE_DIMS}
+        params = {"dims": dims}
         cached_result = cache.get("correlation_analysis", dataframes, params)
         if cached_result is not None:
             return cached_result
@@ -845,6 +861,9 @@ def causal_analysis(
     """
     results: Dict[str, Any] = {}
 
+    # Avoid mutating the caller's DataFrame
+    persona_decisions = persona_decisions.copy()
+
     # 1. Favorable outcome rates by persona variant
     persona_decisions["favorable"] = (persona_decisions["tier"] >= 1).astype(int)
     rates = persona_decisions.groupby("variant")["favorable"].mean()
@@ -877,7 +896,6 @@ def causal_analysis(
 
 def _pairwise_mcnemar(df: pd.DataFrame) -> List[Dict[str, Any]]:
     """Pairwise McNemar tests between persona variants."""
-    df["favorable"] = (df["tier"] >= 1).astype(int)
     variants = sorted(df["variant"].unique())
     results = []
 
@@ -905,8 +923,8 @@ def _pairwise_mcnemar(df: pd.DataFrame) -> List[Dict[str, Any]]:
                     "rate_1": float(a.mean()),
                     "rate_2": float(b.mean()),
                 })
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("McNemar test failed for pair %s vs %s: %s", v1, v2, e)
 
     # FDR correction
     if results:
@@ -921,7 +939,6 @@ def _pairwise_mcnemar(df: pd.DataFrame) -> List[Dict[str, Any]]:
 
 def _causal_effect_sizes(df: pd.DataFrame) -> Dict[str, Any]:
     """Effect sizes for each persona variant relative to baseline mean."""
-    df["favorable"] = (df["tier"] >= 1).astype(int)
     overall_rate = df["favorable"].mean()
     overall_sd = df["favorable"].std()
     effects = {}
@@ -1034,8 +1051,6 @@ def mitigation_analysis(
 
 def _tier_change_summary(merged: pd.DataFrame) -> Dict[str, int]:
     """Summarize how tiers changed after neutralization."""
-    changes = {}
-    for _, row in merged.iterrows():
-        key = f"{int(row['tier_orig'])}→{int(row['tier_neut'])}"
-        changes[key] = changes.get(key, 0) + 1
+    keys = merged['tier_orig'].astype(int).astype(str) + "→" + merged['tier_neut'].astype(int).astype(str)
+    changes = keys.value_counts().to_dict()
     return changes

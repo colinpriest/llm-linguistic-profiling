@@ -22,13 +22,14 @@ Failure-mode taxonomy
 from __future__ import annotations
 
 import logging
-import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+_CONST_COL = "const"
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +84,7 @@ def validate_regression_inputs(
         })
 
     # ---- predictor variance --------------------------------------------------
-    constant_cols = [c for c in X.columns if c != "const" and X[c].nunique() < 2]
+    constant_cols = [c for c in X.columns if c != _CONST_COL and X[c].nunique() < 2]
     if constant_cols:
         issues.append({
             "type": "no_variance_x",
@@ -96,7 +97,7 @@ def validate_regression_inputs(
 
     # ---- rank deficiency / collinearity (on non-constant X) ------------------
     X_numeric = X.select_dtypes(include=[np.number])
-    non_const = [c for c in X_numeric.columns if c != "const" and X_numeric[c].nunique() > 1]
+    non_const = [c for c in X_numeric.columns if c != _CONST_COL and X_numeric[c].nunique() > 1]
     if len(non_const) >= 2:
         rank_issues = _check_rank(X_numeric[non_const], model_label, condition_number_threshold)
         issues.extend(rank_issues)
@@ -146,11 +147,12 @@ def diagnose_fit_failure(
         detail = f"{model_label}: singular matrix – design matrix is rank-deficient"
         diag_type = "rank_deficient"
         # Try to identify the aliased columns
+        aliased = []
         if X is not None:
             aliased = _find_aliased_columns(X)
             if aliased:
                 detail += f"; aliased column pairs: {aliased[:5]}"
-        return {"type": diag_type, "detail": detail, "aliased": aliased if X is not None else []}
+        return {"type": diag_type, "detail": detail, "aliased": aliased}
 
     if "separation" in msg or "perfect" in msg:
         return {"type": "separation_detected", "detail": f"{model_label}: {exc}"}
@@ -197,8 +199,7 @@ def fatal_regression_error(
 
     full_msg = "\n".join(msg_parts)
     logger.critical(full_msg)
-    print(full_msg, file=sys.stderr)
-    sys.exit(1)
+    raise RuntimeError(full_msg)
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +221,7 @@ def sanitise_design_matrix(
     dropped: List[str] = []
 
     if drop_constant:
-        constant = [c for c in X.columns if X[c].nunique() < 2 and c != "const"]
+        constant = [c for c in X.columns if X[c].nunique() < 2 and c != _CONST_COL]
         if constant:
             logger.info(
                 "%s: fix → dropping %d zero-variance column(s): %s",
@@ -232,24 +233,26 @@ def sanitise_design_matrix(
     if drop_aliased and X.shape[1] >= 2:
         numeric = X.select_dtypes(include=[np.number])
         if numeric.shape[1] >= 2:
+            vals = numeric.values.astype(float)
             # Pivoted QR to detect rank deficiency
             try:
-                _, r, piv = np.linalg.qr(numeric.values.astype(float), mode="economic")  # type: ignore[call-overload]
+                from scipy.linalg import qr as scipy_qr
+                q, r, piv = scipy_qr(vals, pivoting=True)
             except Exception:
-                # QR doesn't have pivoting in all numpy versions; use SVD
+                # scipy QR with pivoting not available; use SVD fallback
                 r = None
 
             if r is None:
                 # SVD approach
-                u, s, vt = np.linalg.svd(numeric.values.astype(float), full_matrices=False)
-                tol = max(numeric.shape) * np.finfo(float).eps * s[0] if len(s) > 0 else 1e-12
+                u, s, vt = np.linalg.svd(vals, full_matrices=False)
+                tol = max(s) * max(numeric.shape) * np.finfo(float).eps if len(s) > 0 else 1e-12
                 rank = int(np.sum(s > tol))
                 if rank < numeric.shape[1]:
-                    # Find which columns to drop via column pivoted QR of transpose
-                    _, _, perm = np.linalg.svd(numeric.values.astype(float).T, full_matrices=False)
-                    # Keep only the first `rank` columns
-                    keep_idx = set(range(rank))
-                    to_drop = [numeric.columns[i] for i in range(numeric.shape[1]) if i not in keep_idx and numeric.columns[i] != "const"]
+                    # Use column norms in the null space to identify which to drop
+                    null_space = vt[rank:]
+                    col_contribution = np.sum(null_space ** 2, axis=0)
+                    to_drop_idx = np.argsort(-col_contribution)[:numeric.shape[1] - rank]
+                    to_drop = [numeric.columns[i] for i in to_drop_idx if numeric.columns[i] != _CONST_COL]
                     if to_drop:
                         logger.info(
                             "%s: fix → dropping %d aliased column(s) to restore full rank: %s",
@@ -264,7 +267,7 @@ def sanitise_design_matrix(
                 if rank < numeric.shape[1]:
                     # Drop columns beyond the rank from the pivoted order
                     to_drop_idx = list(range(rank, numeric.shape[1]))
-                    to_drop = [numeric.columns[piv[i]] for i in to_drop_idx if numeric.columns[piv[i]] != "const"]
+                    to_drop = [numeric.columns[piv[i]] for i in to_drop_idx if numeric.columns[piv[i]] != _CONST_COL]
                     if to_drop:
                         logger.info(
                             "%s: fix → dropping %d aliased column(s) to restore full rank: %s",
@@ -333,7 +336,7 @@ def _check_vif(
                 "high_vif_columns": high_vif,
             })
     except ImportError:
-        pass  # statsmodels not available
+        logger.debug("statsmodels VIF check unavailable")
 
     return issues
 
@@ -345,11 +348,11 @@ def _check_separation(
     issues: List[Dict[str, Any]] = []
     sep_cols: List[str] = []
     for col in X.columns:
-        if col == "const":
+        if col == _CONST_COL:
             continue
         for level in X[col].unique():
             subset_y = y[X[col] == level]
-            if len(subset_y) > 0 and subset_y.nunique() < 2:
+            if len(subset_y) >= 5 and subset_y.nunique() < 2:
                 sep_cols.append(col)
                 break
 
@@ -373,7 +376,7 @@ def _check_sparse_cells(
     """Check for factor-level combinations with very few observations."""
     issues: List[Dict[str, Any]] = []
     # Only check columns that look categorical (few unique values)
-    cat_cols = [c for c in X.columns if c != "const" and X[c].nunique() <= 20]
+    cat_cols = [c for c in X.columns if c != _CONST_COL and X[c].nunique() <= 20]
     if not cat_cols:
         return issues
 
@@ -410,8 +413,8 @@ def _find_aliased_columns(X: pd.DataFrame) -> List[Tuple[str, str]]:
             for j, c2 in enumerate(corr.columns):
                 if j > i and corr.iloc[i, j] > 0.999:
                     aliased.append((c1, c2))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Aliased column detection failed: %s", e)
     return aliased
 
 
@@ -425,7 +428,7 @@ def standardise_predictors(X: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Tup
     stats: Dict[str, Tuple[float, float]] = {}
     X = X.copy()
     for col in X.columns:
-        if col == "const":
+        if col == _CONST_COL:
             continue
         sd = X[col].std()
         if sd > 0:

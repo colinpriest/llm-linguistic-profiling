@@ -23,13 +23,13 @@ import pandas as pd
 
 from src.diagnostics import (
     get_diagnostics,
-    record_dependency_missing,
     record_model_fit_error,
     record_model_fit_warning,
     record_data_quality_issue,
     record_computation_error,
     DiagnosticCategory,
 )
+from src.schemas import parse_persona_label
 
 logger = logging.getLogger(__name__)
 
@@ -39,20 +39,13 @@ try:
     HAS_LIGHTGBM = True
 except ImportError:
     HAS_LIGHTGBM = False
-    record_dependency_missing(
-        "mitigation_analysis", "lightgbm",
-        fallback="Using sklearn RandomForest instead"
-    )
+    lgb = None  # type: ignore[assignment]
 
 try:
     import shap
     HAS_SHAP = True
 except ImportError:
     HAS_SHAP = False
-    record_dependency_missing(
-        "mitigation_analysis", "shap",
-        fallback="SHAP explanations will be unavailable"
-    )
 
 try:
     from econml.dml import CausalForestDML
@@ -60,10 +53,6 @@ try:
     HAS_ECONML = True
 except ImportError:
     HAS_ECONML = False
-    record_dependency_missing(
-        "mitigation_analysis", "econml",
-        fallback="Heterogeneous treatment effects will be unavailable"
-    )
 
 try:
     import statsmodels.api as sm
@@ -71,10 +60,6 @@ try:
     HAS_STATSMODELS = True
 except ImportError:
     HAS_STATSMODELS = False
-    record_dependency_missing(
-        "mitigation_analysis", "statsmodels",
-        fallback="Mixed-effects models will be unavailable"
-    )
 
 # Sklearn fallback always available
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
@@ -613,23 +598,18 @@ def compute_causal_persona_features(
 
     # Parse persona dimensions from variant label
     # Format: "young_urban_college_low" -> age=young, geo=urban, edu=college, ses=low
+    _dim_to_col = {"age": "target_age", "geographic": "target_geo",
+                   "education": "target_edu", "socioeconomic": "target_ses"}
+
     def parse_persona(variant: str) -> Dict[str, str]:
-        parts = variant.split("_")
-        if len(parts) >= 4:
-            return {
-                "target_age": parts[0],
-                "target_geo": parts[1],
-                "target_edu": parts[2],
-                "target_ses": parts[3],
-            }
+        parsed = parse_persona_label(variant)
+        if parsed:
+            return {_dim_to_col[k]: v for k, v in parsed.items() if k in _dim_to_col}
         return {}
 
-    variant_dec = variant_dec.assign(**{
-        "target_age": variant_dec["variant"].apply(lambda x: parse_persona(x).get("target_age", "")),
-        "target_geo": variant_dec["variant"].apply(lambda x: parse_persona(x).get("target_geo", "")),
-        "target_edu": variant_dec["variant"].apply(lambda x: parse_persona(x).get("target_edu", "")),
-        "target_ses": variant_dec["variant"].apply(lambda x: parse_persona(x).get("target_ses", "")),
-    })
+    parsed = variant_dec["variant"].apply(parse_persona).apply(pd.Series)
+    for col in parsed.columns:
+        variant_dec[col] = parsed[col]
 
     # Merge with baseline
     merged = variant_dec.merge(baseline_dec, on="case_id", how="left")
@@ -692,7 +672,7 @@ def fit_lightgbm_model(
     """Fit LightGBM model with cross-validation and feature importance."""
 
     if not HAS_LIGHTGBM:
-        # Fallback to sklearn
+        logger.warning("lightgbm not installed; falling back to sklearn RandomForest")
         return fit_sklearn_rf_model(X, y, feature_names, target_name, llm_model, n_cv_folds)
 
     # Encode categorical features
@@ -867,6 +847,7 @@ def fit_mixed_effects_model(
     """Fit mixed-effects regression model with fallback to OLS."""
 
     if not HAS_STATSMODELS:
+        logger.warning("statsmodels not installed; mixed-effects models will be unavailable")
         record_model_fit_error(
             "mitigation_analysis", "mixed_effects", target,
             "statsmodels not installed", fallback=None
@@ -973,7 +954,8 @@ def _try_mixed_effects_fit(
 
             # Extract coefficients
             std_err = result.bse_fe.values
-            std_err = np.where(np.isnan(std_err), 1e-10, std_err)
+            nan_mask = np.isnan(std_err)
+            std_err = np.where(nan_mask, np.nan, std_err)
 
             coef_df = pd.DataFrame({
                 "feature": result.fe_params.index,
@@ -982,6 +964,9 @@ def _try_mixed_effects_fit(
                 "z_value": result.fe_params.values / std_err,
                 "p_value": result.pvalues.values[:len(result.fe_params)] if len(result.pvalues) >= len(result.fe_params) else [np.nan] * len(result.fe_params),
             })
+
+            # Replace any inf/nan z-values with 0 (occurs when std_err is NaN or 0)
+            coef_df["z_value"] = np.where(np.isfinite(coef_df["z_value"]), coef_df["z_value"], 0.0)
 
             coef_df["importance"] = np.abs(coef_df["z_value"])
             coef_df["importance"] = coef_df["importance"].replace([np.inf, -np.inf], 0).fillna(0)
@@ -1005,7 +990,7 @@ def _try_mixed_effects_fit(
             )
 
         except Exception as e:
-            logger.debug(f"Mixed-effects with method={method} failed: {e}")
+            logger.debug("Mixed-effects with method=%s failed: %s", method, e)
             continue
 
     return None
@@ -1087,6 +1072,7 @@ def fit_ols_model(
     rather than falling back after a failed mixed-effects attempt.
     """
     if not HAS_STATSMODELS:
+        logger.warning("statsmodels not installed; OLS model will be unavailable")
         record_model_fit_error(
             "mitigation_analysis", "ols", target,
             "statsmodels not installed", fallback=None
@@ -1168,6 +1154,7 @@ def compute_shap_values(
     """Compute SHAP values for a fitted model."""
 
     if not HAS_SHAP:
+        logger.warning("shap not installed; SHAP explanations will be unavailable")
         return np.array([]), 0.0, []
 
     # Subsample if needed
@@ -1203,7 +1190,7 @@ def compute_shap_values(
         return shap_values, base_value, feature_names
 
     except Exception as e:
-        logger.warning(f"SHAP computation failed: {e}")
+        logger.warning("SHAP computation failed: %s", e)
         return np.array([]), 0.0, []
 
 
@@ -1249,8 +1236,6 @@ class _LightGBMWrapper:
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Predict using the LightGBM booster."""
-        if isinstance(X, pd.DataFrame):
-            return self.booster.predict(X)
         return self.booster.predict(X)
 
     def fit(self, X: Any, y: Any) -> "_LightGBMWrapper":
@@ -1366,7 +1351,7 @@ def compute_partial_dependence_plots(
             }
 
         except Exception as e:
-            logger.debug(f"PDP computation failed for feature '{feature}': {e}")
+            logger.debug("PDP computation failed for feature '%s': %s", feature, e)
             continue
 
     return pdp_results
@@ -1387,7 +1372,7 @@ def estimate_heterogeneous_effects(
     """Estimate heterogeneous treatment effects using Causal Forest."""
 
     if not HAS_ECONML:
-        logger.debug("econml not available, skipping HTE analysis")
+        logger.warning("econml not installed; heterogeneous treatment effects will be unavailable")
         return HeterogeneousEffects(
             treatment=treatment_col,
             llm_model=llm_model,
@@ -1397,18 +1382,18 @@ def estimate_heterogeneous_effects(
     df_clean = df.dropna(subset=[treatment_col, outcome_col] + feature_cols)
 
     if len(df_clean) < 100:
-        logger.debug(f"Insufficient data for HTE: {len(df_clean)} rows")
+        logger.debug("Insufficient data for HTE: %d rows", len(df_clean))
         return HeterogeneousEffects(treatment=treatment_col, llm_model=llm_model)
 
     # Check treatment variance - CausalForest requires variation in treatment
     T_raw = df_clean[treatment_col].values
     if len(np.unique(T_raw)) < 2:
-        logger.debug(f"No treatment variation for HTE ({treatment_col}): all values are {T_raw[0]}")
+        logger.debug("No treatment variation for HTE (%s): all values are %s", treatment_col, T_raw[0])
         return HeterogeneousEffects(treatment=treatment_col, llm_model=llm_model)
 
     # Check treatment balance - need sufficient observations in both groups
     if np.min(np.bincount(T_raw.astype(int))) < 20:
-        logger.debug(f"Insufficient treatment balance for HTE ({treatment_col})")
+        logger.debug("Insufficient treatment balance for HTE (%s)", treatment_col)
         return HeterogeneousEffects(treatment=treatment_col, llm_model=llm_model)
 
     # Encode features and store mappings for decoding subgroup labels
@@ -1426,7 +1411,7 @@ def estimate_heterogeneous_effects(
 
     # Check outcome variance
     if np.std(Y) < 1e-10:
-        logger.debug(f"No outcome variation for HTE: std={np.std(Y)}")
+        logger.debug("No outcome variation for HTE: std=%s", np.std(Y))
         return HeterogeneousEffects(treatment=treatment_col, llm_model=llm_model)
 
     try:
@@ -1521,10 +1506,10 @@ def estimate_heterogeneous_effects(
 
     except np.linalg.LinAlgError as e:
         # Singular matrix usually means insufficient treatment variation
-        logger.debug(f"HTE estimation failed (singular matrix): {e}")
+        logger.debug("HTE estimation failed (singular matrix): %s", e)
         return HeterogeneousEffects(treatment=treatment_col, llm_model=llm_model)
     except Exception as e:
-        logger.debug(f"HTE estimation failed: {e}")
+        logger.debug("HTE estimation failed: %s", e)
         return HeterogeneousEffects(treatment=treatment_col, llm_model=llm_model)
 
 
@@ -1684,7 +1669,7 @@ def select_supporting_examples(
 
     # Align indices
     if len(shap_values) != len(feature_df):
-        logger.warning(f"SHAP values length {len(shap_values)} != feature_df length {len(feature_df)}")
+        logger.warning("SHAP values length %d != feature_df length %d", len(shap_values), len(feature_df))
         return examples
 
     # Get target values
@@ -1847,7 +1832,7 @@ class MitigationAnalyzer:
         # Log pre-flight summary
         if self.preflight.summary_messages:
             for msg in self.preflight.summary_messages:
-                logger.info(f"  {msg}")
+                logger.info("  %s", msg)
 
         # 1. Select golden example (shared across models)
         logger.info("Selecting golden example...")
@@ -1861,11 +1846,11 @@ class MitigationAnalyzer:
         )
 
         if self.results.golden_example:
-            logger.info(f"Golden example selected: {self.results.golden_example.complaint_id}")
+            logger.info("Golden example selected: %s", self.results.golden_example.complaint_id)
 
         # 2. Run analysis for each model
         for model in models:
-            logger.info(f"Running analysis for {model}...")
+            logger.info("Running analysis for %s...", model)
 
             # 2a. Neutralization effectiveness
             neut_results = self._analyze_neutralization(model)
@@ -1915,7 +1900,7 @@ class MitigationAnalyzer:
         )
 
         if len(feature_df) < 50:
-            logger.warning(f"Insufficient data for neutralization analysis: {len(feature_df)} rows")
+            logger.warning("Insufficient data for neutralization analysis: %d rows", len(feature_df))
             return results
 
         # Define feature columns (exclude targets and IDs)
@@ -1974,7 +1959,7 @@ class MitigationAnalyzer:
                     )
                 elif recommended_model == "skip":
                     # Pre-flight determined to skip this analysis
-                    logger.info(f"Skipping statistical model for {model} per pre-flight check")
+                    logger.info("Skipping statistical model for %s per pre-flight check", model)
                     me_result = None
                 else:
                     # Use mixed-effects (default or recommended)
@@ -2021,7 +2006,7 @@ class MitigationAnalyzer:
         )
 
         if len(feature_df) < 50:
-            logger.warning(f"Insufficient data for causal persona analysis: {len(feature_df)} rows")
+            logger.warning("Insufficient data for causal persona analysis: %d rows", len(feature_df))
             return results
 
         # Define feature columns

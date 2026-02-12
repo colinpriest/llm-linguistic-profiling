@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +54,8 @@ def parse_persona_label(label: str) -> Optional[Dict[str, str]]:
 
     Returns ``None`` if the label cannot be parsed.
     """
+    if not isinstance(label, str):
+        return None
     for a in AGE_VALUES:
         if not label.startswith(a + "_"):
             continue
@@ -124,7 +129,7 @@ class LLMResponse:
     latency_ms: int = 0
     tokens_prompt: int = 0
     tokens_completion: int = 0
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     attempt_number: int = 1
     repair_applied: bool = False
 
@@ -146,69 +151,91 @@ class PersonaEstimateResponse(BaseModel):
     @field_validator("age", mode="before")
     @classmethod
     def coerce_age(cls, v: Any) -> str:
+        original = v
         v = str(v).strip().lower()
         if v in ("young", "old"):
             return v
         if v in ("middle", "middle-aged", "adult"):
+            logger.debug("PersonaEstimate: coerced age '%s' -> 'young'", original)
             return "young"
         if v in ("elderly", "senior"):
+            logger.debug("PersonaEstimate: coerced age '%s' -> 'old'", original)
             return "old"
+        logger.debug("PersonaEstimate: coerced age '%s' -> 'young'", original)
         return "young"  # default fallback
 
     @field_validator("geographic", mode="before")
     @classmethod
     def coerce_geographic(cls, v: Any) -> str:
+        original = v
         v = str(v).strip().lower()
         if v in ("urban", "suburban", "rural"):
             return v
+        logger.debug("PersonaEstimate: coerced geographic '%s' -> 'suburban'", original)
         return "suburban"  # default fallback
 
     @field_validator("education", mode="before")
     @classmethod
     def coerce_education(cls, v: Any) -> str:
+        original = v
         v = str(v).strip().lower()
         if v in ("high_school", "college"):
             return v
         if v in ("highschool", "high school", "hs", "secondary"):
+            logger.debug("PersonaEstimate: coerced education '%s' -> 'high_school'", original)
             return "high_school"
         if v in ("university", "graduate", "postgraduate", "bachelor", "masters", "phd"):
+            logger.debug("PersonaEstimate: coerced education '%s' -> 'college'", original)
             return "college"
+        logger.debug("PersonaEstimate: coerced education '%s' -> 'college'", original)
         return "college"  # default fallback
 
     @field_validator("socioeconomic", mode="before")
     @classmethod
     def coerce_socioeconomic(cls, v: Any) -> str:
+        original = v
         v = str(v).strip().lower()
         if v in ("low", "middle", "high"):
             return v
         if v in ("lower", "poverty", "working_class", "working class"):
+            logger.debug("PersonaEstimate: coerced socioeconomic '%s' -> 'low'", original)
             return "low"
         if v in ("upper", "wealthy", "affluent", "upper_middle", "upper middle"):
+            logger.debug("PersonaEstimate: coerced socioeconomic '%s' -> 'high'", original)
             return "high"
+        logger.debug("PersonaEstimate: coerced socioeconomic '%s' -> 'middle'", original)
         return "middle"  # default fallback
 
     @field_validator("gender", mode="before")
     @classmethod
     def coerce_gender(cls, v: Any) -> str:
+        original = v
         v = str(v).strip().lower()
         if v in ("male", "female"):
             return v
         if v in ("man", "boy", "m"):
+            logger.debug("PersonaEstimate: coerced gender '%s' -> 'male'", original)
             return "male"
         if v in ("woman", "girl", "f"):
+            logger.debug("PersonaEstimate: coerced gender '%s' -> 'female'", original)
             return "female"
+        logger.debug("PersonaEstimate: coerced gender '%s' -> 'male'", original)
         return "male"  # default fallback
 
     @field_validator("esl", mode="before")
     @classmethod
     def coerce_esl(cls, v: Any) -> str:
+        original = v
         v = str(v).strip().lower()
         if v in ("native", "esl"):
             return v
         if v in ("native_speaker", "native speaker", "l1", "first_language", "no"):
+            logger.debug("PersonaEstimate: coerced esl '%s' -> 'native'", original)
             return "native"
         if v in ("non-native", "non_native", "l2", "second_language", "yes"):
+            logger.debug("PersonaEstimate: coerced esl '%s' -> 'esl'", original)
             return "esl"
+        logger.debug("PersonaEstimate: coerced esl '%s' -> 'native'", original)
         return "native"  # default fallback
 
     @field_validator("confidence", mode="before")
@@ -230,22 +257,44 @@ class RemedyDecisionResponse(BaseModel):
     @field_validator("tier", mode="before")
     @classmethod
     def coerce_tier(cls, v: Any) -> int:
+        original = v
         try:
             v = int(v)
         except (TypeError, ValueError):
+            logger.debug("RemedyDecision: coerced tier %s -> 0", original)
             return 0
         if v not in (0, 1, 2):
+            logger.debug("RemedyDecision: coerced tier %s -> 0", original)
             return 0
         return v
 
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def coerce_confidence(cls, v: Any) -> str:
+        if isinstance(v, str):
+            v_lower = v.strip().lower().replace(" ", "_").replace("-", "_")
+            valid = {"confident_no_action", "confident_action_needed", "need_more_info"}
+            if v_lower in valid:
+                return v_lower
+            # Map common alternatives
+            if v_lower in ("low", "none", "no_action", "no_info", "n/a"):
+                return "confident_no_action"
+            if v_lower in ("medium", "high", "action_needed", "uncertain", "unsure"):
+                return "confident_action_needed"
+            if v_lower in ("need_info", "needs_more_info", "more_info",
+                           "need_more_information"):
+                return "need_more_info"
+        logger.debug("RemedyDecision: coerced confidence %s -> 'confident_action_needed'", v)
+        return "confident_action_needed"
+
 
 class PersonaRewriteResponse(BaseModel):
-    rewritten_complaint: str
+    rewritten_complaint: str = Field(min_length=1)
     style_changes_made: List[str] = Field(default_factory=list)
 
 
 class NeutralizeResponse(BaseModel):
-    neutralized_complaint: str
+    neutralized_complaint: str = Field(min_length=1)
     markers_removed: List[str] = Field(default_factory=list)
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -11,7 +12,6 @@ from scipy import stats as sp_stats
 
 from src.schemas import CAUSAL_DIMS, ESTIMATE_DIMS, parse_persona_label
 from src.statistics import (
-    adverse_impact_ratio,
     bootstrap_ci,
     chi_squared_test,
     fdr_correction,
@@ -136,6 +136,8 @@ def process_causal_analysis(
     ----------
     persona_decisions : DataFrame [case_id, model, variant, tier, confidence]
     """
+    # Avoid mutating the caller's DataFrame
+    persona_decisions = persona_decisions.copy()
     persona_decisions["need_info"] = (
         persona_decisions["confidence"] == "need_more_info"
     ).astype(int)
@@ -146,14 +148,11 @@ def process_causal_analysis(
     results["info_rates_by_persona"] = rates.to_dict()
 
     # 1b. Aggregate info request rates by dimension (for Table 10)
-    parsed_rows = []
-    for _, row in persona_decisions.iterrows():
-        parsed = parse_persona_label(row["variant"])
-        if parsed is not None:
-            parsed["need_info"] = row["need_info"]
-            parsed_rows.append(parsed)
-    if parsed_rows:
-        dim_df = pd.DataFrame(parsed_rows)
+    parsed_series = persona_decisions["variant"].apply(parse_persona_label)
+    valid_mask = parsed_series.notna()
+    if valid_mask.any():
+        dim_df = pd.DataFrame(parsed_series[valid_mask].tolist())
+        dim_df["need_info"] = persona_decisions.loc[valid_mask, "need_info"].values
         results["info_rates_by_dimension"] = {
             dim: dim_df.groupby(dim)["need_info"].mean().to_dict()
             for dim in CAUSAL_DIMS
@@ -169,10 +168,9 @@ def process_causal_analysis(
             # Skip if no variation (all same value) — Cochran's Q divides by zero
             col_sums = pivot.sum(axis=0)
             if col_sums.nunique() > 1:
-                import warnings as _w
                 from statsmodels.stats.contingency_tables import cochrans_q
-                with _w.catch_warnings():
-                    _w.filterwarnings("ignore", category=RuntimeWarning)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=RuntimeWarning)
                     result = cochrans_q(pivot.values)
                     results["cochrans_q"] = {"statistic": result.statistic, "p_value": result.pvalue}
             else:
@@ -215,8 +213,8 @@ def _process_pairwise_mcnemar(df: pd.DataFrame) -> List[Dict[str, Any]]:
                     "p_value": test["p_value"],
                     "rate_1": float(a.mean()), "rate_2": float(b.mean()),
                 })
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("McNemar test failed for pair %s vs %s: %s", v1, v2, e)
 
     if results:
         p_vals = [r["p_value"] for r in results]
@@ -288,6 +286,8 @@ def process_mitigation_analysis(
         results["variance_neut"] = float(neut_rates.var())
         if results["variance_orig"] > 0:
             results["variance_reduction"] = 1 - results["variance_neut"] / results["variance_orig"]
+        else:
+            results["variance_reduction"] = 0.0
         results["variance_change"] = {
             "baseline_sd": float(orig_rates.std()),
             "neutralized_sd": float(neut_rates.std()),
@@ -353,8 +353,8 @@ def info_request_content_analysis(
                 try:
                     f_stat, p_val = sp_stats.f_oneway(*groups)
                     results[f"length_anova_{dim}"] = {"f_statistic": f_stat, "p_value": p_val}
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("ANOVA on request length failed for %s: %s", dim, e)
 
         # Word frequency for word clouds
         all_words: Dict[str, Dict[str, int]] = {}

@@ -137,8 +137,7 @@ def _build_design_matrix(
 
     # 3. Interactions
     interaction_names: List[str] = []
-    for p_name in persona_dummy_names:
-        p_idx = persona_dummy_names.index(p_name)
+    for p_idx, p_name in enumerate(persona_dummy_names):
         p_vec = parts[p_idx]
         for s_name in sev_dummy_names:
             s_idx = len(persona_dummy_names) + sev_dummy_names.index(s_name)
@@ -148,6 +147,7 @@ def _build_design_matrix(
 
     col_names = persona_dummy_names + sev_dummy_names + interaction_names
     X = np.hstack(parts) if parts else np.empty((len(df), 0))
+    assert X.shape[1] == len(col_names), f"X has {X.shape[1]} columns but col_names has {len(col_names)}"
 
     logger.info("Design matrix: N=%d, K=%d columns: %s", len(df), X.shape[1], col_names)
     return X, col_names
@@ -291,7 +291,13 @@ def _check_diagnostics(fit: Any) -> Dict[str, Any]:
 
     summary = fit.summary()
     rhat_vals = summary["R_hat"].dropna()
-    ess_vals = summary["N_Eff"].dropna() if "N_Eff" in summary.columns else summary.get("ESS_bulk", pd.Series(dtype=float)).dropna()
+    if "N_Eff" in summary.columns:
+        ess_vals = summary["N_Eff"].dropna()
+    elif "ESS_bulk" in summary.columns:
+        ess_vals = summary["ESS_bulk"].dropna()
+    else:
+        logger.warning("No ESS column found in Stan summary (columns: %s)", list(summary.columns))
+        ess_vals = pd.Series(dtype=float)
 
     max_rhat = float(rhat_vals.max()) if len(rhat_vals) > 0 else float("nan")
     min_ess = float(ess_vals.min()) if len(ess_vals) > 0 else 0.0
@@ -378,8 +384,8 @@ def _compute_amplification_logistic(
     n_draws = len(alpha_draws)
 
     # Build severity dummy names
-    sev_dummy_names = [c for c in col_names if c.startswith("sev__")]
-    persona_dummy_names = [c for c in col_names if not c.startswith("sev__") and "__x__" not in c]
+    sev_dummy_names = [col for col in col_names if col.startswith("sev__")]
+    persona_dummy_names = [col for col in col_names if not col.startswith("sev__") and "__x__" not in col]
 
     templates = _build_prediction_templates(
         dim_levels, sev_dummy_names, persona_dummy_names, col_names,
@@ -416,6 +422,10 @@ def _compute_amplification_logistic(
             D_draws[sev_band] = probs_arr.max(axis=0) - probs_arr.min(axis=0)
 
         # A = D(high) - D(low)
+        if "high" not in D_draws:
+            logger.warning("No 'high' severity band in posterior draws; amplification not estimable")
+        if "low" not in D_draws:
+            logger.warning("No 'low' severity band in posterior draws; amplification not estimable")
         D_high = D_draws.get("high", np.zeros(n_draws))
         D_low = D_draws.get("low", np.zeros(n_draws))
         A_draws = D_high - D_low
@@ -449,8 +459,8 @@ def _compute_amplification_ordinal(
     c_draws = fit.stan_variable("c")                 # (n_draws, 2)
     n_draws = len(beta_draws)
 
-    sev_dummy_names = [c for c in col_names if c.startswith("sev__")]
-    persona_dummy_names = [c for c in col_names if not c.startswith("sev__") and "__x__" not in c]
+    sev_dummy_names = [col for col in col_names if col.startswith("sev__")]
+    persona_dummy_names = [col for col in col_names if not col.startswith("sev__") and "__x__" not in col]
 
     templates = _build_prediction_templates(
         dim_levels, sev_dummy_names, persona_dummy_names, col_names,
@@ -484,6 +494,10 @@ def _compute_amplification_ordinal(
             probs_arr = np.stack(probs, axis=0)
             D_draws[sev_band] = probs_arr.max(axis=0) - probs_arr.min(axis=0)
 
+        if "high" not in D_draws:
+            logger.warning("No 'high' severity band in posterior draws; amplification not estimable")
+        if "low" not in D_draws:
+            logger.warning("No 'low' severity band in posterior draws; amplification not estimable")
         D_high = D_draws.get("high", np.zeros(n_draws))
         D_low = D_draws.get("low", np.zeros(n_draws))
         A_draws = D_high - D_low
@@ -514,8 +528,8 @@ def _compute_ordinal_tier_probs(
     c_draws = fit.stan_variable("c")
     n_draws = len(beta_draws)
 
-    sev_dummy_names = [c for c in col_names if c.startswith("sev__")]
-    persona_dummy_names = [c for c in col_names if not c.startswith("sev__") and "__x__" not in c]
+    sev_dummy_names = [col for col in col_names if col.startswith("sev__")]
+    persona_dummy_names = [col for col in col_names if not col.startswith("sev__") and "__x__" not in col]
 
     templates = _build_prediction_templates(
         dim_levels, sev_dummy_names, persona_dummy_names, col_names,
@@ -831,6 +845,7 @@ def run_bayes_robustness(
     Nested dict: {model: {metric: {logistic: {...}, ordinal: {...}}}}
     """
     # Check cache first
+    cache = None
     if use_cache:
         from src.analysis_cache import get_analysis_cache
         cache = get_analysis_cache(cache_dir)
@@ -1102,19 +1117,20 @@ def run_bayes_robustness(
                     logger.warning("%s: step 3 (per-dimension) FAILED", severity_metric)
 
             # ── Fallback 4: stronger priors (main=0.8, interaction=0.4) ──
+            # Build per-column prior_sd once for steps 4 and 5:
+            # 0.8 for main effects, 0.4 for interaction terms (columns
+            # containing '__x__').
+            flex_prior_sd = np.array([
+                0.4 if "__x__" in col else 0.8 for col in col_names
+            ])
             if result is None:
                 logger.info(
                     "%s fallback chain: step 4 -- stronger priors (main=0.8, interaction=0.4)",
                     severity_metric,
                 )
-                # Build per-column prior_sd: 0.8 for main effects, 0.4
-                # for interaction terms (columns containing '__x__').
-                prior_sd = np.array([
-                    0.4 if "__x__" in c else 0.8 for c in col_names
-                ])
                 b1_flex, b2_flex = _pick_stan_files(use_random_intercept, flex=True)
                 sd_b1_flex, sd_b2_flex = _make_stan_data(
-                    X, use_random_intercept, prior_sd=prior_sd,
+                    X, use_random_intercept, prior_sd=flex_prior_sd,
                 )
                 result = _try_b1_b2(
                     df=df, X=X, col_names=col_names, dim_levels=dim_levels,
@@ -1140,12 +1156,9 @@ def run_bayes_robustness(
                 )
                 # Re-use stronger priors from step 4 combined with
                 # aggressive sampler tuning (higher max_treedepth).
-                prior_sd = np.array([
-                    0.4 if "__x__" in c else 0.8 for c in col_names
-                ])
                 b1_flex, b2_flex = _pick_stan_files(use_random_intercept, flex=True)
                 sd_b1_agg, sd_b2_agg = _make_stan_data(
-                    X, use_random_intercept, prior_sd=prior_sd,
+                    X, use_random_intercept, prior_sd=flex_prior_sd,
                 )
                 result = _try_b1_b2(
                     df=df, X=X, col_names=col_names, dim_levels=dim_levels,
@@ -1165,7 +1178,7 @@ def run_bayes_robustness(
                     attempted.append("step 5: aggressive sampler (max_treedepth=15)")
                     logger.warning("%s: step 5 (aggressive sampler) FAILED", severity_metric)
 
-            # ── All fallbacks exhausted -> fatal ──
+            # ── All fallbacks exhausted -> record failure and continue ──
             if result is None:
                 msg_lines = [
                     f"All Bayesian fallbacks FAILED for {model}/{severity_metric}.",
@@ -1175,8 +1188,13 @@ def run_bayes_robustness(
                     msg_lines.append(f"  - {a}")
                 msg_lines.append("Posterior draws are unreliable for all attempted configurations.")
                 full_msg = "\n".join(msg_lines)
-                logger.critical(full_msg)
-                raise RuntimeError(full_msg)
+                logger.error(full_msg)
+                model_results[severity_metric] = {
+                    "status": "FAIL",
+                    "error": full_msg,
+                    "metric": severity_metric,
+                }
+                continue
 
             if fallback_used is not None:
                 metric_result["fallback_step"] = fallback_used
@@ -1187,7 +1205,7 @@ def run_bayes_robustness(
         results[model] = model_results
 
     # Cache the results
-    if use_cache:
+    if use_cache and cache is not None:
         cache.put("bayes_robustness", dataframes, params, results)
 
     return results
