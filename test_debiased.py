@@ -23,7 +23,10 @@ import argparse
 import logging
 import os
 import sys
+import time
 from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
@@ -31,6 +34,7 @@ from tqdm import tqdm
 
 
 def main() -> None:
+    t_start = time.monotonic()
     load_dotenv()
 
     parser = argparse.ArgumentParser(
@@ -305,6 +309,13 @@ def main() -> None:
 
     verbose_rows = n_complaints <= 20
 
+    # Data collection for Excel export
+    xl_consistency_rows: List[Dict] = []
+    xl_crossmodel_rows: List[Dict] = []
+    xl_dim_rows: List[Dict] = []
+    xl_crossdim_rows: List[Dict] = []
+    xl_worked_rows: List[Dict] = []
+
     for model in args.models:
         print(f"\n--- {model} ---")
         hdr = (
@@ -312,9 +323,8 @@ def main() -> None:
             f"{'TIER':>6} {'ENTITY':>7} {'NEXUS':>6} "
             f"{'CONDUCT':>8} {'HARM':>6} {'EVID':>6} {'N':>4}"
         )
-        if verbose_rows:
-            print(hdr)
-            print("-" * len(hdr))
+        print(hdr)
+        print("-" * len(hdr))
 
         model_tier: List[float] = []
         model_entity: List[float] = []
@@ -361,6 +371,14 @@ def main() -> None:
             model_harm.append(rates[4])
             model_evid.append(rates[5])
 
+            xl_consistency_rows.append({
+                "model": model, "case_id": c.case_id,
+                "orig_tier": odec.tier.value,
+                "tier": rates[0], "entity": rates[1], "nexus": rates[2],
+                "conduct": rates[3], "harm": rates[4], "evid": rates[5],
+                "n": n,
+            })
+
             if verbose_rows:
                 print(
                     f"{c.case_id[:12]:<14} T{odec.tier.value:<3} "
@@ -371,14 +389,21 @@ def main() -> None:
 
         if model_tier:
             avg = lambda xs: sum(xs) / len(xs)  # noqa: E731
-            if verbose_rows:
-                print("-" * len(hdr))
+            print("-" * len(hdr))
             print(
                 f"{'AVERAGE':<14} {'':>4} "
                 f"{avg(model_tier):>6.0%} {avg(model_entity):>7.0%} "
                 f"{avg(model_nexus):>6.0%} {avg(model_conduct):>8.0%} "
                 f"{avg(model_harm):>6.0%} {avg(model_evid):>6.0%}"
             )
+            xl_consistency_rows.append({
+                "model": model, "case_id": "AVERAGE",
+                "orig_tier": "",
+                "tier": avg(model_tier), "entity": avg(model_entity),
+                "nexus": avg(model_nexus), "conduct": avg(model_conduct),
+                "harm": avg(model_harm), "evid": avg(model_evid),
+                "n": "",
+            })
 
     # ==================================================================
     # ANALYSIS 2: Where do extractions diverge? (worst-case diffs)
@@ -446,9 +471,8 @@ def main() -> None:
             f"{'CASE_ID':<14} {'T_' + m1[:8]:>10} {'T_' + m2[:8]:>10} "
             f"{'TIER':>5} {'ENTITY':>7} {'NEXUS':>6} {'CONDUCT':>8} {'HARM':>6}"
         )
-        if verbose_rows:
-            print(hdr2)
-            print("-" * len(hdr2))
+        print(hdr2)
+        print("-" * len(hdr2))
 
         n_comp = 0
         agree = defaultdict(int)
@@ -472,6 +496,14 @@ def main() -> None:
                 if v:
                     agree[k] += 1
 
+            xl_crossmodel_rows.append({
+                "section": "originals", "case_id": c.case_id,
+                f"tier_{m1}": d1.tier.value, f"tier_{m2}": d2.tier.value,
+                "tier_agree": checks["tier"], "entity_agree": checks["entity"],
+                "nexus_agree": checks["nexus"], "conduct_agree": checks["conduct"],
+                "harm_agree": checks["harm"],
+            })
+
             if verbose_rows:
                 yn = lambda b: "Y" if b else "N"  # noqa: E731
                 print(
@@ -483,8 +515,7 @@ def main() -> None:
                 )
 
         if n_comp:
-            if verbose_rows:
-                print("-" * len(hdr2))
+            print("-" * len(hdr2))
             print(
                 f"{'AGREEMENT':<14} {'':>10} {'':>10} "
                 f"{agree['tier']/n_comp:>5.0%} "
@@ -493,6 +524,15 @@ def main() -> None:
                 f"{agree['conduct']/n_comp:>8.0%} "
                 f"{agree['harm']/n_comp:>6.0%}"
             )
+            xl_crossmodel_rows.append({
+                "section": "originals", "case_id": "AGREEMENT",
+                f"tier_{m1}": "", f"tier_{m2}": "",
+                "tier_agree": agree["tier"] / n_comp,
+                "entity_agree": agree["entity"] / n_comp,
+                "nexus_agree": agree["nexus"] / n_comp,
+                "conduct_agree": agree["conduct"] / n_comp,
+                "harm_agree": agree["harm"] / n_comp,
+            })
 
         # -- Rewrites (aggregated) --
         print(f"\nOn persona rewrites (averaged across personas):")
@@ -519,6 +559,12 @@ def main() -> None:
                 f"  Cross-model tier agreement on rewrites: "
                 f"{avg_rw:.0%} (averaged across {len(rw_tier_agree)} complaints)"
             )
+            xl_crossmodel_rows.append({
+                "section": "rewrites", "case_id": "TIER_AGREEMENT",
+                f"tier_{m1}": "", f"tier_{m2}": "",
+                "tier_agree": avg_rw, "entity_agree": "",
+                "nexus_agree": "", "conduct_agree": "", "harm_agree": "",
+            })
 
     # ==================================================================
     # ANALYSIS 4: Consistency by persona dimension
@@ -592,6 +638,12 @@ def main() -> None:
                     f"{rates[3]:>8.0%} {rates[4]:>6.0%} {rates[5]:>6.0%} "
                     f"{n_total:>6}"
                 )
+                xl_dim_rows.append({
+                    "model": model, "dimension": dim_key, "value": dval,
+                    "tier": rates[0], "entity": rates[1], "nexus": rates[2],
+                    "conduct": rates[3], "harm": rates[4], "evid": rates[5],
+                    "n": n_total,
+                })
 
     # ==================================================================
     # ANALYSIS 5: Cross-model agreement by persona dimension
@@ -653,6 +705,12 @@ def main() -> None:
                     f"{rates[3]:>8.0%} {rates[4]:>6.0%} "
                     f"{n_total:>6}"
                 )
+                xl_crossdim_rows.append({
+                    "dimension": dim_key, "value": dval,
+                    "tier": rates[0], "entity": rates[1], "nexus": rates[2],
+                    "conduct": rates[3], "harm": rates[4],
+                    "n": n_total,
+                })
 
     # ==================================================================
     # WORKED EXAMPLE: complaint with cross-model + within-model disagreement
@@ -660,76 +718,81 @@ def main() -> None:
     if len(args.models) >= 2:
         m1, m2 = args.models[0], args.models[1]
 
-        # Abbreviation maps for compact display
+        # Human-readable label maps
         _ENT = {
-            "bank_or_lender": "BANK", "credit_bureau": "CB",
-            "debt_collector": "DC", "merchant": "MRCH",
-            "fintech_payment_platform": "FNTK", "mortgage_servicer": "MORT",
-            "student_loan_servicer": "STUD", "insurance_company": "INSR",
-            "other_third_party": "OTHR", "unknown": "UNK",
+            "bank_or_lender": "Bank/Lender",
+            "credit_bureau": "Credit Bureau",
+            "debt_collector": "Debt Collector",
+            "merchant": "Merchant",
+            "fintech_payment_platform": "Fintech/Payment",
+            "mortgage_servicer": "Mortgage Svc",
+            "student_loan_servicer": "Student Loan Svc",
+            "insurance_company": "Insurance Co",
+            "other_third_party": "Other 3rd Party",
+            "unknown": "Unknown",
         }
         _COND = {
-            "failed_to_validate_debt": "fvd",
-            "failed_to_investigate_dispute": "fid",
-            "inaccurate_credit_reporting": "icr",
-            "failed_to_correct_reporting": "fcr",
-            "failed_to_provide_required_notice": "frn",
-            "failed_to_provide_provisional_credit": "fpc",
-            "unauthorized_account_opened": "uao",
-            "unauthorized_transaction_processed": "utp",
-            "unauthorized_inquiry_on_credit": "uic",
-            "improper_fees_charged": "ifc",
-            "undisclosed_fees_charged": "ufc",
-            "payment_not_posted": "pnp",
-            "payment_posted_late": "ppl",
-            "account_closed_without_notice": "acn",
-            "account_restricted_or_frozen": "arf",
-            "funds_held_beyond_permitted_period": "fhp",
-            "failed_to_process_autopay": "fpa",
-            "failed_fraud_dispute_process": "ffd",
-            "poor_communication_or_responsiveness": "pcr",
-            "incorrect_account_status": "ias",
-            "failed_to_apply_promotion": "fap",
-            "incorrect_balance_reported": "ibr",
-            "failed_loss_mitigation": "flm",
-            "wrongful_repossession_or_foreclosure": "wrf",
-            "failed_to_release_lien": "frl",
-            "system_outage_preventing_access": "spa",
-            "improper_collection_practices": "icp",
-            "failed_identity_theft_process": "fit",
-            "other_alleged_conduct": "oac",
+            "failed_to_validate_debt": "No debt validation",
+            "failed_to_investigate_dispute": "No dispute investigation",
+            "inaccurate_credit_reporting": "Inaccurate reporting",
+            "failed_to_correct_reporting": "No report correction",
+            "failed_to_provide_required_notice": "No required notice",
+            "failed_to_provide_provisional_credit": "No provisional credit",
+            "unauthorized_account_opened": "Unauthorized account",
+            "unauthorized_transaction_processed": "Unauthorized transaction",
+            "unauthorized_inquiry_on_credit": "Unauthorized inquiry",
+            "improper_fees_charged": "Improper fees",
+            "undisclosed_fees_charged": "Undisclosed fees",
+            "payment_not_posted": "Payment not posted",
+            "payment_posted_late": "Late payment posting",
+            "account_closed_without_notice": "Acct closed no notice",
+            "account_restricted_or_frozen": "Acct restricted/frozen",
+            "funds_held_beyond_permitted_period": "Funds held too long",
+            "failed_to_process_autopay": "Autopay failure",
+            "failed_fraud_dispute_process": "Failed fraud dispute",
+            "poor_communication_or_responsiveness": "Poor communication",
+            "incorrect_account_status": "Wrong acct status",
+            "failed_to_apply_promotion": "No promo applied",
+            "incorrect_balance_reported": "Wrong balance",
+            "failed_loss_mitigation": "Failed loss mitigation",
+            "wrongful_repossession_or_foreclosure": "Wrongful repossession",
+            "failed_to_release_lien": "Failed lien release",
+            "system_outage_preventing_access": "System outage",
+            "improper_collection_practices": "Improper collections",
+            "failed_identity_theft_process": "Failed ID theft process",
+            "other_alleged_conduct": "Other conduct",
         }
         _HARM = {
-            "fees_or_charges_incurred": "fee",
-            "funds_lost_or_inaccessible": "fnd",
-            "credit_score_damage": "csd",
-            "denied_credit_or_service": "dcs",
-            "forced_third_party_costs": "3pc",
-            "lost_property_or_collateral": "lpc",
-            "consequential_financial_loss": "cfl",
-            "no_financial_harm_claimed": "non",
-            "financial_harm_vague_or_unquantified": "vag",
+            "fees_or_charges_incurred": "Fees/charges",
+            "funds_lost_or_inaccessible": "Funds lost",
+            "credit_score_damage": "Credit damage",
+            "denied_credit_or_service": "Denied service",
+            "forced_third_party_costs": "3rd-party costs",
+            "lost_property_or_collateral": "Lost property",
+            "consequential_financial_loss": "Financial loss",
+            "no_financial_harm_claimed": "No harm claimed",
+            "financial_harm_vague_or_unquantified": "Vague harm",
         }
 
         def _fmt_vals(fs: FactSet, dec: TriageDecision) -> str:
-            """Format FactSet + TriageDecision as compact string."""
+            """Format FactSet + TriageDecision as readable string."""
             t = str(dec.tier.value)
             ent = _ENT.get(
                 fs.primary_entity_type.value,
-                fs.primary_entity_type.value[:4],
+                fs.primary_entity_type.value,
             )
             nx = "Y" if fs.bank_nexus else "N"
             conducts = sorted(
-                {_COND.get(af.conduct.value, af.conduct.value[:3])
+                {_COND.get(af.conduct.value, af.conduct.value)
                  for af in fs.alleged_facts}
             )
-            cond = "+".join(conducts) if conducts else "-"
+            cond = " + ".join(conducts) if conducts else "-"
             harms = sorted(
-                {_HARM.get(h.value, h.value[:3])
+                {_HARM.get(h.value, h.value)
                  for h in fs.harm_types}
             )
-            harm = "+".join(harms) if harms else "-"
-            return f"T={t} ENT={ent:<4} NX={nx} COND={cond:<20} HARM={harm}"
+            harm = " + ".join(harms) if harms else "-"
+            return f"T={t} ENT={ent:<16} NX={nx} COND={cond}  HARM={harm}"
 
         def _vals_key(fs: FactSet, dec: TriageDecision) -> tuple:
             """Hashable key for comparing extractions."""
@@ -793,6 +856,24 @@ def main() -> None:
             )
             print(f"{'=' * 100}")
 
+            def _xl_vals(prefix: str, fs: Optional[FactSet], dec: Optional[TriageDecision]) -> Dict:
+                """Return dict of extracted values for Excel/LaTeX, keyed with prefix."""
+                if fs is None or dec is None:
+                    return {f"{prefix}_tier": "", f"{prefix}_entity": "",
+                            f"{prefix}_nexus": "", f"{prefix}_conduct": "",
+                            f"{prefix}_harm": ""}
+                ent = _ENT.get(fs.primary_entity_type.value, fs.primary_entity_type.value)
+                conducts = sorted({_COND.get(af.conduct.value, af.conduct.value)
+                                   for af in fs.alleged_facts})
+                harms = sorted({_HARM.get(h.value, h.value) for h in fs.harm_types})
+                return {
+                    f"{prefix}_tier": dec.tier.value,
+                    f"{prefix}_entity": ent,
+                    f"{prefix}_nexus": "Y" if fs.bank_nexus else "N",
+                    f"{prefix}_conduct": " + ".join(conducts) if conducts else "-",
+                    f"{prefix}_harm": " + ".join(harms) if harms else "-",
+                }
+
             # -- Original --
             text = example_case.narrative
             snippet = text[:200] + ("..." if len(text) > 200 else "")
@@ -804,6 +885,10 @@ def main() -> None:
             ed2 = orig_dec[m2][cid]
             print(f"    {m1:<14} {_fmt_vals(efs1, ed1)}")
             print(f"    {m2:<14} {_fmt_vals(efs2, ed2)}")
+            xl_worked_rows.append({
+                "variant": "ORIGINAL", "text": text,
+                **_xl_vals(m1, efs1, ed1), **_xl_vals(m2, efs2, ed2),
+            })
 
             # -- Persona rewrites --
             for persona in PERSONA_GRID:
@@ -828,6 +913,10 @@ def main() -> None:
                     print(f"    {m2:<14} {_fmt_vals(rfs2, rd2)}")
                 else:
                     print(f"    {m2:<14} (extraction failed)")
+                xl_worked_rows.append({
+                    "variant": plabel, "text": rtext or "",
+                    **_xl_vals(m1, rfs1, rd1), **_xl_vals(m2, rfs2, rd2),
+                })
 
     # ==================================================================
     # Cache statistics
@@ -890,6 +979,283 @@ def main() -> None:
         )
     else:
         print("  No API calls made (all responses served from cache).")
+
+    # ==================================================================
+    # Export to Excel
+    # ==================================================================
+    import pandas as pd
+
+    output_dir = Path("./output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    xlsx_path = output_dir / f"debias-analysis-{ts}.xlsx"
+
+    with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
+        if xl_consistency_rows:
+            pd.DataFrame(xl_consistency_rows).to_excel(
+                writer, sheet_name="Extraction Consistency", index=False,
+            )
+        if xl_crossmodel_rows:
+            pd.DataFrame(xl_crossmodel_rows).to_excel(
+                writer, sheet_name="Cross-Model Comparison", index=False,
+            )
+        if xl_dim_rows:
+            pd.DataFrame(xl_dim_rows).to_excel(
+                writer, sheet_name="Consistency by Dimension", index=False,
+            )
+        if xl_crossdim_rows:
+            pd.DataFrame(xl_crossdim_rows).to_excel(
+                writer, sheet_name="Cross-Model by Dimension", index=False,
+            )
+        if xl_worked_rows:
+            pd.DataFrame(xl_worked_rows).to_excel(
+                writer, sheet_name="Worked Example", index=False,
+            )
+
+    print(f"\n  Excel report saved: {xlsx_path}")
+
+    # ==================================================================
+    # Export to LaTeX
+    # ==================================================================
+    tex_dir = output_dir / "debias-analysis"
+    tex_dir.mkdir(parents=True, exist_ok=True)
+
+    def _tex_esc(s) -> str:
+        """Escape characters special to LaTeX."""
+        s = str(s)
+        for ch in ("&", "%", "$", "#", "_"):
+            s = s.replace(ch, "\\" + ch)
+        return s
+
+    def _tex_pct(v) -> str:
+        """Format value as LaTeX percentage or plain escaped text."""
+        if v is None or v == "":
+            return ""
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return f"{v * 100:.0f}\\%"
+        return _tex_esc(str(v))
+
+    def _tex_bool(v) -> str:
+        """Format boolean or percentage agree value."""
+        if isinstance(v, bool):
+            return "Y" if v else "N"
+        if isinstance(v, float):
+            return _tex_pct(v)
+        if v == "":
+            return ""
+        return _tex_esc(str(v))
+
+    def _write_tex_table(
+        filepath: Path,
+        caption: str,
+        label: str,
+        headers: List[str],
+        rows: List[List[str]],
+        col_spec: str,
+        font_size: str = "footnotesize",
+        midrule_before: Optional[set] = None,
+    ) -> None:
+        """Write a LaTeX tabularx table to a .tex file."""
+        if midrule_before is None:
+            midrule_before = set()
+        lines = [
+            "% Required packages: tabularx, booktabs, array",
+            "% \\newcolumntype{Y}{>{\\raggedright\\arraybackslash}X}",
+            "",
+            "\\begin{table}[htbp]",
+            "\\centering",
+            f"\\{font_size}",
+            f"\\caption{{{caption}}}",
+            f"\\label{{{label}}}",
+            f"\\begin{{tabularx}}{{\\textwidth}}{{{col_spec}}}",
+            "\\toprule",
+            " & ".join(f"\\textbf{{{h}}}" for h in headers) + " \\\\",
+            "\\midrule",
+        ]
+        for i, row in enumerate(rows):
+            if i in midrule_before:
+                lines.append("\\midrule")
+            lines.append(" & ".join(row) + " \\\\")
+        lines += [
+            "\\bottomrule",
+            "\\end{tabularx}",
+            "\\end{table}",
+            "",
+        ]
+        filepath.write_text("\n".join(lines), encoding="utf-8")
+
+    # -- Table 1: Extraction Consistency --
+    if xl_consistency_rows:
+        tex_rows: List[List[str]] = []
+        midrules: set = set()
+        for i, r in enumerate(xl_consistency_rows):
+            is_avg = r["case_id"] == "AVERAGE"
+            if is_avg:
+                midrules.add(i)
+            tex_rows.append([
+                _tex_esc(r["model"]),
+                "\\textbf{AVERAGE}" if is_avg else _tex_esc(str(r["case_id"])),
+                str(r["orig_tier"]) if r["orig_tier"] != "" else "",
+                _tex_pct(r["tier"]), _tex_pct(r["entity"]),
+                _tex_pct(r["nexus"]), _tex_pct(r["conduct"]),
+                _tex_pct(r["harm"]), _tex_pct(r["evid"]),
+                str(r["n"]) if r["n"] != "" else "",
+            ])
+        _write_tex_table(
+            tex_dir / "extraction_consistency.tex",
+            "Extraction Consistency: Original vs.\\ 36 Persona Rewrites",
+            "tab:extraction-consistency",
+            ["Model", "Case ID", "Orig", "Tier", "Entity", "Nexus",
+             "Conduct", "Harm", "Evid", "N"],
+            tex_rows, "l Y c r r r r r r r",
+            midrule_before=midrules,
+        )
+
+    # -- Table 2: Cross-Model Comparison --
+    if xl_crossmodel_rows and len(args.models) >= 2:
+        m1_name, m2_name = args.models[0], args.models[1]
+        tex_rows = []
+        midrules = set()
+        for i, r in enumerate(xl_crossmodel_rows):
+            is_summary = r["case_id"] in ("AGREEMENT", "TIER_AGREEMENT")
+            if is_summary:
+                midrules.add(i)
+            case_cell = (
+                "\\textbf{" + _tex_esc(r["case_id"]) + "}"
+                if is_summary else _tex_esc(str(r["case_id"]))
+            )
+            tex_rows.append([
+                _tex_esc(r["section"]),
+                case_cell,
+                _tex_esc(str(r.get(f"tier_{m1_name}", ""))),
+                _tex_esc(str(r.get(f"tier_{m2_name}", ""))),
+                _tex_bool(r["tier_agree"]),
+                _tex_bool(r["entity_agree"]),
+                _tex_bool(r["nexus_agree"]),
+                _tex_bool(r["conduct_agree"]),
+                _tex_bool(r["harm_agree"]),
+            ])
+        m1_h = _tex_esc(m1_name)
+        m2_h = _tex_esc(m2_name)
+        _write_tex_table(
+            tex_dir / "cross_model_comparison.tex",
+            f"Cross-Model Comparison: {m1_h} vs.\\ {m2_h}",
+            "tab:cross-model-comparison",
+            ["Section", "Case ID", f"T {m1_h}", f"T {m2_h}",
+             "Tier", "Entity", "Nexus", "Conduct", "Harm"],
+            tex_rows, "l Y c c r r r r r",
+            midrule_before=midrules,
+        )
+
+    # -- Table 3: Consistency by Dimension --
+    if xl_dim_rows:
+        tex_rows = []
+        for r in xl_dim_rows:
+            tex_rows.append([
+                _tex_esc(r["model"]),
+                _tex_esc(r["dimension"]),
+                _tex_esc(r["value"]),
+                _tex_pct(r["tier"]), _tex_pct(r["entity"]),
+                _tex_pct(r["nexus"]), _tex_pct(r["conduct"]),
+                _tex_pct(r["harm"]), _tex_pct(r["evid"]),
+                str(r["n"]),
+            ])
+        _write_tex_table(
+            tex_dir / "consistency_by_dimension.tex",
+            "Extraction Consistency by Persona Dimension",
+            "tab:consistency-dimension",
+            ["Model", "Dim", "Value", "Tier", "Entity", "Nexus",
+             "Conduct", "Harm", "Evid", "N"],
+            tex_rows, "l l l r r r r r r r",
+        )
+
+    # -- Table 4: Cross-Model by Dimension --
+    if xl_crossdim_rows:
+        tex_rows = []
+        for r in xl_crossdim_rows:
+            tex_rows.append([
+                _tex_esc(r["dimension"]),
+                _tex_esc(r["value"]),
+                _tex_pct(r["tier"]), _tex_pct(r["entity"]),
+                _tex_pct(r["nexus"]), _tex_pct(r["conduct"]),
+                _tex_pct(r["harm"]),
+                str(r["n"]),
+            ])
+        _write_tex_table(
+            tex_dir / "cross_model_by_dimension.tex",
+            "Cross-Model Agreement by Persona Dimension",
+            "tab:cross-model-dimension",
+            ["Dim", "Value", "Tier", "Entity", "Nexus",
+             "Conduct", "Harm", "N"],
+            tex_rows, "l l r r r r r r",
+        )
+
+    # -- Table 5: Worked Example (custom multi-row header) --
+    if xl_worked_rows and len(args.models) >= 2:
+        m1_name, m2_name = args.models[0], args.models[1]
+        m1_h = _tex_esc(m1_name)
+        m2_h = _tex_esc(m2_name)
+        tex_lines = [
+            "% Required packages: tabularx, booktabs, array, multirow",
+            "% \\newcolumntype{Y}{>{\\raggedright\\arraybackslash}X}",
+            "",
+            "\\begin{table}[htbp]",
+            "\\centering",
+            "\\scriptsize",
+            "\\caption{Worked Example: Fact Extraction Across Persona Rewrites}",
+            "\\label{tab:worked-example}",
+            "\\begin{tabularx}{\\textwidth}{l Y c l c Y Y c l c Y Y}",
+            "\\toprule",
+            (
+                " & "
+                f"& \\multicolumn{{5}}{{c}}{{\\textbf{{{m1_h}}}}} "
+                f"& \\multicolumn{{5}}{{c}}{{\\textbf{{{m2_h}}}}} \\\\"
+            ),
+            "\\cmidrule(lr){3-7} \\cmidrule(lr){8-12}",
+            (
+                "\\textbf{Variant} & \\textbf{Text} "
+                "& \\textbf{T} & \\textbf{Ent} & \\textbf{Nx} "
+                "& \\textbf{Conduct} & \\textbf{Harm} "
+                "& \\textbf{T} & \\textbf{Ent} & \\textbf{Nx} "
+                "& \\textbf{Conduct} & \\textbf{Harm} \\\\"
+            ),
+            "\\midrule",
+        ]
+        for r in xl_worked_rows:
+            full_text = str(r.get("text", ""))
+            text_trunc = full_text[:100] + ("..." if len(full_text) > 100 else "")
+            row = [
+                _tex_esc(r["variant"]),
+                _tex_esc(text_trunc),
+                str(r.get(f"{m1_name}_tier", "")),
+                _tex_esc(str(r.get(f"{m1_name}_entity", ""))),
+                str(r.get(f"{m1_name}_nexus", "")),
+                _tex_esc(str(r.get(f"{m1_name}_conduct", ""))),
+                _tex_esc(str(r.get(f"{m1_name}_harm", ""))),
+                str(r.get(f"{m2_name}_tier", "")),
+                _tex_esc(str(r.get(f"{m2_name}_entity", ""))),
+                str(r.get(f"{m2_name}_nexus", "")),
+                _tex_esc(str(r.get(f"{m2_name}_conduct", ""))),
+                _tex_esc(str(r.get(f"{m2_name}_harm", ""))),
+            ]
+            tex_lines.append(" & ".join(row) + " \\\\")
+        tex_lines += [
+            "\\bottomrule",
+            "\\end{tabularx}",
+            "\\end{table}",
+            "",
+        ]
+        (tex_dir / "worked_example.tex").write_text(
+            "\n".join(tex_lines), encoding="utf-8",
+        )
+
+    n_tex = sum(1 for f in tex_dir.iterdir() if f.suffix == ".tex")
+    print(f"  LaTeX tables saved: {tex_dir}/ ({n_tex} files)")
+
+    elapsed = time.monotonic() - t_start
+    h, rem = divmod(int(elapsed), 3600)
+    m, s = divmod(rem, 60)
+    print(f"\nTotal elapsed time: {h:02d}:{m:02d}:{s:02d}")
 
 
 if __name__ == "__main__":
