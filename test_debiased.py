@@ -774,25 +774,49 @@ def main() -> None:
             "financial_harm_vague_or_unquantified": "Vague harm",
         }
 
-        def _fmt_vals(fs: FactSet, dec: TriageDecision) -> str:
-            """Format FactSet + TriageDecision as readable string."""
-            t = str(dec.tier.value)
-            ent = _ENT.get(
-                fs.primary_entity_type.value,
-                fs.primary_entity_type.value,
-            )
-            nx = "Y" if fs.bank_nexus else "N"
+        def _extract_vals(fs: FactSet, dec: TriageDecision) -> Dict[str, str]:
+            """Extract FactSet + TriageDecision fields as a dict of strings."""
+            ent = _ENT.get(fs.primary_entity_type.value, fs.primary_entity_type.value)
+            nx = "Yes" if fs.bank_nexus else "No"
             conducts = sorted(
                 {_COND.get(af.conduct.value, af.conduct.value)
                  for af in fs.alleged_facts}
             )
-            cond = " + ".join(conducts) if conducts else "-"
             harms = sorted(
                 {_HARM.get(h.value, h.value)
                  for h in fs.harm_types}
             )
-            harm = " + ".join(harms) if harms else "-"
-            return f"T={t} ENT={ent:<16} NX={nx} COND={cond}  HARM={harm}"
+            return {
+                "tier": str(dec.tier.value),
+                "entity": ent,
+                "nexus": nx,
+                "conduct": " + ".join(conducts) if conducts else "-",
+                "harm": " + ".join(harms) if harms else "-",
+            }
+
+        def _fmt_vals(vals: Dict[str, str], orig_vals: Optional[Dict[str, str]] = None) -> str:
+            """Format extraction values as readable string with diff markers.
+
+            If orig_vals is provided, fields that differ get a '*' prefix.
+            """
+            def _mark(key: str, label: str, width: int = 0) -> str:
+                v = vals[key]
+                if orig_vals and vals[key] != orig_vals[key]:
+                    prefix = "*"
+                else:
+                    prefix = " " if orig_vals else ""
+                if width:
+                    return f"{prefix}{label}={v:<{width}}"
+                return f"{prefix}{label}={v}"
+
+            parts = [
+                f"T={vals['tier']}",
+                _mark("entity", "ENT", 16),
+                _mark("nexus", "Nexus"),
+                _mark("conduct", "COND"),
+                f" {_mark('harm', 'HARM')}",
+            ]
+            return " ".join(parts)
 
         def _vals_key(fs: FactSet, dec: TriageDecision) -> tuple:
             """Hashable key for comparing extractions."""
@@ -856,23 +880,37 @@ def main() -> None:
             )
             print(f"{'=' * 100}")
 
-            def _xl_vals(prefix: str, fs: Optional[FactSet], dec: Optional[TriageDecision]) -> Dict:
-                """Return dict of extracted values for Excel/LaTeX, keyed with prefix."""
+            def _xl_vals(
+                prefix: str,
+                fs: Optional[FactSet],
+                dec: Optional[TriageDecision],
+                orig: Optional[Dict[str, str]] = None,
+            ) -> Dict:
+                """Return dict of extracted values for Excel/LaTeX, keyed with prefix.
+
+                If orig is provided (from _extract_vals on the original),
+                adds a ``{prefix}_diff`` column listing which fields changed.
+                """
+                empty = {f"{prefix}_tier": "", f"{prefix}_entity": "",
+                         f"{prefix}_nexus": "", f"{prefix}_conduct": "",
+                         f"{prefix}_harm": "", f"{prefix}_diff": ""}
                 if fs is None or dec is None:
-                    return {f"{prefix}_tier": "", f"{prefix}_entity": "",
-                            f"{prefix}_nexus": "", f"{prefix}_conduct": "",
-                            f"{prefix}_harm": ""}
-                ent = _ENT.get(fs.primary_entity_type.value, fs.primary_entity_type.value)
-                conducts = sorted({_COND.get(af.conduct.value, af.conduct.value)
-                                   for af in fs.alleged_facts})
-                harms = sorted({_HARM.get(h.value, h.value) for h in fs.harm_types})
-                return {
-                    f"{prefix}_tier": dec.tier.value,
-                    f"{prefix}_entity": ent,
-                    f"{prefix}_nexus": "Y" if fs.bank_nexus else "N",
-                    f"{prefix}_conduct": " + ".join(conducts) if conducts else "-",
-                    f"{prefix}_harm": " + ".join(harms) if harms else "-",
+                    return empty
+                vals = _extract_vals(fs, dec)
+                result = {
+                    f"{prefix}_tier": vals["tier"],
+                    f"{prefix}_entity": vals["entity"],
+                    f"{prefix}_nexus": vals["nexus"],
+                    f"{prefix}_conduct": vals["conduct"],
+                    f"{prefix}_harm": vals["harm"],
                 }
+                if orig is not None:
+                    changed = [k for k in ("tier", "entity", "nexus", "conduct", "harm")
+                               if vals[k] != orig[k]]
+                    result[f"{prefix}_diff"] = ", ".join(changed) if changed else ""
+                else:
+                    result[f"{prefix}_diff"] = ""
+                return result
 
             # -- Original --
             text = example_case.narrative
@@ -883,8 +921,11 @@ def main() -> None:
             ed1 = orig_dec[m1][cid]
             efs2 = orig_fs[m2][cid]
             ed2 = orig_dec[m2][cid]
-            print(f"    {m1:<14} {_fmt_vals(efs1, ed1)}")
-            print(f"    {m2:<14} {_fmt_vals(efs2, ed2)}")
+            orig_v1 = _extract_vals(efs1, ed1)
+            orig_v2 = _extract_vals(efs2, ed2)
+            print(f"    {m1:<14} {_fmt_vals(orig_v1)}")
+            print(f"    {m2:<14} {_fmt_vals(orig_v2)}")
+            print("    (* = differs from original)")
             xl_worked_rows.append({
                 "variant": "ORIGINAL", "text": text,
                 **_xl_vals(m1, efs1, ed1), **_xl_vals(m2, efs2, ed2),
@@ -906,16 +947,19 @@ def main() -> None:
                 print(f"\n  {plabel}:")
                 print(f"  {snippet}")
                 if rfs1 is not None and rd1 is not None:
-                    print(f"    {m1:<14} {_fmt_vals(rfs1, rd1)}")
+                    rw_v1 = _extract_vals(rfs1, rd1)
+                    print(f"    {m1:<14} {_fmt_vals(rw_v1, orig_v1)}")
                 else:
                     print(f"    {m1:<14} (extraction failed)")
                 if rfs2 is not None and rd2 is not None:
-                    print(f"    {m2:<14} {_fmt_vals(rfs2, rd2)}")
+                    rw_v2 = _extract_vals(rfs2, rd2)
+                    print(f"    {m2:<14} {_fmt_vals(rw_v2, orig_v2)}")
                 else:
                     print(f"    {m2:<14} (extraction failed)")
                 xl_worked_rows.append({
                     "variant": plabel, "text": rtext or "",
-                    **_xl_vals(m1, rfs1, rd1), **_xl_vals(m2, rfs2, rd2),
+                    **_xl_vals(m1, rfs1, rd1, orig_v1),
+                    **_xl_vals(m2, rfs2, rd2, orig_v2),
                 })
 
     # ==================================================================
@@ -1214,9 +1258,9 @@ def main() -> None:
             "\\cmidrule(lr){3-7} \\cmidrule(lr){8-12}",
             (
                 "\\textbf{Variant} & \\textbf{Text} "
-                "& \\textbf{T} & \\textbf{Ent} & \\textbf{Nx} "
+                "& \\textbf{T} & \\textbf{Ent} & \\textbf{Nexus} "
                 "& \\textbf{Conduct} & \\textbf{Harm} "
-                "& \\textbf{T} & \\textbf{Ent} & \\textbf{Nx} "
+                "& \\textbf{T} & \\textbf{Ent} & \\textbf{Nexus} "
                 "& \\textbf{Conduct} & \\textbf{Harm} \\\\"
             ),
             "\\midrule",
