@@ -350,6 +350,7 @@ class Experiment:
                 "threads": self.threads,
                 "skip_steps": list(self.skip_steps),
                 "timestamp": self.timestamp,
+                "output_dir": str(self.output_dir),
             }
 
             bundle = PaperBundleGenerator(

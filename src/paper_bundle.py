@@ -68,6 +68,7 @@ _REQUIRED_DIRS = [
     "paper_pack/latex/appendix_tables",
     "paper_pack/latex/appendix_bayes",
     "paper_pack/latex/appendix_worked_examples",
+    "paper_pack/latex/evidence",
     "paper_pack/docx/tables",
     "paper_pack/docx/figures",
     "paper_pack/markdown/tables",
@@ -576,7 +577,86 @@ class PaperBundleGenerator:
             for f in src_bayes_figs.glob("*.pdf"):
                 shutil.copy2(f, dst_bayes / f.name)
 
-        logger.info("Paper pack populated (main + appendix_tables + worked_examples + bayes)")
+        # Evidence folder — key outputs for reproducibility / peer review
+        self._populate_evidence()
+
+        logger.info("Paper pack populated (main + appendix_tables + worked_examples + bayes + evidence)")
+
+    def _populate_evidence(self) -> None:
+        """Copy/write key evidence files into paper_pack/latex/evidence/.
+
+        These are the primary artefacts a reviewer would need to verify the
+        analysis: full results JSON, executive summary, HTML dashboard,
+        worked-examples data, and model diagnostics.
+        """
+        ev_dir = self.output_root / "paper_pack" / "latex" / "evidence"
+        ts = self.rc.get("timestamp", "unknown")
+        src_output = Path(self.rc.get("output_dir", "./output"))
+        copied = 0
+
+        # 1. analysis_results_{ts}.json — write from in-memory analysis results
+        ar_path = ev_dir / f"analysis_results_{ts}.json"
+        ar_path.write_text(
+            json.dumps(self.ar, indent=2, default=str), encoding="utf-8",
+        )
+        copied += 1
+
+        # 2. executive_summary_{ts}.txt — reconstruct from exec_sections
+        exec_sections = self.ar.get("exec_sections", {})
+        if exec_sections:
+            section_titles = {
+                "linguistic_differences": "SECTION 1: LINGUISTIC DIFFERENCES",
+                "ai_decision_making": "SECTION 2: AI DECISION-MAKING",
+                "correlation_vs_cause": "SECTION 3: CORRELATION VS. CAUSE",
+                "severity_stakes": "SECTION 4: SEVERITY STAKES",
+                "language_neutralisation": "SECTION 5: LANGUAGE NEUTRALISATION",
+                "bias_mitigation": "SECTION 6: BIAS MITIGATION",
+                "conclusion": "SECTION 7: CONCLUSION",
+            }
+            lines: List[str] = []
+            lines.append("=" * 60)
+            lines.append("BUSINESS EXECUTIVE SUMMARY (7 SECTIONS)")
+            lines.append("=" * 60)
+            for key, title in section_titles.items():
+                text = exec_sections.get(key)
+                if text:
+                    lines.append("")
+                    lines.append("\u2500" * 50)
+                    lines.append(title)
+                    lines.append("\u2500" * 50)
+                    lines.append(text)
+            lines.append("")
+            lines.append("=" * 60)
+            (ev_dir / f"executive_summary_{ts}.txt").write_text(
+                "\n".join(lines), encoding="utf-8",
+            )
+            copied += 1
+
+        # 3. fairness_report_{ts}.html — copy from experiment output dir
+        html_src = src_output / f"fairness_report_{ts}.html"
+        if html_src.exists():
+            shutil.copy2(html_src, ev_dir / html_src.name)
+            copied += 1
+        else:
+            logger.warning("Evidence: fairness_report_%s.html not found in %s", ts, src_output)
+
+        # 4. worked-examples-{ts}.json — copy from experiment output dir
+        we_src = src_output / f"worked-examples-{ts}.json"
+        if we_src.exists():
+            shutil.copy2(we_src, ev_dir / we_src.name)
+            copied += 1
+        else:
+            logger.warning("Evidence: worked-examples-%s.json not found in %s", ts, src_output)
+
+        # 5. rm_model_diagnostics__all__v1.json — copy from stats dir
+        rm_diag_src = self.output_root / "analysis" / "stats" / "rm_model_diagnostics__all__v1.json"
+        if rm_diag_src.exists():
+            shutil.copy2(rm_diag_src, ev_dir / f"rm_model_diagnostics__all__v1_{ts}.json")
+            copied += 1
+        else:
+            logger.warning("Evidence: rm_model_diagnostics__all__v1.json not yet written")
+
+        logger.info("Evidence folder populated (%d files)", copied)
 
     def _generate_index_files(self) -> None:
         """Generate stable pointer files for LaTeX/Markdown includes."""
