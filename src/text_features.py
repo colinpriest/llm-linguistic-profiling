@@ -371,13 +371,19 @@ def extract_features_batch(
             f"got {len(texts)} and {len(case_ids)}"
         )
     results = []
-    for text, cid in tqdm(zip(texts, case_ids), total=len(texts),
-                          desc=f"Text features ({variant})", unit="doc"):
-        try:
-            results.append(extract_features(text, cid, variant))
-        except Exception as e:
-            logger.error("Feature extraction failed for %s (zero-vector fallback): %s", cid, e)
-            results.append(TextFeatures(case_id=cid, variant=variant))
+    hits_before = text_feature_cache._hits
+    completed = 0
+    with tqdm(total=len(texts), desc=f"Text features ({variant})", unit="doc") as pbar:
+        for text, cid in zip(texts, case_ids):
+            try:
+                results.append(extract_features(text, cid, variant))
+            except Exception as e:
+                logger.error("Feature extraction failed for %s (zero-vector fallback): %s", cid, e)
+                results.append(TextFeatures(case_id=cid, variant=variant))
+            completed += 1
+            cache_hits = text_feature_cache._hits - hits_before
+            pbar.update(1)
+            pbar.set_postfix_str(f"cache {cache_hits / completed:.0%}")
     return results
 
 

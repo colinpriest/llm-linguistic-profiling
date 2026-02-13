@@ -484,6 +484,7 @@ class LLMClient:
         responses: List[Optional[LLMResponse]] = [None] * len(requests)
         completed = 0
         failed = 0
+        cache_hits = 0
         breaker_checked = False
 
         logger.info("Submitting %d requests (%s) with %d workers",
@@ -540,6 +541,8 @@ class LLMClient:
                             resp = future.result()
                             responses[idx] = resp
                             completed += 1
+                            if resp is not None and resp.success and resp.attempt_number == 0:
+                                cache_hits += 1
                             if resp is not None and not resp.success:
                                 failed += 1
                         except CancelledError:
@@ -574,6 +577,9 @@ class LLMClient:
                             completed += 1
                             failed += 1
                         pbar.update(1)
+                        pbar.set_postfix_str(
+                            f"cache {cache_hits / completed:.0%}" if completed else ""
+                        )
 
                         # Circuit breaker: abort if early results are mostly failures
                         window = min(self.CIRCUIT_BREAKER_WINDOW, len(requests))

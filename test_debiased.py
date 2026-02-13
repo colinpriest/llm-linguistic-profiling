@@ -199,6 +199,8 @@ def main() -> None:
         rewrite_texts: Dict[str, Dict[str, Optional[str]]] = defaultdict(dict)
         missing: List[str] = []
         n_rewrites = n_complaints * n_personas
+        cache_hits = 0
+        completed = 0
         with tqdm(total=n_rewrites, desc=f"Step 2 [{model}] Load rewrites from cache") as pbar:
             for c in complaints:
                 for persona in PERSONA_GRID:
@@ -216,6 +218,7 @@ def main() -> None:
                             f"  {model} / {c.case_id} / {plabel}"
                         )
                     else:
+                        cache_hits += 1
                         try:
                             parsed = PersonaRewriteResponse(**cached)
                             rewrite_texts[c.case_id][plabel] = (
@@ -226,7 +229,9 @@ def main() -> None:
                                 f"  {model} / {c.case_id} / {plabel}"
                                 f" (parse error: {exc})"
                             )
+                    completed += 1
                     pbar.update(1)
+                    pbar.set_postfix_str(f"cache {cache_hits / completed:.0%}")
 
         if missing:
             print(
