@@ -26,7 +26,29 @@
       "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" add src/bayes_robustness.py)",
       "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" commit -m \"$\\(cat <<''EOF''\nAdd validation, diagnostics persistence, and data-loss tracking to Bayesian layer\n\n- Add _validate_case_ids guard before complaint-level mapping\n- Relax _gate_fit: rhat>1.01/ess<400 now WARN instead of FAIL\n- Persist full diagnostics JSON \\(including diagnose_text\\) for post-mortem\n- Track and warn on per-dimension NA row loss during data prep\n- Include diagnose_text in result payload when status is not OK\n- Skip metric if J < 5 unique complaints\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
       "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" push)",
-      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" pull)"
+      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" pull)",
+      "Bash(git status:*)",
+      "WebFetch(domain:openai.com)",
+      "WebFetch(domain:pricepertoken.com)",
+      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" diff src/token_usage.py)",
+      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" log --oneline -5)",
+      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" add src/token_usage.py)",
+      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" commit -m \"$\\(cat <<''EOF''\nAdd token pricing for gpt-5-mini and gpt-5.2 models\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(ls:*)",
+      "Bash(git -C d:/dev/LLM-linguistic-profiling diff src/reporter.py)",
+      "Bash(git -C d:/dev/LLM-linguistic-profiling status)",
+      "Bash(git -C d:/dev/LLM-linguistic-profiling diff --stat)",
+      "Bash(git -C d:/dev/LLM-linguistic-profiling log --oneline -5)",
+      "Bash(git -C d:/dev/LLM-linguistic-profiling add README.md requirements.txt src/analysis_cache.py src/experiment.py src/ipw_robustness.py src/llm_client.py src/mitigation_analysis.py src/paper_bundle.py src/persona_analysis.py src/reporter.py src/severity_analysis.py src/sparsity_analysis.py src/statistics.py contracts/backfill_panels.py contracts/publication_manifest.json contracts/validate_publication_clean.py)",
+      "Bash(git -C d:/dev/LLM-linguistic-profiling commit -m \"$\\(cat <<''EOF''\nAdd publication validation gate and fix NE rendering issues\n\n- Add validate_publication_clean.py for CI validation of artifacts\n- Add --latest flag to auto-select most recent run\n- Filter HTML files by modification time for accurate run matching\n- Fix NaN false positive in SHAP help text \\(\"50% NaN\" → \"50% missing values\"\\)\n- Add _sv\\(\\) safe sort value function to prevent nan/inf in HTML attributes\n- Fix paper_bundle.py run_id attribute error \\(dict → class attribute\\)\n- Change paper bundle failure from warning to error with re-raise\n- Add IPW panel payload transformation \\(ipw_to_panel_payload\\)\n- Add backfill_panels.py utility for existing runs\n- Add publication_manifest.json for expected observation counts\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git -C d:/dev/LLM-linguistic-profiling push origin main)",
+      "Bash(git -C d:/dev/LLM-linguistic-profiling pull origin main)",
+      "Bash(\"d:\\\\dev\\\\LLM-linguistic-profiling\\\\.conda\\\\python.exe\" -c \"import packaging; print\\(packaging.__version__\\)\")",
+      "Bash(wait:*)",
+      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" diff)",
+      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" add src/cache.py test_debiased.py)",
+      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" commit -m \"$\\(cat <<''EOF''\nImprove debiased test harness: worked example, progress bar, Windows cache fix\n\n- Add WORKED EXAMPLE section: finds complaint with cross-model + within-model\n  persona disagreement, shows original + 36 rewrite texts with both models''\n  extracted TIER/ENTITY/NEXUS/CONDUCT/HARM values\n- Add ANALYSIS 4 \\(consistency by persona dimension\\) and ANALYSIS 5\n  \\(cross-model agreement by persona dimension\\)\n- Add tqdm progress bar for Step 2 cache loading \\(18k entries\\)\n- Fix pool-size default from 5000 to 20000 to match experiment run\n- Gate per-complaint verbose rows on --num <= 20\n- Fix Windows PermissionError on concurrent cache writes with retry backoff\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" push origin main)"
     ]
   }
 }

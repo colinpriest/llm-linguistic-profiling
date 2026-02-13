@@ -337,6 +337,7 @@ class Experiment:
 
     def _generate_paper_bundle(self) -> None:
         """Generate the paper-ready output bundle."""
+        logger.info("Generating paper bundle (tables, figures, evidence — may take a few minutes)...")
         try:
             from src.paper_bundle import PaperBundleGenerator
 
@@ -1939,6 +1940,11 @@ class Experiment:
         self._run_power_analysis()
         self._run_severity_analysis()
         self._run_bayes_robustness()
+
+        logger.info("=" * 60)
+        logger.info("Post-estimation analyses (may take several minutes)...")
+        logger.info("=" * 60)
+
         self._collect_multiple_comparisons()
         self._run_repeated_measures_analysis()
         self._run_sparsity_analysis()
@@ -2269,6 +2275,7 @@ class Experiment:
 
     def _collect_multiple_comparisons(self) -> None:
         """Collect metadata about all FDR-corrected test families."""
+        logger.info("Collecting multiple comparisons summary...")
         from src.statistics import multiple_comparisons_summary, fdr_correction
 
         records: List[Dict[str, Any]] = []
@@ -2357,6 +2364,8 @@ class Experiment:
             logger.info("Skipping repeated-measures analysis (no baseline decisions or personas)")
             return
 
+        logger.info("Fitting repeated-measures models (ordinal, conditional logit, GEE, LMM, nonparametric)...")
+
         # Build severity metadata
         severity_df = pd.DataFrame([
             {
@@ -2437,6 +2446,7 @@ class Experiment:
             logger.info("Skipping sparsity analysis (no baseline decisions or personas)")
             return
 
+        logger.info("Running sparsity-aware analysis (small-cell sensitivity)...")
         result = run_sparsity_analysis(
             baseline_df=self.baseline_df,
             personas_df=self.personas_df,
@@ -2492,6 +2502,8 @@ class Experiment:
         if len(self.baseline_df) < 50 or len(self.neutralized_df) < 50:
             logger.info("Skipping mitigation effectiveness analysis (insufficient data)")
             return
+
+        logger.info("Running mitigation effectiveness analysis (ML models + SHAP)...")
 
         # Build complaints DataFrame for the analysis
         complaints_df = pd.DataFrame([

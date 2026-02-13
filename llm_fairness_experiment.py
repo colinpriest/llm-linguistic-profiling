@@ -237,6 +237,7 @@ def main() -> None:
         sys.exit(1)
 
     # Generate HTML report
+    logger.info("Generating HTML dashboard report...")
     report_path = None
     try:
         from src.reporter import generate_report
@@ -271,6 +272,7 @@ def main() -> None:
     logger.info("Token usage log written: %s", usage_log_path)
 
     # Generate worked examples report
+    logger.info("Generating worked examples report...")
     from src.worked_examples import generate_worked_examples
 
     examples_html, examples_json = generate_worked_examples(
