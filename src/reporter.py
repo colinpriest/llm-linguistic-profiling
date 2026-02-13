@@ -5342,6 +5342,19 @@ def _render_rm_model_diagnostics(parts: List[str], model_results: Dict[str, Any]
             parts.append(f'<li style="color:#f39c12;">{html.escape(fb)}</li>')
         parts.append('</ul></details>')
 
+    # Show original vs fitted predictors if the model was reduced
+    orig = diag.get("original_predictors", [])
+    fitted = diag.get("fitted_predictors", [])
+    if orig and fitted and set(orig) != set(fitted):
+        dropped = sorted(set(orig) - set(fitted))
+        parts.append(
+            f'<p style="font-size:0.85em;color:#666;">'
+            f'<strong>Original predictors:</strong> {html.escape(", ".join(orig))}<br>'
+            f'<strong>Fitted predictors:</strong> {html.escape(", ".join(fitted))}<br>'
+            f'<strong>Dropped (not identifiable):</strong> {html.escape(", ".join(dropped))}'
+            f'</p>'
+        )
+
 
 def _render_coefficient_table(
     parts: List[str],

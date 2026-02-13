@@ -413,6 +413,110 @@ def conditional_logistic_favourable(
                     predictor_vars=exog_cols,
                 )
 
+    # ---- Conditional-logit-specific pre-flight --------------------------------
+    # In a conditional logit, only *within-stratum varying* predictors are
+    # identifiable.  Predictors constant within each complaint (e.g. sev_ord,
+    # model dummies) are absorbed by the stratum fixed effects.  Additionally,
+    # persona_x_severity = persona_score * sev_ord is a scalar multiple of
+    # persona_score within each stratum (since sev_ord is constant), making
+    # them perfectly collinear.  We drop these before fitting.
+
+    preflight_issues: List[Dict[str, str]] = []
+    fallback_actions: List[str] = []
+    original_cols = list(exog.columns)
+
+    # 1. Drop within-stratum constant predictors
+    complaint_groups = df.loc[exog.index].groupby("complaint_id")
+    within_constant: List[str] = []
+    for col in list(exog.columns):
+        within_var = complaint_groups.apply(
+            lambda g, c=col: exog.loc[g.index, c].nunique(), include_groups=False
+        )
+        if (within_var <= 1).all():
+            within_constant.append(col)
+
+    if within_constant:
+        detail = (
+            f"Predictors constant within every complaint stratum "
+            f"(absorbed by conditional logit fixed effects): {within_constant}"
+        )
+        preflight_issues.append({"type": "within_stratum_constant", "detail": detail})
+        action = f"Dropped within-stratum constant predictors: {within_constant}"
+        fallback_actions.append(action)
+        logger.info("%s pre-flight: %s", model_label, detail)
+        logger.info("%s action: %s", model_label, action)
+        exog = exog.drop(columns=within_constant)
+
+    # 2. Drop within-stratum collinear predictors (e.g. persona_x_severity
+    #    is a scalar multiple of persona_score within each stratum)
+    if exog.shape[1] >= 2:
+        within_collinear: List[str] = []
+        cols = list(exog.columns)
+        for i, c1 in enumerate(cols):
+            for c2 in cols[i + 1:]:
+                if c2 in within_collinear:
+                    continue
+                # Check if c2 is a linear function of c1 within every stratum
+                is_collinear = True
+                for _, grp in complaint_groups:
+                    x1 = exog.loc[grp.index, c1]
+                    x2 = exog.loc[grp.index, c2]
+                    if x1.nunique() <= 1:
+                        continue  # constant within this stratum, skip
+                    # If perfectly collinear, rank of [x1, x2] == 1
+                    mat = np.column_stack([x1.values - x1.mean(), x2.values - x2.mean()])
+                    if np.linalg.matrix_rank(mat, tol=1e-8) > 1:
+                        is_collinear = False
+                        break
+                if is_collinear:
+                    within_collinear.append(c2)
+
+        if within_collinear:
+            detail = (
+                f"Predictors perfectly collinear within strata "
+                f"(e.g. interaction = scalar × main effect when grouping "
+                f"variable is constant per stratum): {within_collinear}"
+            )
+            preflight_issues.append({"type": "within_stratum_collinear", "detail": detail})
+            action = f"Dropped within-stratum collinear predictors: {within_collinear}"
+            fallback_actions.append(action)
+            logger.info("%s pre-flight: %s", model_label, detail)
+            logger.info("%s action: %s", model_label, action)
+            exog = exog.drop(columns=within_collinear)
+
+    # 3. Final check: enough predictors and strata?
+    if exog.shape[1] < 1:
+        return {
+            "skipped": True,
+            "reason": "no within-stratum varying predictors for conditional logit",
+            "estimand_status": "not_estimable",
+            "diagnostics": {
+                "status": "FAIL",
+                "preflight_issues": preflight_issues,
+                "fallback_actions": fallback_actions,
+            },
+        }
+
+    surviving_cols = list(exog.columns)
+    if surviving_cols != original_cols:
+        action = (
+            f"Reduced model from {len(original_cols)} predictors "
+            f"({original_cols}) to {len(surviving_cols)} ({surviving_cols})"
+        )
+        fallback_actions.append(action)
+        logger.info("%s action: %s", model_label, action)
+
+    n_params = exog.shape[1]
+    if len(informative) < 2 * n_params:
+        detail = (
+            f"Low strata-to-parameter ratio: {len(informative)} informative "
+            f"strata for {n_params} parameters; SEs may be unreliable"
+        )
+        preflight_issues.append({"type": "low_strata_ratio", "detail": detail})
+        logger.info("%s pre-flight: %s", model_label, detail)
+
+    diag_status = "WARN" if preflight_issues else "OK"
+
     # Sort by complaint_id for grouping
     sort_idx = df["complaint_id"].argsort()
     exog = exog.iloc[sort_idx].reset_index(drop=True)
@@ -425,6 +529,20 @@ def conditional_logistic_favourable(
             clogit = ConditionalLogit(endog, exog_mat, groups=groups)
             fit = clogit.fit(disp=False, maxiter=200)
 
+        # Extract SEs and p-values; covariance matrix may be singular
+        n_params = len(exog_mat.columns)
+        try:
+            bse = fit.bse.tolist()
+            pvalues = fit.pvalues.tolist()
+        except Exception as cov_err:
+            logger.warning(
+                "ConditionalLogit covariance unavailable (%s); "
+                "reporting coefficients and odds ratios without SEs",
+                cov_err,
+            )
+            bse = [float("nan")] * n_params
+            pvalues = [float("nan")] * n_params
+
         ci_dict = {}
         try:
             ci_df = fit.conf_int()
@@ -432,18 +550,26 @@ def conditional_logistic_favourable(
                 if name in ci_df.index:
                     ci_dict[name] = [float(ci_df.loc[name].iloc[0]), float(ci_df.loc[name].iloc[1])]
         except Exception:
-            for name, se in zip(exog_mat.columns, fit.bse):
+            for name, se in zip(exog_mat.columns, bse):
                 coef = fit.params[exog_mat.columns.get_loc(name)]
                 ci_dict[name] = [float(coef - 1.96 * se), float(coef + 1.96 * se)]
 
         method_str = "within-complaint conditional logistic regression"
         if method_note:
             method_str += f" ({method_note})"
+        se_unavailable = any(np.isnan(s) for s in bse)
+        if se_unavailable:
+            method_str += " (SEs unavailable — singular covariance)"
+            cov_action = "Covariance matrix singular; coefficients and odds ratios reported without standard errors or p-values"
+            fallback_actions.append(cov_action)
+            logger.info("%s: %s", model_label, cov_action)
+            if diag_status == "OK":
+                diag_status = "WARN"
 
         return {
             "coefficients": dict(zip(exog_mat.columns, fit.params.tolist())),
-            "std_errors": dict(zip(exog_mat.columns, fit.bse.tolist())),
-            "p_values": dict(zip(exog_mat.columns, fit.pvalues.tolist())),
+            "std_errors": dict(zip(exog_mat.columns, bse)),
+            "p_values": dict(zip(exog_mat.columns, pvalues)),
             "conf_int": ci_dict,
             "odds_ratios": dict(zip(exog_mat.columns, np.exp(fit.params).tolist())),
             "n_obs": len(df),
@@ -455,6 +581,13 @@ def conditional_logistic_favourable(
                 "clustering": "complaint_id (stratum)",
                 "method": method_str,
             },
+            "diagnostics": {
+                "status": diag_status,
+                "preflight_issues": preflight_issues,
+                "fallback_actions": fallback_actions,
+                "original_predictors": original_cols,
+                "fitted_predictors": list(exog_mat.columns),
+            },
         }
 
     # Attempt 1: standard fit
@@ -462,14 +595,18 @@ def conditional_logistic_favourable(
         return _fit_clogit(exog)
     except Exception as e:
         fit_diag = diagnose_fit_failure(e, model_label=model_label, X=exog, y=endog)
+        fallback_actions.append(f"Attempt 1 failed ({fit_diag['type']}): {e}")
         logger.warning("%s attempt 1 failed (%s): %s", model_label, fit_diag["type"], e)
 
     # Attempt 2: standardise predictors
     try:
+        fallback_actions.append("Retrying with standardised predictors")
+        logger.info("%s: retrying with standardised predictors", model_label)
         exog_std, _ = standardise_predictors(exog)
         return _fit_clogit(exog_std, method_note="standardised predictors")
     except Exception as e2:
         fit_diag2 = diagnose_fit_failure(e2, model_label=model_label, X=exog, y=endog)
+        fallback_actions.append(f"Attempt 2 failed ({fit_diag2['type']}): {e2}")
         logger.warning("%s attempt 2 failed (%s): %s", model_label, fit_diag2["type"], e2)
 
     # Confirmatory model — fatal if not estimable
@@ -811,33 +948,48 @@ def linear_mixed_model_tier(
 
     exog = sm.add_constant(exog)
 
+    lmm_preflight: List[Dict[str, str]] = []
+    lmm_fallbacks: List[str] = []
+    lmm_diag_status = "OK"
+    estimation_method = "REML"
+
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             lmm = MixedLM(endog, exog, groups=groups)
             try:
                 fit = lmm.fit(reml=True, maxiter=200)
-            except (np.linalg.LinAlgError, ValueError):
+                logger.info("%s: REML estimation converged", model_label)
+            except (np.linalg.LinAlgError, ValueError) as e_reml:
+                lmm_fallbacks.append(f"REML failed ({e_reml}); switching to ML")
+                logger.info("%s: REML failed (%s), falling back to ML", model_label, e_reml)
+                lmm_diag_status = "WARN"
+                estimation_method = "ML"
                 try:
                     fit = lmm.fit(reml=False, maxiter=200)
-                except (np.linalg.LinAlgError, ValueError):
-                    # Last resort: use profile method with start_params
+                    logger.info("%s: ML estimation converged", model_label)
+                except (np.linalg.LinAlgError, ValueError) as e_ml:
+                    lmm_fallbacks.append(f"ML failed ({e_ml}); switching to Powell optimiser with zero start params")
+                    logger.info("%s: ML failed (%s), falling back to Powell", model_label, e_ml)
+                    estimation_method = "ML + Powell"
                     fit = lmm.fit(
                         reml=False, maxiter=200,
                         start_params=np.zeros(exog.shape[1] + 1),
                         method="powell",
                     )
+                    logger.info("%s: Powell estimation completed", model_label)
 
         re_var = float(fit.cov_re.iloc[0, 0]) if hasattr(fit.cov_re, "iloc") else float(fit.cov_re)
         resid_var = float(fit.scale)
         icc = re_var / (re_var + resid_var) if (re_var + resid_var) > 0 else 0.0
 
+        ci_df = fit.conf_int()
         return {
             "coefficients": fit.fe_params.to_dict(),
             "std_errors": fit.bse_fe.to_dict(),
             "p_values": fit.pvalues.to_dict(),
             "conf_int": {
-                name: [float(fit.conf_int().loc[name, 0]), float(fit.conf_int().loc[name, 1])]
+                name: [float(ci_df.loc[name, 0]), float(ci_df.loc[name, 1])]
                 for name in fit.fe_params.index
             },
             "random_effects_variance": re_var,
@@ -847,17 +999,23 @@ def linear_mixed_model_tier(
             "n_clusters": int(groups.nunique()),
             "converged": fit.converged,
             "model_info": {
-                "type": "Linear Mixed Model (REML)",
+                "type": f"Linear Mixed Model ({estimation_method})",
                 "clustering": "complaint_id (random intercept)",
-                "method": "LMM with complaint_id random intercept (robustness)",
+                "method": f"LMM with complaint_id random intercept (robustness, {estimation_method})",
                 "icc_interpretation": (
                     f"ICC = {icc:.3f}: {icc*100:.1f}% of tier variance is "
                     f"between complaints (justifies clustering)"
                 ),
             },
+            "diagnostics": {
+                "status": lmm_diag_status,
+                "preflight_issues": lmm_preflight,
+                "fallback_actions": lmm_fallbacks,
+            },
         }
     except Exception as e:
         fit_diag = diagnose_fit_failure(e, model_label=model_label, X=exog, y=endog)
+        lmm_fallbacks.append(f"All estimation methods failed ({fit_diag['type']}): {e}")
         logger.warning("Linear mixed model failed (%s): %s", fit_diag["type"], e)
         fatal_regression_error(
             model_label, fit_diag,

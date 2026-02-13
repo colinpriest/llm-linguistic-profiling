@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from src.estimable import NE, NEValue, is_estimable
+from src.estimable import NE, NECode, NEValue, is_estimable
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,8 @@ def _fmt_prop(v: Any) -> str:
 def _fmt_pval(v: Any) -> str:
     """Format a p-value: 2 sig figs, scientific if <1e-3."""
     if not is_estimable(v):
+        if isinstance(v, NEValue) and v.code == NECode.SINGULAR_MATRIX:
+            return "Sep.$^{\\dagger}$"
         return "---"
     fv = float(v)
     if fv < 1e-3:
@@ -547,7 +549,15 @@ class TableGenerator:
         ne_amp_t6 = NE.missing_data(context="amplification table")
         for dim in ["age", "geographic", "education", "socioeconomic"]:
             gee_dim = gee.get(dim, {})
-            int_p = gee_dim.get("interaction_p", ne_amp_t6) if not gee_dim.get("skipped") else NE.skipped("GEE skipped")
+            if gee_dim.get("skipped"):
+                int_p = NE.skipped("GEE skipped")
+            elif gee_dim.get("separation_detected"):
+                int_p = NE.singular_matrix(
+                    detail="separation",
+                    context=f"GEE interaction {dim}",
+                )
+            else:
+                int_p = gee_dim.get("interaction_p", ne_amp_t6)
             n_obs = gee_dim.get("n_obs", 0) if not gee_dim.get("skipped") else 0
 
             # Amplification should be read from dimension-specific interaction output.
@@ -589,10 +599,18 @@ class TableGenerator:
         metric_clean = metric.replace("_", "")
         subset = "amount_present" if metric == "monetary_severity" else "all"
 
+        has_separation = any("Sep." in str(r[1]) for r in rows)
+        caption = f"Severity amplification (confirmatory) -- {model}, {metric.replace('_', ' ')}."
+        if has_separation:
+            caption += (
+                r" $\dagger$\,Sep.\ = quasi-complete separation in persona $\times$ severity"
+                r" cells; Wald test not identified."
+            )
+
         return _write_three_formats(
             df, out, "table", "main", f"severity_amplification_confirmatory",
             model_clean, f"{metric_clean}__{subset}", 1,
-            caption=f"Severity amplification (confirmatory) -- {model}, {metric.replace('_', ' ')}.",
+            caption=caption,
             label=f"tab:amplification_{model_clean}_{metric_clean}",
             analysis_type="confirmatory",
         )
@@ -1186,6 +1204,9 @@ class TableGenerator:
         for model in self.models:
             paths.extend(self._tableA4_robustness(rob_dir, model))
 
+        # Repeated-measures model diagnostics table
+        paths.extend(self._tableA8_rm_model_diagnostics(rob_dir))
+
         # Bayesian robustness tables
         bayes_dir = self.output_root / "analysis" / "tables" / "robustness" / "bayes"
         bayes_dir.mkdir(parents=True, exist_ok=True)
@@ -1197,6 +1218,161 @@ class TableGenerator:
             paths.extend(self._tableB4_bayes_diagnostics(bayes_dir, model))
 
         return paths
+
+    # ------------------------------------------------------------------
+    # Human-readable labels for repeated-measures analysis keys
+    # ------------------------------------------------------------------
+    _RM_ANALYSIS_LABELS: Dict[str, str] = {
+        "ordinal_model": "Ordinal Mixed (CLMM)",
+        "conditional_logistic_favourable": "Conditional Logit (Favourable)",
+        "logistic_gee_favourable": "GEE Logistic (Favourable)",
+        "logistic_gee_info_request": "GEE Logistic (Info Request)",
+        "linear_mixed_model": "Linear Mixed Model (Tier)",
+    }
+
+    def _tableA8_rm_model_diagnostics(self, out: Path) -> List[Path]:
+        """Appendix Table A8: Repeated-measures model pre-flight checks and fallback actions."""
+        rm = self.ar.get("repeated_measures", {})
+        if not rm or rm.get("skipped"):
+            return []
+
+        _ANALYSIS_KEYS = [
+            "ordinal_model", "conditional_logistic_favourable",
+            "logistic_gee_favourable", "logistic_gee_info_request",
+            "linear_mixed_model",
+        ]
+
+        rows = []
+        for model_key in sorted(rm.keys()):
+            model_data = rm[model_key]
+            if not isinstance(model_data, dict):
+                continue
+            model_clean = model_key.replace("-", " ").replace("_", " ")
+
+            for analysis_key in _ANALYSIS_KEYS:
+                result = model_data.get(analysis_key, {})
+                if not isinstance(result, dict):
+                    continue
+
+                diag = result.get("diagnostics", {})
+                status = diag.get("status", "N/A")
+                preflight = diag.get("preflight_issues", [])
+                fallbacks = diag.get("fallback_actions", [])
+                orig_preds = diag.get("original_predictors", [])
+                fitted_preds = diag.get("fitted_predictors", [])
+
+                analysis_label = self._RM_ANALYSIS_LABELS.get(analysis_key, analysis_key)
+
+                # Summarise preflight issues
+                if preflight:
+                    preflight_summary = "; ".join(
+                        p.get("type", "unknown") if isinstance(p, dict) else str(p)
+                        for p in preflight
+                    )
+                else:
+                    preflight_summary = "None"
+
+                # Summarise fallback actions
+                if fallbacks:
+                    fallback_summary = "; ".join(str(f) for f in fallbacks)
+                else:
+                    fallback_summary = "None"
+
+                # Predictor changes
+                if orig_preds and fitted_preds and set(orig_preds) != set(fitted_preds):
+                    dropped = sorted(set(orig_preds) - set(fitted_preds))
+                    predictor_note = f"Dropped: {', '.join(dropped)}"
+                else:
+                    predictor_note = "---"
+
+                rows.append((
+                    model_clean,
+                    analysis_label,
+                    status,
+                    preflight_summary,
+                    fallback_summary,
+                    predictor_note,
+                ))
+
+        if not rows:
+            return []
+
+        df = pd.DataFrame(rows, columns=[
+            "LLM", "Analysis", "Status",
+            "Pre-flight Issues", "Fallback Actions", "Predictor Changes",
+        ])
+
+        # Custom LaTeX with ragged columns for wide table
+        tex_lines = [
+            r"% Required packages: booktabs, array, ragged2e, tabularx",
+            r"\begingroup\small",
+            r"\begin{table}[htbp]",
+            r"\centering",
+            r"\caption{Repeated-measures model pre-flight diagnostics and fallback actions.}",
+            r"\label{tab:rm_model_diagnostics}",
+            (r"\begin{tabularx}{\textwidth}{"
+             r">{\RaggedRight\arraybackslash}p{0.10\linewidth}"
+             r">{\RaggedRight\arraybackslash}p{0.14\linewidth}"
+             r"c"
+             r">{\RaggedRight\arraybackslash}X"
+             r">{\RaggedRight\arraybackslash}X"
+             r">{\RaggedRight\arraybackslash}p{0.14\linewidth}"
+             r"}"),
+            r"\toprule",
+            (r"LLM & Analysis & Status & Pre-flight Issues "
+             r"& Fallback Actions & Predictor Changes \\"),
+            r"\midrule",
+        ]
+
+        prev_model = ""
+        for _, row in df.iterrows():
+            m = _escape_latex(str(row["LLM"])) if str(row["LLM"]) != prev_model else ""
+            prev_model = str(row["LLM"])
+            analysis = _escape_latex(str(row["Analysis"]))
+            status = _escape_latex(str(row["Status"]))
+            preflight_esc = _escape_latex(str(row["Pre-flight Issues"]))
+            fallback_esc = _escape_latex(str(row["Fallback Actions"]))
+            pred_esc = _escape_latex(str(row["Predictor Changes"]))
+            tex_lines.append(
+                f"{m} & {analysis} & {status} & "
+                f"{preflight_esc} & {fallback_esc} & {pred_esc} \\\\"
+            )
+
+        tex_lines.extend([
+            r"\bottomrule",
+            r"\end{tabularx}",
+            r"\end{table}",
+            r"\endgroup",
+        ])
+
+        # Write .tex manually (custom layout)
+        tex_name = _build_filename(
+            "table", "robustness", "rm_model_diagnostics", "all", "all", 1, "tex",
+        )
+        tex_path = out / tex_name
+        tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
+
+        # Write .md and .csv via helpers
+        md_name = _build_filename(
+            "table", "robustness", "rm_model_diagnostics", "all", "all", 1, "md",
+        )
+        md_path = out / md_name
+        md_path.write_text(
+            _dataframe_to_markdown(
+                df,
+                "Repeated-measures model pre-flight diagnostics and fallback actions.",
+            ),
+            encoding="utf-8",
+        )
+
+        csv_name = _build_filename(
+            "table", "robustness", "rm_model_diagnostics", "all", "all", 1, "csv",
+        )
+        csv_path = out / csv_name
+        df.to_csv(csv_path, index=False, encoding="utf-8")
+
+        logger.info("Written table: rm_model_diagnostics (.tex/.md/.csv)")
+        return [tex_path, md_path, csv_path]
 
     def _tableA4_robustness(self, out: Path, model: str) -> List[Path]:
         """Appendix Table A4: Robustness summary (IPW, alt disparity, alt endpoint)."""

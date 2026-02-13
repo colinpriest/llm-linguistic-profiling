@@ -239,6 +239,23 @@ class PaperBundleGenerator:
                 json.dumps(bh_results, indent=2, default=str), encoding="utf-8",
             )
 
+            # GEE interaction diagnostics (sparse cells, separation)
+            gee_diags: Dict[str, Any] = {}
+            for metric_key, metric_data in gee.items():
+                for model_key, model_data in metric_data.items():
+                    for dim_key, dim_data in model_data.items():
+                        diag = dim_data.get("diagnostics")
+                        if diag and (diag.get("preflight_issues") or diag.get("fallback_actions")):
+                            gee_diags.setdefault(metric_key, {}).setdefault(model_key, {})[dim_key] = diag
+            if gee_diags:
+                (stats_dir / "gee_interaction_diagnostics__confirmatory__all__v1.json").write_text(
+                    json.dumps(gee_diags, indent=2, default=str), encoding="utf-8",
+                )
+                logger.info(
+                    "GEE interaction diagnostics saved (%d dimensions with issues)",
+                    sum(len(d) for md in gee_diags.values() for d in md.values()),
+                )
+
         # IPW robustness results
         ipw = severity.get("ipw_robustness", {})
         if ipw and not ipw.get("error"):
@@ -281,6 +298,34 @@ class PaperBundleGenerator:
             (bayes_dir / "bayesian_robustness__all__v1.json").write_text(
                 json.dumps(bayes_summary, indent=2, default=str), encoding="utf-8",
             )
+
+        # Repeated-measures model diagnostics (pre-flight / fallback actions)
+        rm = self.ar.get("repeated_measures", {})
+        if rm:
+            rm_diags: Dict[str, Any] = {}
+            for model_key, model_data in rm.items():
+                if not isinstance(model_data, dict):
+                    continue
+                model_diags: Dict[str, Any] = {}
+                for analysis_key in [
+                    "ordinal_model", "conditional_logistic_favourable",
+                    "logistic_gee_favourable", "logistic_gee_info_request",
+                    "linear_mixed_model",
+                ]:
+                    result = model_data.get(analysis_key, {})
+                    diag = result.get("diagnostics")
+                    if diag and (diag.get("preflight_issues") or diag.get("fallback_actions")):
+                        model_diags[analysis_key] = diag
+                if model_diags:
+                    rm_diags[model_key] = model_diags
+            if rm_diags:
+                (stats_dir / "rm_model_diagnostics__all__v1.json").write_text(
+                    json.dumps(rm_diags, indent=2, default=str), encoding="utf-8",
+                )
+                logger.info(
+                    "Repeated-measures diagnostics saved (%d models with pre-flight actions)",
+                    len(rm_diags),
+                )
 
         logger.info("Stats artifacts saved")
 

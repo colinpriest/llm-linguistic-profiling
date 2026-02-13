@@ -1247,6 +1247,41 @@ def logistic_interaction_tier2(
             return {"skipped": True, "reason": "insufficient complete cells"}
         df_fit = df_fit[df_fit["dim_level"].isin(complete)]
 
+        # --- Pre-flight: detect cell sparsity / separation ---
+        _MIN_CELL = 5
+        cell_stats = df_fit.groupby(["dim_level", "severity"])["Y2"].agg(["size", "mean", "std"])
+        sparse_cells = cell_stats[cell_stats["size"] < _MIN_CELL]
+        zero_var_cells = cell_stats[cell_stats["std"] == 0]
+
+        preflight_issues = []
+        if len(sparse_cells) > 0:
+            sparse_desc = {
+                f"{dl}×{sv}": int(row["size"])
+                for (dl, sv), row in sparse_cells.iterrows()
+            }
+            preflight_issues.append({
+                "type": "sparse_cells",
+                "detail": f"Cells with n < {_MIN_CELL}: {sparse_desc}",
+            })
+            logger.info(
+                "GEE interaction %s/%s/%s pre-flight: sparse cells %s",
+                dimension, severity_metric, model, sparse_desc,
+            )
+        if len(zero_var_cells) > 0:
+            zv_desc = {
+                f"{dl}×{sv}": f"n={int(row['size'])}, Y2_mean={row['mean']:.0f}"
+                for (dl, sv), row in zero_var_cells.iterrows()
+            }
+            preflight_issues.append({
+                "type": "zero_variance_cells",
+                "detail": f"Cells with no Y2 variation (complete separation): {zv_desc}",
+            })
+            logger.info(
+                "GEE interaction %s/%s/%s pre-flight: zero-variance cells %s "
+                "(complete separation likely)",
+                dimension, severity_metric, model, zv_desc,
+            )
+
         formula = "Y2 ~ C(dim_level) + C(severity) + C(dim_level):C(severity)"
 
         convergence_warning = False
@@ -1273,8 +1308,23 @@ def logistic_interaction_tier2(
 
         interaction_terms = [p for p in params.index if ":" in p and "dim_level" in p and "severity" in p]
 
-        # Joint test for interaction terms
+        # Detect separation: any interaction SE being NaN implies singular
+        # covariance — Wald joint test requires full-rank covariance block
+        separation_detected = False
         if interaction_terms:
+            int_ses = [float(bse[t]) for t in interaction_terms]
+            n_nan = sum(np.isnan(s) for s in int_ses)
+            if n_nan > 0:
+                separation_detected = True
+                logger.warning(
+                    "GEE interaction %s/%s: separation detected — "
+                    "%d of %d interaction SEs are NaN (coefficients: %s)",
+                    dimension, model, n_nan, len(interaction_terms),
+                    {t: f"{float(params[t]):.2f}" for t in interaction_terms},
+                )
+
+        # Joint test for interaction terms
+        if interaction_terms and not separation_detected:
             try:
                 joint_test = fit.wald_test_terms(scalar=True)
                 # Find the interaction row in the joint test
@@ -1288,6 +1338,11 @@ def logistic_interaction_tier2(
                     interaction_p = float(max(pvalues[t] for t in interaction_terms))
             except Exception:
                 interaction_p = float(max(pvalues[t] for t in interaction_terms)) if interaction_terms else NE.missing_data(context="GEE interaction p")
+        elif separation_detected:
+            interaction_p = NE.singular_matrix(
+                detail="quasi-complete separation in persona x severity cells",
+                context=f"GEE interaction {dimension}",
+            )
         else:
             interaction_p = NE.missing_data(context="no interaction terms")
 
@@ -1304,6 +1359,15 @@ def logistic_interaction_tier2(
                 "odds_ratio": float(np.exp(params[term])),
             }
 
+        # Diagnostics summary
+        fallback_actions = []
+        if separation_detected:
+            fallback_actions.append(
+                "Wald interaction test not identified due to singular "
+                "covariance (quasi-complete separation); p-value omitted"
+            )
+        diag_status = "WARN" if (preflight_issues or separation_detected) else "OK"
+
         return {
             "interaction_p": interaction_p,
             "n_interaction_terms": len(interaction_terms),
@@ -1312,6 +1376,16 @@ def logistic_interaction_tier2(
             "n_clusters": int(df_fit[cluster_col].nunique()),
             "method": "GEE (Binomial, exchangeable, Wald test)",
             "convergence_warning": convergence_warning,
+            "separation_detected": separation_detected,
+            "diagnostics": {
+                "status": diag_status,
+                "preflight_issues": preflight_issues,
+                "fallback_actions": fallback_actions,
+                "cell_stats": {
+                    f"{dl}×{sv}": {"n": int(row["size"]), "Y2_mean": round(float(row["mean"]), 4)}
+                    for (dl, sv), row in cell_stats.iterrows()
+                },
+            },
         }
 
     except Exception as e:

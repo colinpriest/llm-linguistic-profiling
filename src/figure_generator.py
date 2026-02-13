@@ -663,6 +663,7 @@ class FigureGenerator:
 
     def _fig9_worked_examples(self) -> Optional[Tuple[Path, Path]]:
         import matplotlib.pyplot as plt
+        from matplotlib.patches import FancyBboxPatch
 
         # Select 2-3 example complaints
         if not self.complaints or len(self.complaints) < 2:
@@ -671,26 +672,37 @@ class FigureGenerator:
         n_cases = min(3, len(self.complaints))
         examples = self.complaints[:n_cases]
 
-        fig, axes = plt.subplots(n_cases, 1, figsize=(14, 5 * n_cases))
+        fig, axes = plt.subplots(n_cases, 1, figsize=(17, 4.5 * n_cases))
         if n_cases == 1:
             axes = [axes]
         fig.suptitle("Worked Examples", fontsize=16, fontweight="bold")
 
         for idx, (ax, complaint) in enumerate(zip(axes, examples)):
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
             ax.axis("off")
-            text = complaint.narrative[:300] + ("..." if len(complaint.narrative) > 300 else "")
-            wrapped = textwrap.fill(text, width=70)
-            display_text = (
-                f"Case {idx+1} (ID: {complaint.case_id[:8]}...)\n"
-                f"Product: {complaint.product_category} | Issue: {complaint.issue_category}\n"
-                f"Monetary severity: {complaint.monetary_severity} | Issue severity: {complaint.issue_severity}\n"
-                f"{'─' * 60}\n"
-                f"{wrapped}"
+
+            # Background box spanning entire axes width
+            bg = FancyBboxPatch(
+                (0.0, 0.0), 1.0, 1.0,
+                boxstyle="round,pad=0.01", facecolor="#f8f8f8",
+                edgecolor="#cccccc", linewidth=0.8,
+                transform=ax.transAxes, clip_on=False,
             )
-            ax.text(0.01, 0.95, display_text, transform=ax.transAxes,
-                    fontsize=16, family="monospace", verticalalignment="top",
-                    bbox=dict(boxstyle="round,pad=0.3", facecolor="#f8f8f8",
-                              edgecolor="#cccccc"))
+            ax.add_patch(bg)
+
+            text = complaint.narrative[:500] + ("..." if len(complaint.narrative) > 500 else "")
+            wrapped = textwrap.fill(text, width=120)
+            header = (
+                f"Case {idx+1} (ID: {complaint.case_id[:8]}...)\n"
+                f"Product: {complaint.product_category}  |  Issue: {complaint.issue_category}\n"
+                f"Monetary severity: {complaint.monetary_severity}  |  "
+                f"Issue severity: {complaint.issue_severity}\n"
+                f"{'─' * 100}"
+            )
+            display_text = f"{header}\n{wrapped}"
+            ax.text(0.02, 0.95, display_text, transform=ax.transAxes,
+                    fontsize=9, family="monospace", verticalalignment="top")
 
         fig.tight_layout(rect=[0, 0, 1, 0.95])
 
