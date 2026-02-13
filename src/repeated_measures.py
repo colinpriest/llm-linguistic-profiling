@@ -524,6 +524,7 @@ def conditional_logistic_favourable(
     groups = df["complaint_id"].iloc[sort_idx].reset_index(drop=True)
 
     def _fit_clogit(exog_mat, method_note=""):
+        nonlocal diag_status
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             clogit = ConditionalLogit(endog, exog_mat, groups=groups)
