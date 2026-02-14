@@ -908,8 +908,8 @@ def _pairwise_mcnemar(df: pd.DataFrame) -> List[Dict[str, Any]]:
             )
             if len(merged) < 5:
                 continue
-            a = merged["favorable_1"].values
-            b = merged["favorable_2"].values
+            a = merged["favorable_1"].values.astype(bool)
+            b = merged["favorable_2"].values.astype(bool)
             table = np.array([
                 [(a & b).sum(), (a & ~b).sum()],
                 [(~a & b).sum(), (~a & ~b).sum()],
@@ -987,8 +987,8 @@ def mitigation_analysis(
     merged["fav_orig"] = (merged["tier_orig"] >= 1).astype(int)
     merged["fav_neut"] = (merged["tier_neut"] >= 1).astype(int)
 
-    a = merged["fav_orig"].values
-    b = merged["fav_neut"].values
+    a = merged["fav_orig"].values.astype(bool)
+    b = merged["fav_neut"].values.astype(bool)
     table = np.array([
         [(a & b).sum(), (a & ~b).sum()],
         [(~a & b).sum(), (~a & ~b).sum()],

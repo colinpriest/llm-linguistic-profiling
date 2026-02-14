@@ -1016,7 +1016,9 @@ class Experiment:
             _log_mean_by_dimension(merged, "tier", available_dims)
 
             # Process discrimination rate
-            need_info = (merged["confidence"] == "need_more_info").sum() if "confidence" in merged.columns else 0
+            # After merge, baseline's confidence becomes confidence_x (persona's becomes confidence_y)
+            conf_col = "confidence_x" if "confidence_x" in merged.columns else "confidence"
+            need_info = (merged[conf_col] == "need_more_info").sum() if conf_col in merged.columns else 0
             info_rate = need_info / len(merged) if len(merged) > 0 else 0.0
             logger.info("  ── Process Discrimination Rate ──")
             logger.info("    Info request rate: %d/%d (%.3f)", need_info, len(merged), info_rate)

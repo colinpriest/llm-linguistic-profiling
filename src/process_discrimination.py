@@ -200,8 +200,8 @@ def _process_pairwise_mcnemar(df: pd.DataFrame) -> List[Dict[str, Any]]:
             )
             if len(m) < 5:
                 continue
-            a = m["need_info_1"].values
-            b = m["need_info_2"].values
+            a = m["need_info_1"].values.astype(bool)
+            b = m["need_info_2"].values.astype(bool)
             table = np.array([
                 [(a & b).sum(), (a & ~b).sum()],
                 [(~a & b).sum(), (~a & ~b).sum()],
@@ -261,8 +261,8 @@ def process_mitigation_analysis(
     merged["info_orig"] = (merged["confidence_orig"] == "need_more_info").astype(int)
     merged["info_neut"] = (merged["confidence_neut"] == "need_more_info").astype(int)
 
-    a = merged["info_orig"].values
-    b = merged["info_neut"].values
+    a = merged["info_orig"].values.astype(bool)
+    b = merged["info_neut"].values.astype(bool)
     table = np.array([
         [(a & b).sum(), (a & ~b).sum()],
         [(~a & b).sum(), (~a & ~b).sum()],

@@ -215,7 +215,10 @@ def _check_multiple_testing(analysis_results: Dict[str, Any]) -> str:
             for dim in DIMENSIONS:
                 dim_data = model_gee.get(dim, {})
                 if not dim_data.get("skipped", False):
-                    p = dim_data.get("interaction_p", float("nan"))
+                    try:
+                        p = float(dim_data.get("interaction_p", float("nan")))
+                    except (TypeError, ValueError):
+                        p = float("nan")
                     if np.isfinite(p):
                         p_values.append(p)
                         test_labels.append(f"{model}/{metric}/{dim}")

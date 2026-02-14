@@ -1069,7 +1069,10 @@ def dimension_severity_interaction(
 
     bias_low = _dim_bias("low")
     bias_high = _dim_bias("high")
-    amp_point = _safe_div(bias_high, bias_low)
+    if not is_estimable(bias_low) or not is_estimable(bias_high):
+        amp_point = NE.missing_data(context="dim amplification (insufficient data)")
+    else:
+        amp_point = _safe_div(bias_high, bias_low)
 
     # Check operation cache for bootstrap results
     op_cache = get_operation_cache()

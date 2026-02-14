@@ -505,8 +505,8 @@ class TableGenerator:
             _fmt_effect(neutralized_sd),
             _fmt_effect(neutralized_sd - baseline_sd) if is_estimable(baseline_sd) and is_estimable(neutralized_sd) else "---",
             _fmt_pct(pct_change) if is_estimable(pct_change) else "---",
-            "Reduced" if is_estimable(pct_change) and pct_change < -5 else
             "Eliminated" if is_estimable(pct_change) and pct_change < -95 else
+            "Reduced" if is_estimable(pct_change) and pct_change < -5 else
             "Increased" if is_estimable(pct_change) and pct_change > 5 else "Unchanged",
         ))
 

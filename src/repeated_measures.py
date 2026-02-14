@@ -313,23 +313,27 @@ def ordinal_mixed_model(
         }
 
     # Attempt 1: standard fit
+    err1_msg = ""
     try:
         return _fit_ordinal(exog)
     except Exception as e:
+        err1_msg = str(e)
         fit_diag = diagnose_fit_failure(e, model_label=model_label, X=exog, y=endog)
         logger.warning("%s attempt 1 failed (%s): %s", model_label, fit_diag["type"], e)
 
     # Attempt 2: standardise predictors and retry
+    err2_msg = ""
     try:
         exog_std, _ = standardise_predictors(exog)
         return _fit_ordinal(exog_std, standardised=True)
     except Exception as e2:
+        err2_msg = str(e2)
         logger.warning("%s attempt 2 (standardised) failed: %s", model_label, e2)
         fallback_actions.append(f"Fit failed after standardisation: {e2}")
 
     return {
         "skipped": True,
-        "reason": f"attempt1: {e}, attempt2: {e2}",
+        "reason": f"attempt1: {err1_msg}, attempt2: {err2_msg}",
         "estimand_status": "not_estimable",
         "diagnostics": {
             "preflight_issues": preflight_issues,
@@ -1225,8 +1229,8 @@ def _pairwise_mcnemar_binary(pivot: pd.DataFrame, max_pairs: int = 100) -> Dict[
         for j in range(i + 1, len(cols)):
             if len(pairs) >= max_pairs:
                 break
-            a = pivot[cols[i]].values.astype(int)
-            b = pivot[cols[j]].values.astype(int)
+            a = pivot[cols[i]].values.astype(bool)
+            b = pivot[cols[j]].values.astype(bool)
             table = np.array([
                 [(a & b).sum(), (a & ~b).sum()],
                 [(~a & b).sum(), (~a & ~b).sum()],
@@ -1476,7 +1480,7 @@ def _add_persona_dims(df: pd.DataFrame) -> None:
         return
 
     def _extract_dims(x):
-        d = parse_persona_label(str(x)) if pd.notna(x) else {}
+        d = (parse_persona_label(str(x)) if pd.notna(x) else None) or {}
         return d.get("age"), d.get("geographic"), d.get("education"), d.get("socioeconomic")
 
     extracted = df["persona_id"].apply(_extract_dims)

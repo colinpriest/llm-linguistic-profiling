@@ -342,7 +342,10 @@ class PaperBundleGenerator:
                 for dim in ["age", "geographic", "education", "socioeconomic"]:
                     dim_data = model_gee.get(dim, {})
                     if not dim_data.get("skipped", False):
-                        p = dim_data.get("interaction_p", float("nan"))
+                        try:
+                            p = float(dim_data.get("interaction_p", float("nan")))
+                        except (TypeError, ValueError):
+                            p = float("nan")
                         if np.isfinite(p):
                             tests.append({
                                 "test": f"{model}/{metric}/{dim}",

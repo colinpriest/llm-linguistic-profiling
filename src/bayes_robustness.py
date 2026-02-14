@@ -30,8 +30,10 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import arviz as az
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 logger = logging.getLogger(__name__)
 
@@ -286,23 +288,15 @@ def _fit_stan_model(
 # ------------------------------------------------------------------
 
 def _check_diagnostics(fit: Any) -> Dict[str, Any]:
-    """Extract MCMC diagnostics from a CmdStanMCMC fit."""
-    diag = fit.diagnose()
+    """Extract MCMC diagnostics from a CmdStanMCMC fit.
 
-    summary = fit.summary()
-    rhat_vals = summary["R_hat"].dropna()
-    if "N_Eff" in summary.columns:
-        ess_vals = summary["N_Eff"].dropna()
-    elif "ESS_bulk" in summary.columns:
-        ess_vals = summary["ESS_bulk"].dropna()
-    else:
-        logger.warning("No ESS column found in Stan summary (columns: %s)", list(summary.columns))
-        ess_vals = pd.Series(dtype=float)
-
-    max_rhat = float(rhat_vals.max()) if len(rhat_vals) > 0 else float("nan")
-    min_ess = float(ess_vals.min()) if len(ess_vals) > 0 else 0.0
-
-    # Count divergences and treedepth hits from sampler diagnostics
+    Computes R-hat and ESS only for model parameters (not log_lik
+    generated quantities).  Previous implementation called fit.summary()
+    which shells out to ``stansummary`` and processes ALL parameters
+    including N observation-level log_lik values — extremely slow for
+    large datasets.  Now uses ArviZ on filtered draws in-process.
+    """
+    # ── Divergences & treedepth (from in-memory sampler params) ──────
     n_divergent = 0
     n_treedepth = 0
     try:
@@ -312,23 +306,58 @@ def _check_diagnostics(fit: Any) -> Dict[str, Any]:
         if "treedepth__" in sampler_params:
             n_treedepth = int((sampler_params["treedepth__"] >= _MAX_TREEDEPTH).sum())
     except Exception:
-        # Parse from diagnose string as fallback
-        if "divergent" in diag.lower():
-            try:
-                for line in diag.split("\n"):
-                    if "divergent" in line.lower() and any(c.isdigit() for c in line):
-                        nums = [int(s) for s in line.split() if s.isdigit()]
-                        if nums:
-                            n_divergent = nums[0]
-            except Exception:
-                pass
+        logger.warning("Could not extract sampler diagnostics from method_variables()")
+
+    # ── R-hat and ESS for model parameters only ──────────────────────
+    logger.info("Computing convergence diagnostics for model parameters...")
+
+    all_draws = fit.draws(concat_chains=False)  # (draws, chains, all_params)
+    col_names_all = list(fit.column_names)
+
+    # Filter to model parameters (exclude log_lik generated quantities)
+    model_idx = [i for i, name in enumerate(col_names_all)
+                 if not name.startswith("log_lik[")]
+    model_names = [col_names_all[i] for i in model_idx]
+    model_draws = all_draws[:, :, model_idx]
+
+    # Build xarray Dataset for ArviZ (one variable per model parameter)
+    # CmdStanPy draws(concat_chains=False) shape: (draws, chains, params)
+    ds = xr.Dataset({
+        name: xr.DataArray(model_draws[:, :, k], dims=["draw", "chain"])
+        for k, name in enumerate(model_names)
+    })
+
+    rhat_ds = az.rhat(ds)
+    ess_ds = az.ess(ds, method="bulk")
+
+    rhat_vals = pd.Series(
+        [float(rhat_ds[v].values) for v in rhat_ds.data_vars]
+    ).dropna()
+    ess_vals = pd.Series(
+        [float(ess_ds[v].values) for v in ess_ds.data_vars]
+    ).dropna()
+
+    max_rhat = float(rhat_vals.max()) if len(rhat_vals) > 0 else float("nan")
+    min_ess = float(ess_vals.min()) if len(ess_vals) > 0 else 0.0
+
+    # Build diagnostic summary text (without shelling out to diagnose)
+    diag_parts = []
+    if n_divergent > 0:
+        diag_parts.append(f"{n_divergent} divergent transitions")
+    if n_treedepth > 0:
+        diag_parts.append(f"{n_treedepth} transitions hit max treedepth")
+    if max_rhat > 1.01:
+        diag_parts.append(f"max R-hat {max_rhat:.4f} > 1.01")
+    if min_ess < 400:
+        diag_parts.append(f"min ESS {min_ess:.0f} < 400")
+    diag_text = "; ".join(diag_parts) if diag_parts else "No diagnostic issues detected."
 
     return {
         "max_rhat": max_rhat,
         "min_ess_bulk": min_ess,
         "divergences": n_divergent,
         "treedepth_hits": n_treedepth,
-        "diagnose_text": diag,
+        "diagnose_text": diag_text,
     }
 
 
@@ -646,7 +675,8 @@ def _try_b1_b2(
 ) -> Optional[Dict[str, Any]]:
     """Attempt B1 (logistic) + B2 (ordinal) fits.
 
-    Returns metric_result dict on success, or None if either model FAILs.
+    Returns metric_result dict on success, or None if either model FAILs
+    or raises an exception (e.g. Stan compilation/sampling crash).
     Failed diagnostics are logged at WARNING level but do not raise.
     """
     y_ordinal = (df["tier"].values + 1).astype(int)
@@ -657,8 +687,13 @@ def _try_b1_b2(
 
     # ── B1: Logistic ──
     logger.info("Fitting B1 (%s logistic, Tier2)...", method_label)
-    fit_b1 = _fit_stan_model(b1_stan_file, stan_data_b1, fit_id_b1, seed,
-                             adapt_delta=adapt_delta, max_treedepth=max_treedepth)
+    try:
+        fit_b1 = _fit_stan_model(b1_stan_file, stan_data_b1, fit_id_b1, seed,
+                                 adapt_delta=adapt_delta, max_treedepth=max_treedepth)
+    except Exception as exc:
+        logger.warning("B1 %s logistic raised %s for %s: %s",
+                       method_label, type(exc).__name__, fit_id_b1, exc)
+        return None
     diag_b1 = _check_diagnostics(fit_b1)
     status_b1 = _gate_fit(diag_b1)
     logger.info("B1 status: %s (rhat=%.4f, ess=%.0f, div=%d) [%s]",
@@ -688,8 +723,13 @@ def _try_b1_b2(
 
     # ── B2: Ordinal ──
     logger.info("Fitting B2 (%s ordinal, Tier 0/1/2)...", method_label)
-    fit_b2 = _fit_stan_model(b2_stan_file, stan_data_b2, fit_id_b2, seed,
-                             adapt_delta=adapt_delta, max_treedepth=max_treedepth)
+    try:
+        fit_b2 = _fit_stan_model(b2_stan_file, stan_data_b2, fit_id_b2, seed,
+                                 adapt_delta=adapt_delta, max_treedepth=max_treedepth)
+    except Exception as exc:
+        logger.warning("B2 %s ordinal raised %s for %s: %s",
+                       method_label, type(exc).__name__, fit_id_b2, exc)
+        return None
     diag_b2 = _check_diagnostics(fit_b2)
     status_b2 = _gate_fit(diag_b2)
     logger.info("B2 status: %s (rhat=%.4f, ess=%.0f, div=%d) [%s]",
@@ -1014,7 +1054,7 @@ def run_bayes_robustness(
                 use_ri: bool, flex: bool,
             ) -> Tuple[Path, Path]:
                 """Select B1/B2 Stan model files."""
-                if flex:
+                if flex and use_ri:
                     return _LOGIT_FLEX_STAN, _ORDINAL_FLEX_STAN
                 if use_ri:
                     return _LOGIT_STAN, _ORDINAL_STAN
