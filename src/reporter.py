@@ -2005,6 +2005,58 @@ def _build_tab_text_features(
 
     parts.append("</div></div>")
 
+    # LLM-rated text quality summary
+    tq_data = analysis_results.get("text_quality")
+    if tq_data:
+        parts.append('<div class="collapsible">')
+        parts.append('<div class="collapsible-header">LLM-Rated Text Quality</div>')
+        parts.append('<div class="collapsible-body">')
+        parts.append(
+            "<p>Subjective text quality ratings (1-5 Likert) produced by the same model "
+            "that triages each complaint. Covers 12 dimensions spanning argument quality, "
+            "writing mechanics, and demographic-signal features.</p>"
+        )
+
+        _tq_col_headers = [
+            ("convincingness", "Convinc."),
+            ("persuasiveness", "Persuas."),
+            ("evidence_blame", "Evid. Blame"),
+            ("evidence_harm", "Evid. Harm"),
+            ("tq_confidence", "Confidence"),
+            ("legal_knowledge", "Legal Know."),
+            ("formality", "Formality"),
+            ("coherence", "Coherence"),
+            ("specificity", "Specificity"),
+            ("financial_literacy", "Fin. Literacy"),
+            ("emotional_restraint", "Emot. Restraint"),
+            ("grammar_quality", "Grammar"),
+        ]
+
+        for model_name, model_data in tq_data.items():
+            parts.append(f"<h4>{html.escape(model_name)}</h4>")
+            parts.append('<div class="table-scroll">')
+            parts.append('<table class="sortable"><thead><tr>')
+            parts.append("<th>Variant</th>")
+            for _, header in _tq_col_headers:
+                parts.append(f"<th>{header}</th>")
+            parts.append("</tr></thead><tbody>")
+
+            for variant, metrics in model_data.items():
+                parts.append(f"<tr><td>{html.escape(variant)}</td>")
+                for col, _ in _tq_col_headers:
+                    stats = metrics.get(col, {})
+                    mean_val = stats.get("mean", "N/A")
+                    std_val = stats.get("std", "N/A")
+                    if isinstance(mean_val, (int, float)):
+                        parts.append(f'<td data-sort-value="{mean_val}">{mean_val:.2f} ({std_val:.2f})</td>')
+                    else:
+                        parts.append(f"<td>{mean_val}</td>")
+                parts.append("</tr>")
+
+            parts.append("</tbody></table></div>")
+
+        parts.append("</div></div>")
+
     # Feature importance (logistic regression coefficients)
     for model in models:
         fi_chart = _chart_feature_importance(analysis_results, model)

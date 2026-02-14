@@ -260,13 +260,38 @@ def _sentiment_features(text: str) -> Dict[str, float]:
 # Topic model
 # ---------------------------------------------------------------------------
 
+def _lda_cache_path(cache_dir: Optional[str], corpus_hash: str) -> Optional[Path]:
+    """Return the pickle path for a cached LDA+vectorizer pair, or None."""
+    if cache_dir is None:
+        return None
+    p = Path(cache_dir) / "topic_model" / f"lda_{corpus_hash}.pkl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _corpus_hash(texts: List[str], n_topics: int, seed: int) -> str:
+    """Stable hash of corpus content + model hyper-parameters."""
+    h = hashlib.blake2b(digest_size=16)
+    h.update(f"n={len(texts)}|k={n_topics}|s={seed}".encode())
+    for t in texts:
+        h.update(t.encode())
+    return h.hexdigest()
+
+
 def fit_topic_model(
     texts: List[str],
     n_topics: int = 10,
     seed: int = 42,
+    cache_dir: Optional[str] = None,
 ) -> Tuple[Any, Any]:
-    """Fit LDA topic model on corpus. Returns (lda_model, vectorizer)."""
+    """Fit LDA topic model on corpus. Returns (lda_model, vectorizer).
+
+    If *cache_dir* is provided, the fitted model is pickled to disk so
+    subsequent runs with the same corpus skip the expensive fit step.
+    """
     global _lda_model, _vectorizer, _topic_count
+    import pickle
+
     from sklearn.decomposition import LatentDirichletAllocation
     from sklearn.feature_extraction.text import CountVectorizer
 
@@ -276,6 +301,22 @@ def fit_topic_model(
         _lda_model = None
         _vectorizer = None
         return _lda_model, _vectorizer
+
+    # Try loading from disk cache
+    ch = _corpus_hash(texts, n_topics, seed)
+    pkl_path = _lda_cache_path(cache_dir, ch)
+    if pkl_path is not None and pkl_path.exists():
+        try:
+            with open(pkl_path, "rb") as fh:
+                cached = pickle.load(fh)
+            _lda_model, _vectorizer = cached["lda"], cached["vec"]
+            logger.info(
+                "LDA topic model loaded from cache (%d topics, %d docs)",
+                n_topics, len(texts),
+            )
+            return _lda_model, _vectorizer
+        except Exception:
+            logger.warning("Corrupt LDA cache – refitting", exc_info=True)
 
     logger.info("Fitting LDA topic model with %d topics on %d documents", n_topics, len(texts))
     _vectorizer = CountVectorizer(
@@ -293,6 +334,19 @@ def fit_topic_model(
     )
     _lda_model.fit(dtm)
     logger.info("LDA topic model fitted")
+
+    # Persist to disk
+    if pkl_path is not None:
+        try:
+            tmp = pkl_path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+            with open(tmp, "wb") as fh:
+                pickle.dump({"lda": _lda_model, "vec": _vectorizer}, fh,
+                            protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp, pkl_path)
+            logger.info("LDA topic model cached to %s", pkl_path)
+        except Exception:
+            logger.warning("Failed to cache LDA model", exc_info=True)
+
     return _lda_model, _vectorizer
 
 

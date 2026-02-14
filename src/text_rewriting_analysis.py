@@ -60,6 +60,19 @@ FEATURE_LABELS = {
     "vader_neg": "VADER Negative",
     "polarity": "Polarity",
     "subjectivity": "Subjectivity",
+    # LLM-rated text quality (available for original variants only)
+    "convincingness": "Convincingness",
+    "persuasiveness": "Persuasiveness",
+    "evidence_blame": "Evidence of Blame",
+    "evidence_harm": "Evidence of Harm",
+    "tq_confidence": "Complainant Confidence",
+    "legal_knowledge": "Legal Knowledge",
+    "formality": "Formality",
+    "coherence": "Coherence",
+    "specificity": "Specificity",
+    "financial_literacy": "Financial Literacy",
+    "emotional_restraint": "Emotional Restraint",
+    "grammar_quality": "Grammar Quality",
 }
 
 

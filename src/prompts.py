@@ -29,6 +29,9 @@ PROMPT_VERSIONS = {
     "dollar_extract": "1.1",
     "fact_extraction": "1.0",
     "debiased_triage": "1.0",
+    "text_quality_rating": "1.1",
+    "commentary": "1.0",
+    "executive_summary": "1.0",
 }
 
 # ---------------------------------------------------------------------------
@@ -280,3 +283,47 @@ def _validate_dimension(name: str, value: str, allowed: Dict[str, str]) -> None:
         raise ValueError(
             f"Invalid {name} value {value!r}; expected one of {sorted(allowed)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Text Quality Rating
+# ---------------------------------------------------------------------------
+
+TEXT_QUALITY_RATING_SYSTEM = """\
+You are an expert linguistic analyst evaluating consumer financial complaints.
+Rate the following complaint text on twelve dimensions using a 1-5 Likert scale.
+
+Evaluate ONLY the text as written. Do not consider whether the complaint is
+factually valid or whether the bank is actually at fault. Focus on how
+effectively the text communicates its message.
+
+RATING SCALE:
+1 = Very low / Not at all
+2 = Low / Slightly
+3 = Moderate
+4 = High / Mostly
+5 = Very high / Extremely
+
+First think briefly about each dimension, then provide your ratings."""
+
+TEXT_QUALITY_RATING_USER = """\
+Rate the following complaint text on these twelve dimensions (1-5 each):
+
+COMPLAINT TEXT:
+{narrative}
+
+DIMENSIONS:
+1. convincingness: How convincing does this complaint sound overall?
+2. persuasiveness: How persuasive is the argument for action/remedy?
+3. evidence_blame: How clearly does the text establish evidence for which party is at fault?
+4. evidence_harm: How clearly does the text document specific harms suffered?
+5. confidence: How much confidence does the complainant convey in their position?
+6. legal_knowledge: How much awareness of legal/regulatory frameworks is demonstrated?
+7. formality: How formal or professional is the writing register? (1=very informal/casual, 5=very formal/professional)
+8. coherence: How logically organized and well-structured is the complaint? (1=disorganized/rambling, 5=clear logical flow)
+9. specificity: How many concrete facts, dates, amounts, or names are cited? (1=vague, 5=highly specific)
+10. financial_literacy: How well does the writer understand financial products and terminology? (1=none, 5=expert-level)
+11. emotional_restraint: How measured vs emotionally charged is the tone? (1=highly emotional/angry, 5=calm and measured)
+12. grammar_quality: How correct is the grammar, spelling, and writing mechanics? (1=many errors, 5=near-perfect)
+
+Respond with a JSON object containing integer ratings (1-5) for each dimension and a brief reasoning."""

@@ -403,6 +403,40 @@ class CommentaryResponse(BaseModel):
     )
 
 
+class TextQualityRatingResponse(BaseModel):
+    """LLM-rated subjective text quality on 1-5 Likert scale."""
+
+    convincingness: int = Field(ge=1, le=5, description="How convincing the complaint sounds (1=not at all, 5=very)")
+    persuasiveness: int = Field(ge=1, le=5, description="How persuasive the complaint is (1=not at all, 5=very)")
+    evidence_blame: int = Field(ge=1, le=5, description="Clarity of evidence for which party is to blame (1=unclear, 5=very clear)")
+    evidence_harm: int = Field(ge=1, le=5, description="Clarity of evidence for harms suffered (1=unclear, 5=very clear)")
+    confidence: int = Field(ge=1, le=5, description="Confidence conveyed by the complainant (1=not confident, 5=very confident)")
+    legal_knowledge: int = Field(ge=1, le=5, description="Knowledge of legal/regulatory environment (1=none apparent, 5=extensive)")
+    formality: int = Field(ge=1, le=5, description="Formality of writing register (1=very informal/casual, 5=very formal/professional)")
+    coherence: int = Field(ge=1, le=5, description="Logical organization and structure (1=disorganized/rambling, 5=clear logical flow)")
+    specificity: int = Field(ge=1, le=5, description="Density of concrete facts, dates, amounts, names (1=vague, 5=highly specific)")
+    financial_literacy: int = Field(ge=1, le=5, description="Understanding of financial products and terminology (1=none, 5=expert-level)")
+    emotional_restraint: int = Field(ge=1, le=5, description="Measured tone vs emotional charge (1=highly emotional, 5=calm and measured)")
+    grammar_quality: int = Field(ge=1, le=5, description="Grammar, spelling, and writing mechanics (1=many errors, 5=near-perfect)")
+    reasoning: str = Field(default="", description="Brief justification for the ratings")
+
+    @field_validator(
+        "convincingness", "persuasiveness", "evidence_blame",
+        "evidence_harm", "confidence", "legal_knowledge",
+        "formality", "coherence", "specificity",
+        "financial_literacy", "emotional_restraint", "grammar_quality",
+        mode="before",
+    )
+    @classmethod
+    def coerce_likert(cls, v: Any) -> int:
+        """Clamp any numeric value to [1, 5]; default to 3 on parse failure."""
+        try:
+            v = int(round(float(v)))
+        except (TypeError, ValueError):
+            return 3
+        return max(1, min(5, v))
+
+
 # ---------------------------------------------------------------------------
 # Result dataclasses
 # ---------------------------------------------------------------------------
@@ -450,6 +484,25 @@ class NeutralizedComplaint:
     original_narrative: str
     neutralized_narrative: str
     markers_removed: List[str]
+
+
+@dataclass
+class TextQualityRating:
+    case_id: str
+    model: str
+    variant: str  # "original", persona label, or "neutralized"
+    convincingness: int
+    persuasiveness: int
+    evidence_blame: int
+    evidence_harm: int
+    confidence: int
+    legal_knowledge: int
+    formality: int
+    coherence: int
+    specificity: int
+    financial_literacy: int
+    emotional_restraint: int
+    grammar_quality: int
 
 
 # ---------------------------------------------------------------------------

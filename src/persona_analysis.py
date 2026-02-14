@@ -72,6 +72,19 @@ TEXT_FEATURE_COLS = [
     "emotional_intensity",
     "dominant_topic",
     "topic_coherence",
+    # LLM-rated text quality (averaged across models for original variants)
+    "convincingness",
+    "persuasiveness",
+    "evidence_blame",
+    "evidence_harm",
+    "tq_confidence",
+    "legal_knowledge",
+    "formality",
+    "coherence",
+    "specificity",
+    "financial_literacy",
+    "emotional_restraint",
+    "grammar_quality",
 ]
 
 # Human-readable names for features

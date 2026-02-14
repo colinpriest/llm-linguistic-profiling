@@ -2,9 +2,9 @@
 
 ## Overview
 
-This project uses 8 distinct LLM prompts across 3 categories:
+This project uses 9 distinct LLM prompts across 3 categories:
 
-1. **Core experiment prompts** (5) — defined in `src/prompts.py`, versioned, cached by `(model, task, narrative, prompt_version)`
+1. **Core experiment prompts** (6) — defined in `src/prompts.py`, versioned, cached by `(model, task, narrative, prompt_version)`
 2. **Statistical commentary prompts** (2) — defined inline in `src/experiment.py`, sent to GPT-5.2
 3. **Executive summary prompts** (1 template × 7 sections) — defined inline in `src/experiment.py`, using one-shot examples from `one-shot-examples/`
 
@@ -242,7 +242,70 @@ The extracted `primary_amount` is classified into severity bins: low (≤$100), 
 
 ---
 
-## 6. Cross-Model Commentary (Step 3)
+## 6. Text Quality Rating (Post-Steps 2, 4, 6)
+
+**Source:** `src/prompts.py` — `TEXT_QUALITY_RATING_SYSTEM`, `TEXT_QUALITY_RATING_USER`
+**Version:** 1.1
+**Task name:** `text_quality_rating`
+**Schema:** `TextQualityRatingResponse`
+**Used in:** After Steps 2, 4, and 6 — rates original, persona-rewritten, and neutralised complaint text on 12 subjective dimensions
+**Storage:** `TextQualityRating` dataclass → `text_quality_df` DataFrame → `text_quality_ratings_{ts}.csv`
+
+### System prompt
+
+```
+You are an expert linguistic analyst evaluating consumer financial complaints.
+Rate the following complaint text on twelve dimensions using a 1-5 Likert scale.
+
+Evaluate ONLY the text as written. Do not consider whether the complaint is
+factually valid or whether the bank is actually at fault. Focus on how
+effectively the text communicates its message.
+
+RATING SCALE:
+1 = Very low / Not at all
+2 = Low / Slightly
+3 = Moderate
+4 = High / Mostly
+5 = Very high / Extremely
+
+First think briefly about each dimension, then provide your ratings.
+```
+
+### User prompt
+
+Inserts `{narrative}` and requests a JSON object with integer ratings (1–5) for each of the following 12 dimensions, plus a brief reasoning string:
+
+| Dimension | Description |
+|-----------|-------------|
+| `convincingness` | How convincing the complaint sounds overall |
+| `persuasiveness` | How persuasive the argument for action/remedy is |
+| `evidence_blame` | Clarity of evidence for which party is at fault |
+| `evidence_harm` | Clarity of evidence for specific harms suffered |
+| `confidence` | Confidence the complainant conveys in their position |
+| `legal_knowledge` | Awareness of legal/regulatory frameworks demonstrated |
+| `formality` | How formal or professional the writing register is (1=very informal, 5=very formal) |
+| `coherence` | Logical organisation and structure (1=disorganised, 5=clear logical flow) |
+| `specificity` | Density of concrete facts, dates, amounts, names (1=vague, 5=highly specific) |
+| `financial_literacy` | Understanding of financial products and terminology (1=none, 5=expert-level) |
+| `emotional_restraint` | Measured tone vs emotional charge (1=highly emotional, 5=calm and measured) |
+| `grammar_quality` | Grammar, spelling, and writing mechanics (1=many errors, 5=near-perfect) |
+| `reasoning` | Brief justification for the ratings |
+
+### Schema validation
+
+The `TextQualityRatingResponse` Pydantic model includes a `coerce_likert` validator on all 12 numeric fields that clamps any value to [1, 5] and defaults to 3 on parse failure. This handles LLMs that occasionally return floats or out-of-range integers.
+
+### Design choices
+
+- **Content blindness**: Like persona estimation, the system prompt explicitly instructs the model to evaluate writing effectiveness, not factual validity.
+- **Silent deliberation**: The prompt asks the model to "think briefly about each dimension" before rating, encouraging calibrated judgements rather than snap responses.
+- **12-dimension coverage**: The dimensions span argument quality (convincingness, persuasiveness, evidence), writer characteristics (confidence, legal knowledge, financial literacy), and writing mechanics (formality, coherence, specificity, emotional restraint, grammar). This captures both "what is said" and "how it is said."
+- **Merge into text features**: For `variant="original"`, the 12 LLM-rated quality scores are averaged across models and merged into `text_features_df`, augmenting the 26 NLP-computed features with subjective quality assessments.
+- **Cross-variant comparison**: By rating original, persona-rewritten, and neutralised text, the experiment can test whether LLM-perceived text quality mediates the persona→remedy relationship.
+
+---
+
+## 7. Cross-Model Commentary (Step 3)
 
 **Source:** `src/experiment.py` lines 983–998 (system), 973–981 (user)
 **Task name:** `commentary`
@@ -269,7 +332,7 @@ Provides the numerical results and instructs: "Write exactly one paragraph (4-8 
 
 ---
 
-## 7. Tier/Process Bias Commentary (Per-Model Analysis)
+## 8. Tier/Process Bias Commentary (Per-Model Analysis)
 
 **Source:** `src/experiment.py` lines 2807–2829
 **Task name:** `commentary`
@@ -290,7 +353,7 @@ Provides model-specific analysis results and instructs: "Write your two findings
 
 ---
 
-## 8. Executive Summary Sections (Report Generation)
+## 9. Executive Summary Sections (Report Generation)
 
 **Source:** `src/experiment.py` lines 3433–3514
 **Task name:** `executive_summary`
@@ -378,8 +441,9 @@ All prompts return structured JSON validated against Pydantic models defined in 
 | `PersonaRewriteResponse` | rewritten_complaint, style_changes_made | 3. Persona Rewriting |
 | `NeutralizeResponse` | neutralized_complaint, markers_removed | 4. Language Neutralisation |
 | `DollarAmountResponse` | amounts_mentioned, primary_amount, amount_type, confidence | 5. Dollar Extraction |
-| `CommentaryResponse` | commentary | 6, 7, 8. All commentary/summary prompts |
+| `TextQualityRatingResponse` | convincingness, persuasiveness, evidence_blame, evidence_harm, confidence, legal_knowledge, formality, coherence, specificity, financial_literacy, emotional_restraint, grammar_quality, reasoning | 6. Text Quality Rating |
+| `CommentaryResponse` | commentary | 7, 8, 9. All commentary/summary prompts |
 
 ## Caching
 
-All LLM calls are cached to disk using a Blake2b hash of `(model, task, narrative, prompt_version)`. The prompt version string from `PROMPT_VERSIONS` in `src/prompts.py` ensures that cache entries are automatically invalidated when prompt templates change. Commentary and executive summary prompts are cached by their `variant` field (e.g. `step3_commentary`, `exec_linguistic_differences`).
+All LLM calls are cached to disk using a Blake2b hash of `(model, task, narrative, prompt_version)`. The prompt version string from `PROMPT_VERSIONS` in `src/prompts.py` ensures that cache entries are automatically invalidated when prompt templates change. Text quality ratings are cached per `(model, task, narrative, prompt_version)` like other core prompts, with `variant` tracking whether the rated text is `"original"`, a persona label, or `"neutralized"`. Commentary and executive summary prompts are cached by their `variant` field (e.g. `step3_commentary`, `exec_linguistic_differences`).

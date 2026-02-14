@@ -41,6 +41,8 @@ from src.prompts import (
     PERSONA_REWRITE_SYSTEM,
     REMEDY_DECISION_SYSTEM,
     REMEDY_DECISION_USER,
+    TEXT_QUALITY_RATING_SYSTEM,
+    TEXT_QUALITY_RATING_USER,
     format_persona_rewrite_user,
     safe_narrative_format,
 )
@@ -62,6 +64,8 @@ from src.schemas import (
     PersonaRewriteResponse,
     RemedyDecision,
     RemedyDecisionResponse,
+    TextQualityRating,
+    TextQualityRatingResponse,
     PERSONA_GRID,
     PERSONA_LABELS,
     parse_persona_label,
@@ -245,12 +249,16 @@ class Experiment:
         self.debiased_rw_dec: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self.debiased_rewrite_texts: Dict[str, Dict[str, Optional[str]]] = {}
 
+        # LLM-rated text quality ratings
+        self.text_quality_ratings: List[TextQualityRating] = []
+
         # DataFrames built during analysis
         self.personas_df: Optional[pd.DataFrame] = None
         self.baseline_df: Optional[pd.DataFrame] = None
         self.persona_decisions_df: Optional[pd.DataFrame] = None
         self.neutralized_df: Optional[pd.DataFrame] = None
         self.text_features_df: Optional[pd.DataFrame] = None
+        self.text_quality_df: Optional[pd.DataFrame] = None
 
         # Analysis results
         self.analysis_results: Dict[str, Any] = {}
@@ -279,7 +287,7 @@ class Experiment:
 
         # Fit topic model on original narratives
         logger.info("Fitting topic model on original narratives...")
-        fit_topic_model([c.narrative for c in self.complaints], n_topics=10, seed=self.seed)
+        fit_topic_model([c.narrative for c in self.complaints], n_topics=10, seed=self.seed, cache_dir=self.cache_dir)
 
         # Extract dollar amounts (cached, runs once)
         logger.info("-" * 40)
@@ -883,6 +891,72 @@ class Experiment:
             logger.info("    Info request rate: %d/%d (%.3f)", need_info, len(m), info_rate)
 
     # ------------------------------------------------------------------
+    # Text quality rating helper
+    # ------------------------------------------------------------------
+
+    def _rate_text_quality(
+        self,
+        case_ids: List[str],
+        narratives: List[str],
+        variant: str,
+        models: Optional[List[str]] = None,
+    ) -> None:
+        """Rate text quality for a batch of narratives using each experiment model."""
+        if not narratives:
+            return
+
+        rate_models = models or self.models
+
+        for model in rate_models:
+            requests: List[LLMRequest] = []
+            narrs: List[str] = []
+
+            for case_id, narrative in zip(case_ids, narratives):
+                req = LLMRequest(
+                    request_id=LLMRequest.new_id(),
+                    case_id=case_id,
+                    model=model,
+                    task="text_quality_rating",
+                    prompt_system=TEXT_QUALITY_RATING_SYSTEM,
+                    prompt_user=safe_narrative_format(TEXT_QUALITY_RATING_USER, narrative),
+                    expected_schema=TextQualityRatingResponse,
+                    variant=variant,
+                )
+                requests.append(req)
+                narrs.append(narrative)
+
+            desc = f"Text quality [{model}] ({variant})"
+            responses = self.llm.execute_batch(requests, narrs, desc=desc)
+            responses = self._check_batch_results(responses, requests, narrs, desc)
+
+            for resp in responses:
+                if resp.success and resp.response_parsed:
+                    p = resp.response_parsed
+                    self.text_quality_ratings.append(TextQualityRating(
+                        case_id=resp.case_id,
+                        model=model,
+                        variant=variant,
+                        convincingness=p.convincingness,
+                        persuasiveness=p.persuasiveness,
+                        evidence_blame=p.evidence_blame,
+                        evidence_harm=p.evidence_harm,
+                        confidence=p.confidence,
+                        legal_knowledge=p.legal_knowledge,
+                        formality=p.formality,
+                        coherence=p.coherence,
+                        specificity=p.specificity,
+                        financial_literacy=p.financial_literacy,
+                        emotional_restraint=p.emotional_restraint,
+                        grammar_quality=p.grammar_quality,
+                    ))
+
+        count = sum(1 for r in self.text_quality_ratings if r.variant == variant)
+        logger.info(
+            "Text quality rating (%s): %d ratings collected (%d models x %d texts)",
+            variant, count, len(rate_models), len(narratives),
+        )
+
+    # ------------------------------------------------------------------
     # Step 3: Correlation Analysis (statistics only)
     # ------------------------------------------------------------------
 
@@ -899,6 +973,14 @@ class Experiment:
                 "original",
             )
             self.text_features_df = features_to_dataframe(orig_features)
+
+            # LLM-rated text quality on original complaints
+            logger.info("Rating text quality for original complaints...")
+            self._rate_text_quality(
+                case_ids=[c.case_id for c in self.complaints],
+                narratives=[c.narrative for c in self.complaints],
+                variant="original",
+            )
 
         logger.info("Step 3: Correlation analysis will run after all steps complete")
         self._summarize_step_3()
@@ -1253,6 +1335,18 @@ class Experiment:
             else:
                 self.text_features_df = rw_df
 
+            # LLM-rated text quality on persona-rewritten complaints
+            logger.info("Rating text quality for persona-rewritten complaints...")
+            for model in self.models:
+                model_rewrites = [r for r in self.persona_rewrites if r.model == model]
+                if model_rewrites:
+                    self._rate_text_quality(
+                        case_ids=[r.case_id for r in model_rewrites],
+                        narratives=[r.rewritten_narrative for r in model_rewrites],
+                        variant="persona_rewrite",
+                        models=[model],
+                    )
+
     def _summarize_step_5(self) -> None:
         """Console summary: persona×tier crosstab + mean tier by dimension + process discrimination."""
         if not self.persona_decisions:
@@ -1494,6 +1588,18 @@ class Experiment:
                 self.text_features_df = pd.concat([self.text_features_df, neut_df], ignore_index=True)
             else:
                 self.text_features_df = neut_df
+
+            # LLM-rated text quality on neutralized complaints
+            logger.info("Rating text quality for neutralized complaints...")
+            for model in self.models:
+                model_neutral = [n for n in self.neutralized if n.model == model]
+                if model_neutral:
+                    self._rate_text_quality(
+                        case_ids=[n.case_id for n in model_neutral],
+                        narratives=[n.neutralized_narrative for n in model_neutral],
+                        variant="neutralized",
+                        models=[model],
+                    )
 
     def _summarize_step_7(self) -> None:
         """Console summary: persona×neutralized tier + mean tier comparison + process discrimination."""
@@ -1800,6 +1906,78 @@ class Experiment:
                 for d in self.neutralized_decisions
             ])
 
+        if self.text_quality_ratings:
+            self.text_quality_df = pd.DataFrame([
+                {
+                    "case_id": r.case_id,
+                    "model": r.model,
+                    "variant": r.variant,
+                    "convincingness": r.convincingness,
+                    "persuasiveness": r.persuasiveness,
+                    "evidence_blame": r.evidence_blame,
+                    "evidence_harm": r.evidence_harm,
+                    "tq_confidence": r.confidence,
+                    "legal_knowledge": r.legal_knowledge,
+                    "formality": r.formality,
+                    "coherence": r.coherence,
+                    "specificity": r.specificity,
+                    "financial_literacy": r.financial_literacy,
+                    "emotional_restraint": r.emotional_restraint,
+                    "grammar_quality": r.grammar_quality,
+                }
+                for r in self.text_quality_ratings
+            ])
+
+        # Merge LLM-rated quality into text_features_df for variant="original"
+        # (average across models since NLP features are model-independent)
+        self._merge_quality_into_text_features()
+
+    def _merge_quality_into_text_features(self) -> None:
+        """Merge LLM-rated quality features into text_features_df for original variants.
+
+        Quality ratings are model-specific while NLP text features are
+        model-independent, so we average quality across models for the merge.
+        Only variant="original" rows are enriched (case_id is unique there).
+        Rewrite/neutralized rows get NaN for quality columns.
+        """
+        if self.text_features_df is None or self.text_quality_df is None:
+            return
+        if self.text_quality_df.empty:
+            return
+
+        quality_cols = [
+            "convincingness", "persuasiveness", "evidence_blame",
+            "evidence_harm", "tq_confidence", "legal_knowledge",
+            "formality", "coherence", "specificity",
+            "financial_literacy", "emotional_restraint", "grammar_quality",
+        ]
+
+        # Average quality ratings across models for original complaints
+        orig_quality = self.text_quality_df[
+            self.text_quality_df["variant"] == "original"
+        ].groupby("case_id")[quality_cols].mean().reset_index()
+
+        if orig_quality.empty:
+            return
+
+        # Split text_features_df into original vs rest
+        is_original = self.text_features_df["variant"] == "original"
+        orig_tf = self.text_features_df[is_original].copy()
+        rest_tf = self.text_features_df[~is_original].copy()
+
+        # Merge quality onto original rows (case_id is unique there)
+        orig_tf = orig_tf.merge(orig_quality, on="case_id", how="left")
+
+        # Reassemble (rest rows get NaN for quality columns automatically)
+        self.text_features_df = pd.concat([orig_tf, rest_tf], ignore_index=True)
+
+        n_merged = orig_tf[quality_cols[0]].notna().sum()
+        logger.info(
+            "Merged LLM-rated quality features into text_features_df: "
+            "%d/%d original rows enriched",
+            n_merged, len(orig_tf),
+        )
+
     # ------------------------------------------------------------------
     # Run all analyses
     # ------------------------------------------------------------------
@@ -1937,6 +2115,33 @@ class Experiment:
             results[model] = model_results
 
         self.analysis_results.update(results)
+
+        # Text quality summary statistics
+        if self.text_quality_df is not None and not self.text_quality_df.empty:
+            tq_summary: Dict[str, Any] = {}
+            quality_cols = [
+                "convincingness", "persuasiveness", "evidence_blame",
+                "evidence_harm", "tq_confidence", "legal_knowledge",
+                "formality", "coherence", "specificity",
+                "financial_literacy", "emotional_restraint", "grammar_quality",
+            ]
+            for model in self.models:
+                model_tq = self.text_quality_df[self.text_quality_df["model"] == model]
+                model_summary: Dict[str, Any] = {}
+                for variant in model_tq["variant"].unique():
+                    v_data = model_tq[model_tq["variant"] == variant][quality_cols]
+                    model_summary[variant] = {
+                        col: {
+                            "mean": round(float(v_data[col].mean()), 3),
+                            "std": round(float(v_data[col].std()), 3),
+                            "median": float(v_data[col].median()),
+                        }
+                        for col in quality_cols
+                        if col in v_data.columns
+                    }
+                tq_summary[model] = model_summary
+            self.analysis_results["text_quality"] = tq_summary
+
         self._run_power_analysis()
         self._run_severity_analysis()
         self._run_bayes_robustness()
@@ -4073,6 +4278,10 @@ class Experiment:
         # Text features CSV
         if self.text_features_df is not None:
             self.text_features_df.to_csv(self.output_dir / f"text_features_{ts}.csv", index=False)
+
+        # LLM-rated text quality ratings CSV
+        if self.text_quality_df is not None:
+            self.text_quality_df.to_csv(self.output_dir / f"text_quality_ratings_{ts}.csv", index=False)
 
         # Repair stats
         repair_stats = self.llm.get_repair_stats()
