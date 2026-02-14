@@ -95,7 +95,10 @@ def generate_claim_classifications(
                 # GEE-based test
                 gee_dim = gee_data.get(dim, {})
                 if not gee_dim.get("skipped", False):
-                    p = gee_dim.get("interaction_p", float("nan"))
+                    try:
+                        p = float(gee_dim.get("interaction_p", float("nan")))
+                    except (TypeError, ValueError):
+                        p = float("nan")
                     if np.isfinite(p):
                         p_values.append(p)
 
