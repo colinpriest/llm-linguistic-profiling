@@ -4347,6 +4347,7 @@ def _build_tab_severity(
         parts.append('<h3>Model Fit Status</h3>')
         parts.append('<div class="metrics-grid">')
         n_ok, n_warn, n_marginal, n_fail, n_skip = 0, 0, 0, 0, 0
+        n_advi, n_pathfinder, n_map = 0, 0, 0
         for model in models:
             mr = bayes_rob.get(model, {})
             if mr.get("skipped"):
@@ -4365,12 +4366,21 @@ def _build_tab_severity(
                         n_warn += 1
                     elif status == "MARGINAL":
                         n_marginal += 1
+                    elif status == "ADVI":
+                        n_advi += 1
+                    elif status == "PATHFINDER":
+                        n_pathfinder += 1
+                    elif status == "MAP":
+                        n_map += 1
                     elif status == "FAIL":
                         n_fail += 1
 
         status_colors = [("#2ecc71", "#eafaf1", "OK", n_ok),
                          ("#f39c12", "#fef9e7", "WARN", n_warn),
                          ("#e67e22", "#fdf2e9", "MARGINAL", n_marginal),
+                         ("#3498db", "#ebf5fb", "ADVI", n_advi),
+                         ("#3498db", "#ebf5fb", "PATHFINDER", n_pathfinder),
+                         ("#9b59b6", "#f4ecf7", "MAP", n_map),
                          ("#e74c3c", "#fdedec", "FAIL", n_fail),
                          ("#95a5a6", "#f2f3f4", "SKIPPED", n_skip)]
         for color, bg, label, count in status_colors:
@@ -4384,9 +4394,12 @@ def _build_tab_severity(
         parts.append('<h3>MCMC Diagnostics</h3>')
         parts.append('<p>Strict criteria (steps 1-3.5): R-hat &le; 1.01, ESS &ge; 400, 0 divergences. '
                      'Relaxed criteria (steps 4-5): R-hat &le; 1.05, ESS &ge; 200, divergences &le; 2. '
+                     'Non-MCMC methods (steps 6-8): variational inference, Pathfinder, or MAP point estimate. '
                      'Status: <span style="color:#2ecc71">OK</span> = clean, '
                      '<span style="color:#f39c12">WARN</span> = minor issues (treedepth hits), '
                      '<span style="color:#e67e22">MARGINAL</span> = converged under relaxed criteria (interpret with caution), '
+                     '<span style="color:#3498db">ADVI</span>/<span style="color:#3498db">PATHFINDER</span> = approximate posterior (no MCMC guarantees), '
+                     '<span style="color:#9b59b6">MAP</span> = point estimate only (no uncertainty), '
                      '<span style="color:#e74c3c">FAIL</span> = non-convergent (results unreliable).</p>')
         parts.append('<table class="sortable"><thead><tr>')
         parts.append('<th>Model</th><th>Metric</th><th>Type</th><th>Status</th>')
@@ -4426,12 +4439,16 @@ def _build_tab_severity(
                     td = diag.get("treedepth_hits", 0)
 
                     # Status color
-                    s_colors = {"OK": "#2ecc71", "WARN": "#f39c12", "MARGINAL": "#e67e22", "FAIL": "#e74c3c"}
+                    s_colors = {"OK": "#2ecc71", "WARN": "#f39c12", "MARGINAL": "#e67e22",
+                                "ADVI": "#3498db", "PATHFINDER": "#3498db", "MAP": "#9b59b6",
+                                "FAIL": "#e74c3c"}
                     s_color = s_colors.get(status, "#333")
                     row_bg = (
                         ' style="background:#fdedec;"' if status == "FAIL"
                         else ' style="background:#fdf2e9;"' if status == "MARGINAL"
                         else ' style="background:#fef9e7;"' if status == "WARN"
+                        else ' style="background:#ebf5fb;"' if status in ("ADVI", "PATHFINDER")
+                        else ' style="background:#f4ecf7;"' if status == "MAP"
                         else ""
                     )
 
@@ -4482,6 +4499,9 @@ def _build_tab_severity(
                 "main-effects-only": "Fitted without interaction terms (main effects only)",
                 "flex-prior": "Applied tighter priors (main=0.8, interaction=0.4) with relaxed diagnostics",
                 "aggressive-sampler": "Increased max_treedepth to 15 with relaxed diagnostics",
+                "variational-advi": "Approximate posterior via ADVI variational inference (no MCMC guarantees)",
+                "pathfinder": "Approximate posterior via Pathfinder algorithm (importance-resampled)",
+                "map-estimate": "MAP point estimate only (no posterior uncertainty quantification)",
             }
             for model, metric, fb in fallback_actions:
                 desc = fallback_desc.get(fb, fb)
@@ -4493,6 +4513,143 @@ def _build_tab_severity(
         else:
             parts.append('<p style="color:#2ecc71;"><strong>&#10003;</strong> All models converged with standard configuration. '
                          'No fallback strategies were required.</p>')
+
+        # Pre-flight diagnostics section
+        preflight_data = []
+        for model in models:
+            mr = bayes_rob.get(model, {})
+            if mr.get("skipped"):
+                continue
+            for metric in ["monetary_severity", "issue_severity"]:
+                mm = mr.get(metric, {})
+                pf = mm.get("preflight")
+                if pf:
+                    preflight_data.append((model, metric, pf))
+
+        if preflight_data:
+            parts.append('<h3>Pre-Flight Diagnostics</h3>')
+            parts.append('<table class="sortable"><thead><tr>')
+            parts.append('<th>Model</th><th>Metric</th><th>EPP</th><th>Rank</th>')
+            parts.append('<th>Condition</th><th>Sparse Cells</th><th>Difficulty</th>')
+            parts.append('</tr></thead><tbody>')
+            diff_colors = {
+                "easy": "#2ecc71", "moderate": "#f39c12",
+                "hard": "#e67e22", "very_hard": "#e74c3c",
+            }
+            for model, metric, pf in preflight_data:
+                diff = pf.get("predicted_difficulty", "?")
+                d_color = diff_colors.get(diff, "#333")
+                cond_val = pf.get("condition_number", 0)
+                cond_str = f"{cond_val:.2e}" if cond_val < float("inf") else "Inf"
+                parts.append(f'<tr><td>{html.escape(model)}</td>')
+                parts.append(f'<td>{metric.replace("_", " ").title()}</td>')
+                parts.append(f'<td>{pf.get("epp", 0):.1f}</td>')
+                parts.append(f'<td>{pf.get("matrix_rank", "?")}/{pf.get("K", "?")}</td>')
+                parts.append(f'<td>{cond_str}</td>')
+                parts.append(f'<td>{pf.get("n_sparse_cells", 0)}</td>')
+                parts.append(f'<td style="color:{d_color};font-weight:bold;">{diff.upper()}</td>')
+                parts.append('</tr>')
+            parts.append('</tbody></table>')
+
+            # Show recommendations if any difficulty is hard or very_hard
+            hard_recs = []
+            for _, _, pf in preflight_data:
+                if pf.get("predicted_difficulty") in ("hard", "very_hard"):
+                    for r in pf.get("recommendations", []):
+                        if r not in hard_recs:
+                            hard_recs.append(r)
+            if hard_recs:
+                parts.append('<div style="background:#fef9e7;border-left:4px solid #f39c12;padding:10px;margin:10px 0;">')
+                parts.append('<strong style="color:#f39c12;">Pre-flight recommendations:</strong><ul style="margin:5px 0;">')
+                for r in hard_recs:
+                    parts.append(f'<li>{html.escape(r)}</li>')
+                parts.append('</ul></div>')
+
+        # Post-mortem analysis section
+        postmortem_data = []
+        for model in models:
+            mr = bayes_rob.get(model, {})
+            if mr.get("skipped"):
+                continue
+            for metric in ["monetary_severity", "issue_severity"]:
+                mm = mr.get(metric, {})
+                pm = mm.get("postmortem")
+                if pm:
+                    postmortem_data.append((model, metric, pm))
+
+        if postmortem_data:
+            parts.append('<h3>Post-Mortem Analysis</h3>')
+            parts.append('<p>Detailed analysis of convergence failures to assist '
+                         'statistical review and guide future improvements.</p>')
+
+            for model, metric, pm in postmortem_data:
+                parts.append(f'<div style="border:1px solid #e74c3c;border-radius:4px;padding:15px;margin:10px 0;">')
+                parts.append(f'<h4 style="color:#e74c3c;margin-top:0;">'
+                             f'Post-Mortem: {html.escape(model)} / {metric.replace("_", " ").title()}</h4>')
+
+                # Data summary
+                ds = pm.get("data_summary", {})
+                parts.append('<table style="margin-bottom:10px;"><tbody>')
+                parts.append(f'<tr><td><strong>Observations</strong></td><td>N={ds.get("N", "?")}, '
+                             f'K={ds.get("K", "?")}, J={ds.get("J", "?")}</td></tr>')
+                parts.append(f'<tr><td><strong>Events/Parameter</strong></td>'
+                             f'<td>{ds.get("events_per_param", 0):.1f} '
+                             f'({ds.get("n_tier2", "?")} Tier-2 events)</td></tr>')
+                parts.append(f'<tr><td><strong>Tier-2 Rate</strong></td>'
+                             f'<td>{ds.get("tier2_rate", 0) * 100:.1f}%</td></tr>')
+                parts.append(f'<tr><td><strong>Singletons</strong></td>'
+                             f'<td>{ds.get("pct_singletons", 0) * 100:.0f}%</td></tr>')
+                parts.append('</tbody></table>')
+
+                # Per-step diagnostics
+                steps = pm.get("per_step_diagnostics", [])
+                if steps:
+                    parts.append('<strong>Fallback Chain Detail:</strong>')
+                    parts.append('<table style="font-size:0.9em;"><thead><tr>')
+                    parts.append('<th>Step</th><th>Label</th><th>Description</th>')
+                    parts.append('<th>B1 Status</th><th>B1 Rhat</th><th>B1 ESS</th>')
+                    parts.append('<th>B2 Status</th><th>B2 Rhat</th><th>B2 ESS</th>')
+                    parts.append('</tr></thead><tbody>')
+                    for s in steps:
+                        parts.append(f'<tr><td>{s.get("step", "?")}</td>')
+                        parts.append(f'<td>{html.escape(str(s.get("label", "")))}</td>')
+                        parts.append(f'<td>{html.escape(str(s.get("description", "")))}</td>')
+                        b1_s = s.get("b1_status", "N/A")
+                        b2_s = s.get("b2_status", "N/A")
+                        b1_c = "#e74c3c" if b1_s == "FAIL" else "#2ecc71" if b1_s == "OK" else "#333"
+                        b2_c = "#e74c3c" if b2_s == "FAIL" else "#2ecc71" if b2_s == "OK" else "#333"
+                        parts.append(f'<td style="color:{b1_c};font-weight:bold;">{b1_s}</td>')
+                        b1_rhat = s.get("b1_rhat")
+                        b1_ess = s.get("b1_ess")
+                        parts.append(f'<td>{b1_rhat:.4f}</td>' if b1_rhat is not None else '<td>—</td>')
+                        parts.append(f'<td>{b1_ess:.0f}</td>' if b1_ess is not None else '<td>—</td>')
+                        parts.append(f'<td style="color:{b2_c};font-weight:bold;">{b2_s}</td>')
+                        b2_rhat = s.get("b2_rhat")
+                        b2_ess = s.get("b2_ess")
+                        parts.append(f'<td>{b2_rhat:.4f}</td>' if b2_rhat is not None else '<td>—</td>')
+                        parts.append(f'<td>{b2_ess:.0f}</td>' if b2_ess is not None else '<td>—</td>')
+                        parts.append('</tr>')
+                    parts.append('</tbody></table>')
+
+                # Root causes
+                causes = pm.get("root_causes", [])
+                if causes:
+                    parts.append('<div style="background:#fdedec;padding:10px;margin:8px 0;border-radius:4px;">')
+                    parts.append('<strong style="color:#e74c3c;">Root Causes:</strong><ul style="margin:5px 0;">')
+                    for c in causes:
+                        parts.append(f'<li>{html.escape(c)}</li>')
+                    parts.append('</ul></div>')
+
+                # Recommendations
+                recs = pm.get("recommendations", [])
+                if recs:
+                    parts.append('<div style="background:#eafaf1;padding:10px;margin:8px 0;border-radius:4px;">')
+                    parts.append('<strong style="color:#27ae60;">Recommendations:</strong><ul style="margin:5px 0;">')
+                    for r in recs:
+                        parts.append(f'<li>{html.escape(r)}</li>')
+                    parts.append('</ul></div>')
+
+                parts.append('</div>')
 
         # Amplification results table
         parts.append('<h3>Bayesian Amplification Estimates</h3>')

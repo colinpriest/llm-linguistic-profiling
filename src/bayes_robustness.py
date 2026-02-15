@@ -162,6 +162,208 @@ def _drop_zero_variance_columns(
     return X, col_names
 
 
+# ------------------------------------------------------------------
+# Pre-flight diagnostics
+# ------------------------------------------------------------------
+
+def _cell_count_analysis(
+    df: pd.DataFrame,
+    severity_metric: str,
+    min_cell_count: int = 5,
+) -> Tuple[List[str], Dict[str, int]]:
+    """Cross-tabulate dimension × severity × tier and flag sparse cells.
+
+    Returns (sparse_cell_descriptions, all_cell_counts).
+    """
+    sparse: List[str] = []
+    counts: Dict[str, int] = {}
+
+    for dim in DIMENSIONS:
+        if dim not in df.columns:
+            continue
+        for level in sorted(df[dim].dropna().unique()):
+            for sev in SEVERITY_LEVELS:
+                mask = (df[dim] == level) & (df[severity_metric] == sev)
+                for tier in sorted(df["tier"].unique()):
+                    n = int(((mask) & (df["tier"] == tier)).sum())
+                    key = f"{dim}={level}|sev={sev}|tier={tier}"
+                    counts[key] = n
+                    if n < min_cell_count:
+                        sparse.append(f"{key} (n={n})")
+
+    return sparse, counts
+
+
+def _preflight_diagnostics(
+    *,
+    X: np.ndarray,
+    col_names: List[str],
+    y_logistic: List[int],
+    y_ordinal: List[int],
+    severity_metric: str,
+    model_name: str,
+    df: pd.DataFrame,
+    J: int,
+    pct_singletons: float,
+) -> Dict[str, Any]:
+    """Run pre-flight statistical checks on the design matrix and outcome.
+
+    Returns a dict with EPP, rank, condition number, sparse cells,
+    predicted difficulty, and recommendations.
+    """
+    N, K = X.shape
+    n_pos = sum(y_logistic)
+    n_neg = N - n_pos
+    n_events = min(n_pos, n_neg)
+    epp = n_events / K if K > 0 else float("inf")
+
+    # Design matrix rank and condition
+    try:
+        matrix_rank = int(np.linalg.matrix_rank(X))
+    except Exception:
+        matrix_rank = K
+
+    try:
+        gram = X.T @ X
+        condition_number = float(np.linalg.cond(gram))
+        if not np.isfinite(condition_number):
+            condition_number = float("inf")
+    except Exception:
+        condition_number = float("inf")
+
+    rank_deficient = matrix_rank < K
+    ill_conditioned = condition_number > 1e10
+
+    # Cell sparsity
+    sparse_cells, cell_counts = _cell_count_analysis(df, severity_metric)
+
+    # Tier distribution
+    tier_counts = df["tier"].value_counts().sort_index().to_dict()
+    tier2_rate = n_pos / N if N > 0 else 0.0
+
+    # Predicted difficulty
+    difficulty_score = 0
+    if epp < 5:
+        difficulty_score += 3
+    elif epp < 10:
+        difficulty_score += 2
+    elif epp < 20:
+        difficulty_score += 1
+    if rank_deficient:
+        difficulty_score += 2
+    if ill_conditioned:
+        difficulty_score += 1
+    if len(sparse_cells) > K:
+        difficulty_score += 1
+    if pct_singletons > 0.5:
+        difficulty_score += 1
+
+    if difficulty_score >= 4:
+        predicted_difficulty = "very_hard"
+    elif difficulty_score >= 2:
+        predicted_difficulty = "hard"
+    elif difficulty_score >= 1:
+        predicted_difficulty = "moderate"
+    else:
+        predicted_difficulty = "easy"
+
+    # Recommendations
+    recommendations: List[str] = []
+    if epp < 10:
+        recommendations.append(
+            f"Drop interaction terms to reduce K (EPP={epp:.1f}, need >=10)"
+        )
+    if rank_deficient:
+        recommendations.append(
+            f"Design matrix is rank-deficient (rank={matrix_rank} < K={K})"
+        )
+    if ill_conditioned:
+        recommendations.append(
+            f"Ill-conditioned Gram matrix (cond={condition_number:.2e}); "
+            "consider stronger priors or dimensionality reduction"
+        )
+    if pct_singletons > 0.5:
+        recommendations.append(
+            "100% singleton observations prevent complaint-level random "
+            "intercepts; consider using persona-decisions data (36 obs/complaint)"
+        )
+    if tier2_rate < 0.05:
+        recommendations.append(
+            f"Rare outcome (Tier-2 rate={tier2_rate:.1%}); "
+            "consider collapsing Tier 0+1 vs Tier 2"
+        )
+    if len(sparse_cells) > 0:
+        recommendations.append(
+            f"{len(sparse_cells)} cross-tab cells have <5 observations; "
+            "some interaction effects may be unidentifiable"
+        )
+
+    return {
+        "N": N,
+        "K": K,
+        "J": J,
+        "n_events": n_events,
+        "epp": epp,
+        "matrix_rank": matrix_rank,
+        "rank_deficient": rank_deficient,
+        "condition_number": condition_number,
+        "ill_conditioned": ill_conditioned,
+        "sparse_cells": sparse_cells,
+        "n_sparse_cells": len(sparse_cells),
+        "tier_counts": tier_counts,
+        "tier2_rate": tier2_rate,
+        "pct_singletons": pct_singletons,
+        "predicted_difficulty": predicted_difficulty,
+        "recommendations": recommendations,
+    }
+
+
+def _auto_simplify_design_matrix(
+    *,
+    df: pd.DataFrame,
+    severity_metric: str,
+    X_orig: np.ndarray,
+    col_names_orig: List[str],
+    y_logistic: List[int],
+) -> Tuple[np.ndarray, List[str], str]:
+    """Drop interaction columns when EPP is dangerously low.
+
+    Returns (X_simplified, col_names_simplified, simplification_label).
+    Label is "none", "drop-interactions", or "main-effects-only".
+    """
+    N = X_orig.shape[0]
+    K = X_orig.shape[1]
+    n_events = min(sum(y_logistic), N - sum(y_logistic))
+    epp = n_events / K if K > 0 else float("inf")
+
+    has_interactions = any("__x__" in c for c in col_names_orig)
+
+    if epp >= 10 or not has_interactions:
+        return X_orig, col_names_orig, "none"
+
+    # Rebuild without interactions
+    X_main, col_main = _build_design_matrix(
+        df, severity_metric, include_interactions=False,
+    )
+    X_main, col_main = _drop_zero_variance_columns(X_main, col_main)
+
+    epp_main = n_events / len(col_main) if len(col_main) > 0 else float("inf")
+    logger.warning(
+        "Pre-flight auto-simplify: dropping interactions "
+        "(EPP %.1f -> %.1f, K %d -> %d)",
+        epp, epp_main, K, len(col_main),
+    )
+
+    if epp_main < 5:
+        logger.warning(
+            "Pre-flight: EPP still very low (%.1f) after dropping interactions; "
+            "MCMC convergence unlikely even with main-effects model",
+            epp_main,
+        )
+
+    return X_main, col_main, "drop-interactions"
+
+
 _MIN_MARGIN_COUNT = 5  # minimum observations in each margin for interaction terms
 
 
@@ -814,6 +1016,295 @@ def _save_artifacts(
 
 
 # ------------------------------------------------------------------
+# Post-mortem analysis
+# ------------------------------------------------------------------
+
+def _build_postmortem(
+    *,
+    df: pd.DataFrame,
+    X: np.ndarray,
+    col_names: List[str],
+    y_logistic: List[int],
+    y_ordinal: List[int],
+    severity_metric: str,
+    model_name: str,
+    attempted: List[Dict[str, Any]],
+    use_random_intercept: bool,
+    J: int,
+    pct_singletons: float,
+    preflight: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build a structured post-mortem report when all fallbacks fail.
+
+    The report contains enough detail for a statistician to evaluate
+    whether the attempted strategies were reasonable and suggest
+    further approaches.
+    """
+    N, K = X.shape
+    n_pos = sum(y_logistic)
+    n_neg = N - n_pos
+    epp = min(n_pos, n_neg) / K if K > 0 else float("inf")
+
+    # 1. Data summary
+    tier_counts = df["tier"].value_counts().sort_index().to_dict()
+    sev_counts = df[severity_metric].value_counts().to_dict()
+    data_summary = {
+        "N": N,
+        "K": K,
+        "J": J,
+        "n_tier2": n_pos,
+        "n_non_tier2": n_neg,
+        "tier2_rate": n_pos / N if N > 0 else 0.0,
+        "events_per_param": epp,
+        "tier_distribution": tier_counts,
+        "severity_distribution": sev_counts,
+        "pct_singletons": pct_singletons,
+        "use_random_intercept": use_random_intercept,
+        "col_names": col_names,
+    }
+
+    # 2. Outcome distribution (severity × tier cross-tab)
+    try:
+        xtab = pd.crosstab(
+            df[severity_metric], df["tier"], margins=True,
+        )
+        outcome_distribution = {
+            str(sev): {str(t): int(v) for t, v in row.items()}
+            for sev, row in xtab.iterrows()
+        }
+    except Exception:
+        outcome_distribution = {}
+
+    # 3. Cross-tab sparsity
+    sparse_cells, cell_counts = _cell_count_analysis(df, severity_metric)
+    cross_tab_sparsity = {
+        "sparse_cells": sparse_cells,
+        "n_sparse_cells": len(sparse_cells),
+        "total_cells": len(cell_counts),
+        "sparsity_ratio": len(sparse_cells) / len(cell_counts) if cell_counts else 0.0,
+    }
+
+    # 4. Design matrix diagnostics
+    try:
+        matrix_rank = int(np.linalg.matrix_rank(X))
+    except Exception:
+        matrix_rank = K
+    try:
+        condition_number = float(np.linalg.cond(X.T @ X))
+        if not np.isfinite(condition_number):
+            condition_number = float("inf")
+    except Exception:
+        condition_number = float("inf")
+
+    design_matrix_diagnostics = {
+        "rank": matrix_rank,
+        "K": K,
+        "rank_deficient": matrix_rank < K,
+        "condition_number": condition_number,
+        "ill_conditioned": condition_number > 1e10,
+        "n_interaction_cols": sum(1 for c in col_names if "__x__" in c),
+        "n_main_effect_cols": sum(1 for c in col_names if "__x__" not in c),
+    }
+
+    # 5. Per-step diagnostics (from structured attempted list)
+    per_step_diagnostics = []
+    for step_info in attempted:
+        entry = {
+            "step": step_info.get("step", "?"),
+            "label": step_info.get("label", "unknown"),
+            "description": step_info.get("description", ""),
+            "b1_status": step_info.get("b1_status", "N/A"),
+            "b2_status": step_info.get("b2_status", "N/A"),
+        }
+        # Include diagnostic values if present
+        for prefix in ("b1", "b2"):
+            for key in ("rhat", "ess", "div"):
+                val = step_info.get(f"{prefix}_{key}")
+                if val is not None:
+                    entry[f"{prefix}_{key}"] = val
+        per_step_diagnostics.append(entry)
+
+    # 6. Root cause analysis
+    root_causes: List[str] = []
+    if epp < 10:
+        root_causes.append(
+            f"Overparameterized: {epp:.1f} events per parameter "
+            f"({n_pos} Tier-2 events / {K} parameters; minimum 10 recommended)"
+        )
+    if pct_singletons > 0.5:
+        root_causes.append(
+            f"Singleton structure: {pct_singletons:.0%} of complaints have "
+            "exactly 1 observation, preventing complaint-level random intercepts"
+        )
+    if n_pos / N < 0.05 if N > 0 else False:
+        root_causes.append(
+            f"Rare outcome: Tier-2 rate of {n_pos / N:.1%} causes potential "
+            "separation and wide posteriors"
+        )
+    if condition_number > 1e10:
+        root_causes.append(
+            f"Ill-conditioned design matrix (condition number = {condition_number:.2e})"
+        )
+    if matrix_rank < K:
+        root_causes.append(
+            f"Rank-deficient design matrix (rank={matrix_rank} < K={K})"
+        )
+    if len(sparse_cells) > K:
+        root_causes.append(
+            f"Extreme cross-tab sparsity: {len(sparse_cells)} of "
+            f"{len(cell_counts)} cells have <5 observations"
+        )
+    if not root_causes:
+        root_causes.append("No clear root cause identified from pre-flight metrics")
+
+    # 7. Recommendations
+    recommendations: List[str] = []
+    if epp < 10:
+        recommendations.append(
+            "Consider using main-effects-only model (no interactions) "
+            "to improve events-per-parameter ratio"
+        )
+    if pct_singletons > 0.5:
+        recommendations.append(
+            "Consider using persona_decisions data (36 obs/complaint) instead "
+            "of baseline (1 obs/complaint) to enable random intercepts"
+        )
+    recommendations.append(
+        "Variational inference (ADVI) or Pathfinder may provide approximate "
+        "posteriors when MCMC fails to converge"
+    )
+    recommendations.append(
+        "MAP point estimates can provide directional evidence "
+        "even without full posterior uncertainty"
+    )
+    if K > 10:
+        recommendations.append(
+            "Consider per-dimension models (K=3-5 each) to reduce "
+            "effective dimensionality"
+        )
+    if n_pos / N < 0.10 if N > 0 else False:
+        recommendations.append(
+            "Consider stronger priors (N(0, 0.3)) to regularize "
+            "coefficients for rare outcomes"
+        )
+
+    return {
+        "model": model_name,
+        "severity_metric": severity_metric,
+        "data_summary": data_summary,
+        "outcome_distribution": outcome_distribution,
+        "cross_tab_sparsity": cross_tab_sparsity,
+        "design_matrix_diagnostics": design_matrix_diagnostics,
+        "per_step_diagnostics": per_step_diagnostics,
+        "root_causes": root_causes,
+        "recommendations": recommendations,
+        "preflight": preflight,
+    }
+
+
+def _save_postmortem(
+    postmortem: Dict[str, Any],
+    model_name: str,
+    severity_metric: str,
+    output_dir: Optional[Path],
+) -> None:
+    """Save post-mortem analysis as a JSON artifact."""
+    if output_dir is None:
+        return
+
+    bayes_dir = output_dir / "analysis" / "stats" / "bayes"
+    bayes_dir.mkdir(parents=True, exist_ok=True)
+
+    # Sanitise model name for file path
+    safe_model = model_name.replace("-", "").replace(".", "")
+    path = bayes_dir / f"stats__bayes__postmortem__{safe_model}__{severity_metric}__v1.json"
+
+    # Convert any numpy/non-serialisable values
+    def _default(obj: Any) -> Any:
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return str(obj)
+
+    path.write_text(json.dumps(postmortem, indent=2, default=_default))
+    logger.info("Post-mortem saved to %s", path)
+
+
+def _log_postmortem(
+    postmortem: Dict[str, Any],
+    model_name: str,
+    severity_metric: str,
+) -> None:
+    """Log key post-mortem sections to console/log at WARNING level."""
+    ds = postmortem["data_summary"]
+    dm = postmortem["design_matrix_diagnostics"]
+
+    logger.warning("=" * 60)
+    logger.warning("POST-MORTEM: %s / %s", model_name, severity_metric)
+    logger.warning("=" * 60)
+
+    # Data summary
+    logger.warning(
+        "  Data: N=%d, K=%d, J=%d, EPP=%.1f",
+        ds["N"], ds["K"], ds["J"], ds["events_per_param"],
+    )
+    logger.warning(
+        "  Outcome: Tier-2 rate=%.1f%% (%d/%d), singletons=%.0f%%",
+        ds["tier2_rate"] * 100, ds["n_tier2"], ds["N"],
+        ds["pct_singletons"] * 100,
+    )
+    logger.warning(
+        "  Tiers: %s", ds["tier_distribution"],
+    )
+    logger.warning(
+        "  Design matrix: rank=%d/%d, condition=%.2e, "
+        "%d interaction cols, %d main-effect cols",
+        dm["rank"], dm["K"], dm["condition_number"],
+        dm["n_interaction_cols"], dm["n_main_effect_cols"],
+    )
+
+    # Sparsity
+    sp = postmortem["cross_tab_sparsity"]
+    if sp["n_sparse_cells"] > 0:
+        logger.warning(
+            "  Cell sparsity: %d/%d cells have <5 obs (%.0f%%)",
+            sp["n_sparse_cells"], sp["total_cells"],
+            sp["sparsity_ratio"] * 100,
+        )
+
+    # Per-step diagnostics table
+    logger.warning("  Fallback chain summary:")
+    for step_info in postmortem["per_step_diagnostics"]:
+        b1_detail = ""
+        b2_detail = ""
+        if "b1_rhat" in step_info:
+            b1_detail = f" rhat={step_info['b1_rhat']:.4f} ess={step_info['b1_ess']:.0f} div={step_info['b1_div']}"
+        if "b2_rhat" in step_info:
+            b2_detail = f" rhat={step_info['b2_rhat']:.4f} ess={step_info['b2_ess']:.0f} div={step_info['b2_div']}"
+        logger.warning(
+            "    Step %s [%s]: %s | B1=%s%s | B2=%s%s",
+            step_info["step"], step_info["label"], step_info["description"],
+            step_info["b1_status"], b1_detail,
+            step_info["b2_status"], b2_detail,
+        )
+
+    # Root causes
+    logger.warning("  Root causes:")
+    for cause in postmortem["root_causes"]:
+        logger.warning("    - %s", cause)
+
+    # Recommendations
+    logger.warning("  Recommendations:")
+    for rec in postmortem["recommendations"]:
+        logger.warning("    - %s", rec)
+
+    logger.warning("=" * 60)
+
+
+# ------------------------------------------------------------------
 # Fit helpers (used by fallback chain)
 # ------------------------------------------------------------------
 
@@ -1133,6 +1624,282 @@ def _try_per_dimension(
 
 
 # ------------------------------------------------------------------
+# Non-MCMC fallback methods
+# ------------------------------------------------------------------
+
+def _try_variational(
+    *,
+    stan_file: Path,
+    stan_data: Dict[str, Any],
+    fit_id: str,
+    col_names: List[str],
+    dim_levels: Dict[str, List[str]],
+    model_type: str,
+    seed: int = 42,
+    output_dir: Optional[Path] = None,
+    algorithm: str = "meanfield",
+) -> Dict[str, Any]:
+    """Attempt variational inference (ADVI) as a fallback when MCMC fails.
+
+    CmdStanVB.stan_variable() returns draws compatible with the
+    existing _compute_amplification_* functions.
+
+    Returns a dict with status="ADVI" on success, "FAIL" on failure.
+    """
+    logger.info("Fitting %s via variational inference (ADVI/%s)...", fit_id, algorithm)
+
+    try:
+        from cmdstanpy import CmdStanModel
+        model = CmdStanModel(stan_file=str(stan_file))
+        vb = model.variational(
+            data=stan_data,
+            seed=seed,
+            algorithm=algorithm,
+            output_samples=1000,
+            require_converged=False,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Variational inference failed for %s: %s: %s",
+            fit_id, type(exc).__name__, exc,
+        )
+        return {"status": "FAIL", "fit_id": fit_id, "method": f"ADVI-{algorithm}"}
+
+    # Synthetic diagnostics (no MCMC diagnostics for VI)
+    vi_diag = {
+        "max_rhat": float("nan"),
+        "min_ess_bulk": float("nan"),
+        "divergences": 0,
+        "treedepth_hits": 0,
+        "n_stuck_params": 0,
+        "stuck_params": [],
+        "diagnose_text": f"Variational inference ({algorithm}); no MCMC diagnostics.",
+    }
+
+    try:
+        if model_type == "logistic":
+            amp = _compute_amplification_logistic(vb, col_names, dim_levels)
+        else:
+            amp = _compute_amplification_ordinal(vb, col_names, dim_levels)
+
+        amp_summary = {dim: {k: v for k, v in dd.items() if k != "A_draws"}
+                       for dim, dd in amp.items()}
+
+        result = {
+            "fit_id": fit_id,
+            "diagnostics": vi_diag,
+            "status": "ADVI",
+            "amplification": amp_summary,
+            "method": f"ADVI-{algorithm} {model_type}",
+        }
+        _save_artifacts(fit_id, model_type, amp, vi_diag, "ADVI",
+                        stan_file, output_dir)
+        logger.info("ADVI succeeded for %s", fit_id)
+        return result
+
+    except Exception as exc:
+        logger.warning(
+            "ADVI amplification computation failed for %s: %s: %s",
+            fit_id, type(exc).__name__, exc,
+        )
+        return {"status": "FAIL", "fit_id": fit_id, "method": f"ADVI-{algorithm}"}
+
+
+def _try_pathfinder(
+    *,
+    stan_file: Path,
+    stan_data: Dict[str, Any],
+    fit_id: str,
+    col_names: List[str],
+    dim_levels: Dict[str, List[str]],
+    model_type: str,
+    seed: int = 42,
+    output_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Attempt Pathfinder variational inference as a fallback.
+
+    Pathfinder requires CmdStan >= 2.33. If unavailable, returns FAIL.
+    """
+    logger.info("Fitting %s via Pathfinder...", fit_id)
+
+    try:
+        from cmdstanpy import CmdStanModel
+        model = CmdStanModel(stan_file=str(stan_file))
+        pf = model.pathfinder(
+            data=stan_data,
+            seed=seed,
+            draws=1000,
+            num_paths=4,
+        )
+    except AttributeError:
+        logger.warning(
+            "Pathfinder not available (requires CmdStan >= 2.33); skipping %s",
+            fit_id,
+        )
+        return {"status": "FAIL", "fit_id": fit_id, "method": "pathfinder"}
+    except Exception as exc:
+        logger.warning(
+            "Pathfinder failed for %s: %s: %s",
+            fit_id, type(exc).__name__, exc,
+        )
+        return {"status": "FAIL", "fit_id": fit_id, "method": "pathfinder"}
+
+    pf_diag = {
+        "max_rhat": float("nan"),
+        "min_ess_bulk": float("nan"),
+        "divergences": 0,
+        "treedepth_hits": 0,
+        "n_stuck_params": 0,
+        "stuck_params": [],
+        "diagnose_text": "Pathfinder approximate inference; no MCMC diagnostics.",
+    }
+
+    try:
+        if model_type == "logistic":
+            amp = _compute_amplification_logistic(pf, col_names, dim_levels)
+        else:
+            amp = _compute_amplification_ordinal(pf, col_names, dim_levels)
+
+        amp_summary = {dim: {k: v for k, v in dd.items() if k != "A_draws"}
+                       for dim, dd in amp.items()}
+
+        result = {
+            "fit_id": fit_id,
+            "diagnostics": pf_diag,
+            "status": "PATHFINDER",
+            "amplification": amp_summary,
+            "method": f"pathfinder {model_type}",
+        }
+        _save_artifacts(fit_id, model_type, amp, pf_diag, "PATHFINDER",
+                        stan_file, output_dir)
+        logger.info("Pathfinder succeeded for %s", fit_id)
+        return result
+
+    except Exception as exc:
+        logger.warning(
+            "Pathfinder amplification computation failed for %s: %s: %s",
+            fit_id, type(exc).__name__, exc,
+        )
+        return {"status": "FAIL", "fit_id": fit_id, "method": "pathfinder"}
+
+
+def _try_map_estimate(
+    *,
+    stan_file: Path,
+    stan_data: Dict[str, Any],
+    fit_id: str,
+    col_names: List[str],
+    dim_levels: Dict[str, List[str]],
+    model_type: str,
+    seed: int = 42,
+    output_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Attempt MAP (maximum a posteriori) point estimate as last resort.
+
+    Returns status="MAP" with point-estimate amplification (no
+    posterior uncertainty — CrI low/high equal the point estimate).
+    """
+    logger.info("Fitting %s via MAP optimisation...", fit_id)
+
+    try:
+        from cmdstanpy import CmdStanModel
+        model = CmdStanModel(stan_file=str(stan_file))
+        mle = model.optimize(
+            data=stan_data,
+            seed=seed,
+            algorithm="lbfgs",
+            jacobian=True,
+        )
+    except Exception as exc:
+        logger.warning(
+            "MAP optimisation failed for %s: %s: %s",
+            fit_id, type(exc).__name__, exc,
+        )
+        return {"status": "FAIL", "fit_id": fit_id, "method": "MAP"}
+
+    map_diag = {
+        "max_rhat": float("nan"),
+        "min_ess_bulk": float("nan"),
+        "divergences": 0,
+        "treedepth_hits": 0,
+        "n_stuck_params": 0,
+        "stuck_params": [],
+        "diagnose_text": "MAP point estimate; no posterior uncertainty.",
+    }
+
+    try:
+        # MAP returns single-point estimates. Wrap in a thin adapter
+        # so the amplification functions see (1, K) shaped arrays.
+        class _MapAdapter:
+            """Wraps CmdStanMLE so stan_variable returns 2-D arrays."""
+            def __init__(self, mle_fit: Any) -> None:
+                self._mle = mle_fit
+            def stan_variable(self, name: str) -> np.ndarray:
+                val = self._mle.stan_variable(name)
+                val = np.atleast_1d(np.asarray(val, dtype=float))
+                if val.ndim == 0:
+                    val = val.reshape(1)
+                if val.ndim == 1:
+                    val = val.reshape(1, -1)  # (1, K)
+                return val
+
+        adapter = _MapAdapter(mle)
+
+        # For logistic model, alpha is scalar → needs (1,) shape
+        if model_type == "logistic":
+            alpha_raw = mle.stan_variable("alpha")
+            alpha_arr = np.atleast_1d(np.asarray(alpha_raw, dtype=float))
+            if alpha_arr.ndim == 0:
+                alpha_arr = alpha_arr.reshape(1)
+
+            class _MapLogisticAdapter(_MapAdapter):
+                def stan_variable(self, name: str) -> np.ndarray:
+                    if name == "alpha":
+                        return alpha_arr
+                    return super().stan_variable(name)
+
+            adapter = _MapLogisticAdapter(mle)
+            amp = _compute_amplification_logistic(adapter, col_names, dim_levels)
+        else:
+            # Ordinal: c is (2,) and beta is (K,)
+            c_raw = mle.stan_variable("c")
+            c_arr = np.atleast_1d(np.asarray(c_raw, dtype=float))
+            if c_arr.ndim == 1:
+                c_arr = c_arr.reshape(1, -1)  # (1, 2)
+
+            class _MapOrdinalAdapter(_MapAdapter):
+                def stan_variable(self, name: str) -> np.ndarray:
+                    if name == "c":
+                        return c_arr
+                    return super().stan_variable(name)
+
+            adapter = _MapOrdinalAdapter(mle)
+            amp = _compute_amplification_ordinal(adapter, col_names, dim_levels)
+
+        amp_summary = {dim: {k: v for k, v in dd.items() if k != "A_draws"}
+                       for dim, dd in amp.items()}
+
+        result = {
+            "fit_id": fit_id,
+            "diagnostics": map_diag,
+            "status": "MAP",
+            "amplification": amp_summary,
+            "method": f"MAP {model_type}",
+        }
+        _save_artifacts(fit_id, model_type, amp, map_diag, "MAP",
+                        stan_file, output_dir)
+        logger.info("MAP succeeded for %s", fit_id)
+        return result
+
+    except Exception as exc:
+        logger.warning(
+            "MAP amplification computation failed for %s: %s: %s",
+            fit_id, type(exc).__name__, exc,
+        )
+        return {"status": "FAIL", "fit_id": fit_id, "method": "MAP"}
+
+
+# ------------------------------------------------------------------
 # Main public API
 # ------------------------------------------------------------------
 
@@ -1386,6 +2153,45 @@ def run_bayes_robustness(
                     return _LOGIT_STAN, _ORDINAL_STAN
                 return _LOGIT_FIXED_STAN, _ORDINAL_FIXED_STAN
 
+            # ── Pre-flight diagnostics ──
+            preflight = _preflight_diagnostics(
+                X=X, col_names=col_names,
+                y_logistic=y_logistic, y_ordinal=y_ordinal,
+                severity_metric=severity_metric, model_name=model,
+                df=df, J=J, pct_singletons=pct_singletons,
+            )
+            metric_result["preflight"] = preflight
+
+            if preflight["predicted_difficulty"] == "very_hard":
+                logger.warning(
+                    "PRE-FLIGHT %s/%s: predicted difficulty VERY HARD — "
+                    "EPP=%.1f, rank=%d/%d, condition=%.2e, %d sparse cells. "
+                    "Recommendations: %s",
+                    model, severity_metric, preflight["epp"],
+                    preflight["matrix_rank"], X.shape[1],
+                    preflight["condition_number"], preflight["n_sparse_cells"],
+                    "; ".join(preflight["recommendations"]),
+                )
+            elif preflight["predicted_difficulty"] == "hard":
+                logger.warning(
+                    "PRE-FLIGHT %s/%s: predicted difficulty HARD — "
+                    "EPP=%.1f. Some fallback steps may be needed.",
+                    model, severity_metric, preflight["epp"],
+                )
+
+            # ── Pre-flight auto-simplification ──
+            if preflight["predicted_difficulty"] == "very_hard":
+                X, col_names, simplification = _auto_simplify_design_matrix(
+                    df=df, severity_metric=severity_metric,
+                    X_orig=X, col_names_orig=col_names,
+                    y_logistic=y_logistic,
+                )
+                if simplification != "none":
+                    metric_result["auto_simplification"] = simplification
+                    metric_result["K"] = X.shape[1]
+                    metric_result["col_names"] = col_names
+                    dim_levels = _get_dimension_levels(df)
+
             # ── Fallback chain with independent B1/B2 tracking ──
             # The chain progressively tries more robust configurations.
             # B1 (logistic) and B2 (ordinal) are tracked independently:
@@ -1393,7 +2199,8 @@ def run_bayes_robustness(
             #
             # Steps 1-3.5 use strict diagnostic gates.
             # Steps 4-5 use relaxed gates (MARGINAL status for borderline fits).
-            attempted: List[str] = []
+            # Steps 6-8 use non-MCMC methods (ADVI, Pathfinder, MAP).
+            attempted: List[Dict[str, Any]] = []
             result_b1: Optional[Dict[str, Any]] = None
             result_b2: Optional[Dict[str, Any]] = None
             fallback_b1: Optional[str] = None
@@ -1404,7 +2211,30 @@ def run_bayes_robustness(
             _FALLBACK_ORDER = [
                 "standard", "category-RE", "per-dimension",
                 "main-effects-only", "flex-prior", "aggressive-sampler",
+                "variational-advi", "pathfinder", "map-estimate",
             ]
+
+            def _step_diag(
+                step_num: Any,
+                label: str,
+                description: str,
+                step_result: Dict[str, Any],
+            ) -> Dict[str, Any]:
+                """Build a structured entry for the attempted list."""
+                entry: Dict[str, Any] = {
+                    "step": step_num,
+                    "label": label,
+                    "description": description,
+                }
+                for prefix, mtype in [("b1", "logistic"), ("b2", "ordinal")]:
+                    mdata = step_result.get(mtype, {})
+                    entry[f"{prefix}_status"] = mdata.get("status", "N/A")
+                    diag = mdata.get("diagnostics", {})
+                    if diag:
+                        entry[f"{prefix}_rhat"] = diag.get("max_rhat", float("nan"))
+                        entry[f"{prefix}_ess"] = diag.get("min_ess_bulk", float("nan"))
+                        entry[f"{prefix}_div"] = diag.get("divergences", 0)
+                return entry
 
             def _which_attempt() -> str:
                 if need_b1 and need_b2:
@@ -1464,7 +2294,7 @@ def run_bayes_robustness(
             if not need_b1 and not need_b2:
                 logger.info("%s: step 1 (%s) succeeded for both B1+B2", severity_metric, method_lbl)
             else:
-                attempted.append(f"step 1: {method_lbl} (K={X.shape[1]})")
+                attempted.append(_step_diag(1, "standard", f"{method_lbl} (K={X.shape[1]})", step_result))
                 logger.warning("%s: step 1 (%s) — need_b1=%s, need_b2=%s",
                                severity_metric, method_lbl, need_b1, need_b2)
 
@@ -1502,11 +2332,11 @@ def run_bayes_robustness(
                     if not need_b1 and not need_b2:
                         logger.info("%s: step 2 (category RE) succeeded", severity_metric)
                     else:
-                        attempted.append(f"step 2: category-RE({cat_col}, J={J_cat})")
+                        attempted.append(_step_diag(2, "category-RE", f"category-RE({cat_col}, J={J_cat})", step_result))
                         logger.warning("%s: step 2 (category RE) — need_b1=%s, need_b2=%s",
                                        severity_metric, need_b1, need_b2)
                 else:
-                    attempted.append(f"step 2: category-RE skipped ({cat_col} not available)")
+                    attempted.append({"step": 2, "label": "category-RE", "description": f"skipped ({cat_col} not available)", "b1_status": "N/A", "b2_status": "N/A"})
                     logger.warning(
                         "%s fallback chain: step 2 skipped -- %s column not available",
                         severity_metric, cat_col,
@@ -1535,11 +2365,11 @@ def run_bayes_robustness(
                     if not need_b1 and not need_b2:
                         logger.info("%s: step 3 (per-dimension) succeeded", severity_metric)
                     else:
-                        attempted.append("step 3: per-dimension models (partial)")
+                        attempted.append(_step_diag(3, label, "per-dimension models", per_dim_result))
                         logger.warning("%s: step 3 — need_b1=%s, need_b2=%s",
                                        severity_metric, need_b1, need_b2)
                 else:
-                    attempted.append("step 3: per-dimension models")
+                    attempted.append({"step": 3, "label": "per-dimension", "description": "per-dimension models", "b1_status": "FAIL", "b2_status": "FAIL"})
                     logger.warning("%s: step 3 (per-dimension) FAILED", severity_metric)
 
             # ── Fallback 3.5: main-effects-only model ──
@@ -1572,7 +2402,7 @@ def run_bayes_robustness(
                 if not need_b1 and not need_b2:
                     logger.info("%s: step 3.5 (main-effects-only) succeeded", severity_metric)
                 else:
-                    attempted.append(f"step 3.5: main-effects-only (K={X_main.shape[1]})")
+                    attempted.append(_step_diag("3.5", "main-effects-only", f"main-effects-only (K={X_main.shape[1]})", step_result))
                     logger.warning("%s: step 3.5 — need_b1=%s, need_b2=%s",
                                    severity_metric, need_b1, need_b2)
 
@@ -1606,7 +2436,7 @@ def run_bayes_robustness(
                 if not need_b1 and not need_b2:
                     logger.info("%s: step 4 (stronger priors) succeeded", severity_metric)
                 else:
-                    attempted.append("step 4: flex priors + relaxed gate")
+                    attempted.append(_step_diag(4, "flex-prior", "flex priors + relaxed gate", step_result))
                     logger.warning("%s: step 4 — need_b1=%s, need_b2=%s",
                                    severity_metric, need_b1, need_b2)
 
@@ -1637,8 +2467,104 @@ def run_bayes_robustness(
                 if not need_b1 and not need_b2:
                     logger.info("%s: step 5 (aggressive sampler) succeeded", severity_metric)
                 else:
-                    attempted.append("step 5: aggressive sampler + relaxed gate")
+                    attempted.append(_step_diag(5, "aggressive-sampler", "aggressive sampler + relaxed gate", step_result))
                     logger.warning("%s: step 5 — need_b1=%s, need_b2=%s",
+                                   severity_metric, need_b1, need_b2)
+
+            # ── Fallback 6: Variational inference (ADVI) ──
+            if need_b1 or need_b2:
+                logger.info(
+                    "%s fallback chain: step 6 -- variational inference (ADVI)",
+                    severity_metric,
+                )
+                b1_stan_vi, b2_stan_vi = _pick_stan_files(use_ri=False, flex=False)
+                sd_b1_vi, sd_b2_vi = _make_stan_data(X, False)
+
+                vi_result: Dict[str, Any] = {}
+                if need_b1:
+                    vi_result["logistic"] = _try_variational(
+                        stan_file=b1_stan_vi, stan_data=sd_b1_vi,
+                        fit_id=f"B1__{fit_prefix}__advi",
+                        col_names=col_names, dim_levels=dim_levels,
+                        model_type="logistic", seed=seed, output_dir=output_dir,
+                    )
+                if need_b2:
+                    vi_result["ordinal"] = _try_variational(
+                        stan_file=b2_stan_vi, stan_data=sd_b2_vi,
+                        fit_id=f"B2__{fit_prefix}__advi",
+                        col_names=col_names, dim_levels=dim_levels,
+                        model_type="ordinal", seed=seed, output_dir=output_dir,
+                    )
+                _harvest(vi_result, "variational-advi")
+                if not need_b1 and not need_b2:
+                    logger.info("%s: step 6 (ADVI) succeeded", severity_metric)
+                else:
+                    attempted.append(_step_diag(6, "variational-advi", "ADVI meanfield", vi_result))
+                    logger.warning("%s: step 6 (ADVI) — need_b1=%s, need_b2=%s",
+                                   severity_metric, need_b1, need_b2)
+
+            # ── Fallback 7: Pathfinder ──
+            if need_b1 or need_b2:
+                logger.info(
+                    "%s fallback chain: step 7 -- Pathfinder",
+                    severity_metric,
+                )
+                b1_stan_pf, b2_stan_pf = _pick_stan_files(use_ri=False, flex=False)
+                sd_b1_pf, sd_b2_pf = _make_stan_data(X, False)
+
+                pf_result: Dict[str, Any] = {}
+                if need_b1:
+                    pf_result["logistic"] = _try_pathfinder(
+                        stan_file=b1_stan_pf, stan_data=sd_b1_pf,
+                        fit_id=f"B1__{fit_prefix}__pathfinder",
+                        col_names=col_names, dim_levels=dim_levels,
+                        model_type="logistic", seed=seed, output_dir=output_dir,
+                    )
+                if need_b2:
+                    pf_result["ordinal"] = _try_pathfinder(
+                        stan_file=b2_stan_pf, stan_data=sd_b2_pf,
+                        fit_id=f"B2__{fit_prefix}__pathfinder",
+                        col_names=col_names, dim_levels=dim_levels,
+                        model_type="ordinal", seed=seed, output_dir=output_dir,
+                    )
+                _harvest(pf_result, "pathfinder")
+                if not need_b1 and not need_b2:
+                    logger.info("%s: step 7 (Pathfinder) succeeded", severity_metric)
+                else:
+                    attempted.append(_step_diag(7, "pathfinder", "Pathfinder (4 paths)", pf_result))
+                    logger.warning("%s: step 7 (Pathfinder) — need_b1=%s, need_b2=%s",
+                                   severity_metric, need_b1, need_b2)
+
+            # ── Fallback 8: MAP point estimate ──
+            if need_b1 or need_b2:
+                logger.info(
+                    "%s fallback chain: step 8 -- MAP point estimate",
+                    severity_metric,
+                )
+                b1_stan_map, b2_stan_map = _pick_stan_files(use_ri=False, flex=False)
+                sd_b1_map, sd_b2_map = _make_stan_data(X, False)
+
+                map_result: Dict[str, Any] = {}
+                if need_b1:
+                    map_result["logistic"] = _try_map_estimate(
+                        stan_file=b1_stan_map, stan_data=sd_b1_map,
+                        fit_id=f"B1__{fit_prefix}__map",
+                        col_names=col_names, dim_levels=dim_levels,
+                        model_type="logistic", seed=seed, output_dir=output_dir,
+                    )
+                if need_b2:
+                    map_result["ordinal"] = _try_map_estimate(
+                        stan_file=b2_stan_map, stan_data=sd_b2_map,
+                        fit_id=f"B2__{fit_prefix}__map",
+                        col_names=col_names, dim_levels=dim_levels,
+                        model_type="ordinal", seed=seed, output_dir=output_dir,
+                    )
+                _harvest(map_result, "map-estimate")
+                if not need_b1 and not need_b2:
+                    logger.info("%s: step 8 (MAP) succeeded", severity_metric)
+                else:
+                    attempted.append(_step_diag(8, "map-estimate", "MAP (L-BFGS)", map_result))
+                    logger.warning("%s: step 8 (MAP) — need_b1=%s, need_b2=%s",
                                    severity_metric, need_b1, need_b2)
 
             # ── Assemble final metric_result ──
@@ -1670,19 +2596,37 @@ def run_bayes_robustness(
             if fb:
                 metric_result["fallback_step"] = fb
 
-            # Record total failure only if BOTH B1 and B2 failed
+            # Record total failure / partial failure and generate post-mortem
             if need_b1 and need_b2:
                 msg_lines = [
                     f"All Bayesian fallbacks FAILED for {model}/{severity_metric}.",
                     "Attempted strategies:",
                 ]
                 for a in attempted:
-                    msg_lines.append(f"  - {a}")
+                    msg_lines.append(
+                        f"  - Step {a['step']} [{a['label']}]: {a['description']} "
+                        f"| B1={a.get('b1_status', 'N/A')} B2={a.get('b2_status', 'N/A')}"
+                    )
                 msg_lines.append("Posterior draws are unreliable for all attempted configurations.")
                 full_msg = "\n".join(msg_lines)
                 logger.error(full_msg)
                 metric_result["status"] = "FAIL"
                 metric_result["error"] = full_msg
+
+                # Generate post-mortem
+                postmortem = _build_postmortem(
+                    df=df, X=X, col_names=col_names,
+                    y_logistic=y_logistic, y_ordinal=y_ordinal,
+                    severity_metric=severity_metric, model_name=model,
+                    attempted=attempted,
+                    use_random_intercept=use_random_intercept,
+                    J=J, pct_singletons=pct_singletons,
+                    preflight=preflight,
+                )
+                _log_postmortem(postmortem, model, severity_metric)
+                _save_postmortem(postmortem, model, severity_metric, output_dir)
+                metric_result["postmortem"] = postmortem
+
             elif need_b1 or need_b2:
                 failed_type = "B1 logistic" if need_b1 else "B2 ordinal"
                 ok_type = "B2 ordinal" if need_b1 else "B1 logistic"
@@ -1690,6 +2634,20 @@ def run_bayes_robustness(
                     "%s/%s: %s succeeded but %s failed after all fallbacks",
                     model, severity_metric, ok_type, failed_type,
                 )
+
+                # Generate partial post-mortem for the failed model type
+                postmortem = _build_postmortem(
+                    df=df, X=X, col_names=col_names,
+                    y_logistic=y_logistic, y_ordinal=y_ordinal,
+                    severity_metric=severity_metric, model_name=model,
+                    attempted=attempted,
+                    use_random_intercept=use_random_intercept,
+                    J=J, pct_singletons=pct_singletons,
+                    preflight=preflight,
+                )
+                _log_postmortem(postmortem, model, severity_metric)
+                _save_postmortem(postmortem, model, severity_metric, output_dir)
+                metric_result["postmortem"] = postmortem
 
             model_results[severity_metric] = metric_result
 
