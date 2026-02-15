@@ -7,7 +7,7 @@ import logging
 import random
 import shutil
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -141,6 +141,7 @@ class Experiment:
         clear_exec_cache: bool = False,
         verbose: bool = False,
         api_key: str = "",
+        timestamp: Optional[str] = None,
     ) -> None:
         if num_complaints <= 0:
             raise ValueError("num_complaints must be a positive integer")
@@ -263,7 +264,7 @@ class Experiment:
         # Analysis results
         self.analysis_results: Dict[str, Any] = {}
 
-        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.timestamp = timestamp or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
     # ------------------------------------------------------------------
     # Main runner
@@ -318,8 +319,9 @@ class Experiment:
         # Save artifacts
         self._save_artifacts()
 
-        # Generate paper bundle
-        self._generate_paper_bundle()
+        # NOTE: paper bundle is generated externally (llm_fairness_experiment.py)
+        # AFTER the reporter and worked-examples have written their files,
+        # so that _populate_evidence() can find them.
 
         # Collect all diagnostics for the report
         self.analysis_results["diagnostics"] = get_diagnostics().to_dict()
@@ -343,8 +345,12 @@ class Experiment:
 
         return self.analysis_results
 
-    def _generate_paper_bundle(self) -> None:
-        """Generate the paper-ready output bundle."""
+    def generate_paper_bundle(self) -> None:
+        """Generate the paper-ready output bundle.
+
+        Must be called AFTER the reporter and worked-examples have written
+        their files so that _populate_evidence() can find them.
+        """
         logger.info("Generating paper bundle (tables, figures, evidence — may take a few minutes)...")
         try:
             from src.paper_bundle import PaperBundleGenerator

@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -95,10 +96,81 @@ def _get_dimension_levels(
     return levels
 
 
+def _collapse_rare_severity_bands(
+    df: pd.DataFrame,
+    severity_metric: str,
+    min_per_band: int = 10,
+) -> pd.DataFrame:
+    """Merge rare severity bands into adjacent bands.
+
+    If any severity band has < min_per_band observations, merge it with
+    the adjacent band (prefer merging high->medium, then low->medium).
+    Returns a copy of df with the severity column modified.
+    """
+    df = df.copy()
+    counts = df[severity_metric].value_counts()
+    merges: List[str] = []
+
+    # Merge high -> medium if too sparse
+    if counts.get("high", 0) < min_per_band and "high" in counts.index:
+        df[severity_metric] = df[severity_metric].replace({"high": "medium"})
+        merges.append(f"high({counts['high']})->medium")
+
+    # Merge low -> medium if too sparse
+    if counts.get("low", 0) < min_per_band and "low" in counts.index:
+        df[severity_metric] = df[severity_metric].replace({"low": "medium"})
+        merges.append(f"low({counts['low']})->medium")
+
+    if merges:
+        new_counts = df[severity_metric].value_counts().to_dict()
+        logger.warning(
+            "Pre-flight: collapsed rare severity bands for %s: %s -> %s",
+            severity_metric, ", ".join(merges), new_counts,
+        )
+    else:
+        logger.info(
+            "Pre-flight: severity bands OK for %s (counts: %s, min_per_band=%d)",
+            severity_metric, counts.to_dict(), min_per_band,
+        )
+
+    return df
+
+
+def _drop_zero_variance_columns(
+    X: np.ndarray,
+    col_names: List[str],
+    threshold: float = 1e-12,
+) -> Tuple[np.ndarray, List[str]]:
+    """Drop columns with near-zero variance from design matrix.
+
+    Returns filtered (X, col_names).  Logs dropped column names.
+    """
+    variances = np.var(X, axis=0)
+    keep_mask = variances >= threshold
+    dropped = [name for name, keep in zip(col_names, keep_mask) if not keep]
+
+    if dropped:
+        logger.warning(
+            "Pre-flight: dropping %d zero-variance column(s) from K=%d: %s",
+            len(dropped), len(keep_mask), dropped,
+        )
+        X = X[:, keep_mask]
+        col_names = [name for name, keep in zip(col_names, keep_mask) if keep]
+    else:
+        logger.info("Pre-flight: all %d columns have non-zero variance", len(col_names))
+
+    return X, col_names
+
+
+_MIN_MARGIN_COUNT = 5  # minimum observations in each margin for interaction terms
+
+
 def _build_design_matrix(
     df: pd.DataFrame,
     severity_metric: str,
     dimensions: Optional[List[str]] = None,
+    min_margin_count: int = _MIN_MARGIN_COUNT,
+    include_interactions: bool = True,
 ) -> Tuple[np.ndarray, List[str]]:
     """Build the shared design matrix X for both Stan models.
 
@@ -106,6 +178,8 @@ def _build_design_matrix(
         - persona dimension dummies (k-1 per dimension, reference dropped)
         - severity band dummies (k-1, reference = low)
         - interactions: each persona dummy x each severity dummy
+          (only if include_interactions=True and both margins have
+          >= min_margin_count observations)
 
     Returns (X array [N, K], column_names list).
     """
@@ -137,15 +211,36 @@ def _build_design_matrix(
         sev_dummy_names.append(col)
         parts.append((df[severity_metric] == level).astype(float).values[:, None])
 
-    # 3. Interactions
+    # 3. Interactions (with adaptive pruning)
     interaction_names: List[str] = []
-    for p_idx, p_name in enumerate(persona_dummy_names):
-        p_vec = parts[p_idx]
-        for s_name in sev_dummy_names:
-            s_idx = len(persona_dummy_names) + sev_dummy_names.index(s_name)
-            s_vec = parts[s_idx]
-            interaction_names.append(f"{p_name}__x__{s_name}")
-            parts.append(p_vec * s_vec)
+    if include_interactions:
+        pruned: List[str] = []
+        for p_idx, p_name in enumerate(persona_dummy_names):
+            p_vec = parts[p_idx]
+            p_count = int(p_vec.sum())
+            for s_name in sev_dummy_names:
+                s_idx = len(persona_dummy_names) + sev_dummy_names.index(s_name)
+                s_vec = parts[s_idx]
+                s_count = int(s_vec.sum())
+                if p_count < min_margin_count or s_count < min_margin_count:
+                    pruned.append(
+                        f"{p_name}__x__{s_name}(margins={p_count},{s_count})"
+                    )
+                    continue
+                interaction_names.append(f"{p_name}__x__{s_name}")
+                parts.append(p_vec * s_vec)
+        if pruned:
+            logger.info(
+                "Pre-flight: pruned %d sparse interaction(s): %s",
+                len(pruned), pruned,
+            )
+        else:
+            logger.info(
+                "Pre-flight: all %d interaction(s) have sufficient margins (>=%d)",
+                len(interaction_names), min_margin_count,
+            )
+    elif not include_interactions:
+        logger.info("Pre-flight: building main-effects-only matrix (no interactions)")
 
     col_names = persona_dummy_names + sev_dummy_names + interaction_names
     X = np.hstack(parts) if parts else np.empty((len(df), 0))
@@ -221,6 +316,7 @@ def _fit_stan_model(
     seed: int = 42,
     adapt_delta: float = _ADAPT_DELTA,
     max_treedepth: int = _MAX_TREEDEPTH,
+    chains: int = _CHAINS,
 ) -> Any:
     """Compile and fit a Stan model. Returns CmdStanMCMC object.
 
@@ -258,12 +354,12 @@ def _fit_stan_model(
     logger.info(
         "Sampling %s (chains=%d, iter=%d+%d, adapt_delta=%.2f, ~%d parameters) "
         "— this will take a while...",
-        fit_id, _CHAINS, _ITER_WARMUP, _ITER_SAMPLING, adapt_delta, n_params,
+        fit_id, chains, _ITER_WARMUP, _ITER_SAMPLING, adapt_delta, n_params,
     )
     try:
         fit = model.sample(
             data=stan_data,
-            chains=_CHAINS,
+            chains=chains,
             iter_sampling=_ITER_SAMPLING,
             iter_warmup=_ITER_WARMUP,
             seed=seed,
@@ -320,15 +416,64 @@ def _check_diagnostics(fit: Any) -> Dict[str, Any]:
     model_names = [col_names_all[i] for i in model_idx]
     model_draws = all_draws[:, :, model_idx]
 
-    # Build xarray Dataset for ArviZ (one variable per model parameter)
+    # ── Detect stuck parameters (zero within-chain variance) ─────────
+    # A parameter with constant draws within each chain (but different
+    # values between chains) produces a huge finite rhat in ArviZ
+    # instead of NaN (which stansummary would give).  This poisons
+    # max_rhat even when 29/30 parameters are perfectly converged.
+    # Common causes: boundary parameters (sigma_u → 0), rare
+    # interaction dummies with zero variance, or quasi-separation.
+    # Detect these upfront and exclude from the convergence gate
+    # (matching the old stansummary behaviour where NaN rhat was
+    # dropped by dropna).
+    n_model = len(model_names)
+    # within-chain variance per parameter: var over draws, mean over chains
+    within_var = model_draws.var(axis=0).mean(axis=0)  # shape (n_model,)
+    stuck_mask = within_var < 1e-15  # effectively zero variance
+    n_stuck = int(stuck_mask.sum())
+    stuck_names: List[str] = []
+    if n_stuck > 0:
+        stuck_names = [model_names[i] for i in range(n_model) if stuck_mask[i]]
+        logger.warning(
+            "%d/%d parameters have zero within-chain variance (stuck): %s",
+            n_stuck, n_model,
+            stuck_names[:10] if len(stuck_names) > 10
+            else stuck_names,
+        )
+
+    # Build xarray Dataset for ArviZ — only non-stuck parameters
     # CmdStanPy draws(concat_chains=False) shape: (draws, chains, params)
+    live_idx = [k for k in range(n_model) if not stuck_mask[k]]
+    live_names = [model_names[k] for k in live_idx]
+
+    if not live_names:
+        # ALL parameters stuck → truly degenerate posterior
+        logger.warning("All %d model parameters are stuck — posterior is degenerate", n_model)
+        return {
+            "max_rhat": float("nan"),
+            "min_ess_bulk": 0.0,
+            "divergences": n_divergent,
+            "treedepth_hits": n_treedepth,
+            "n_stuck_params": n_stuck,
+            "stuck_params": stuck_names,
+            "diagnose_text": f"All {n_model} parameters stuck (zero within-chain variance).",
+        }
+
     ds = xr.Dataset({
-        name: xr.DataArray(model_draws[:, :, k], dims=["draw", "chain"])
-        for k, name in enumerate(model_names)
+        name: xr.DataArray(model_draws[:, :, live_idx[k]], dims=["draw", "chain"])
+        for k, name in enumerate(live_names)
     })
 
-    rhat_ds = az.rhat(ds)
-    ess_ds = az.ess(ds, method="bulk")
+    # Suppress ArviZ RuntimeWarning for edge cases where within-chain
+    # variance is numerically zero (0/0 in split-rhat folded statistic).
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="invalid value encountered",
+            category=RuntimeWarning,
+        )
+        rhat_ds = az.rhat(ds)
+        ess_ds = az.ess(ds, method="bulk")
 
     rhat_vals = pd.Series(
         [float(rhat_ds[v].values) for v in rhat_ds.data_vars]
@@ -350,6 +495,8 @@ def _check_diagnostics(fit: Any) -> Dict[str, Any]:
         diag_parts.append(f"max R-hat {max_rhat:.4f} > 1.01")
     if min_ess < 400:
         diag_parts.append(f"min ESS {min_ess:.0f} < 400")
+    if n_stuck > 0:
+        diag_parts.append(f"{n_stuck} stuck parameter(s)")
     diag_text = "; ".join(diag_parts) if diag_parts else "No diagnostic issues detected."
 
     return {
@@ -357,35 +504,50 @@ def _check_diagnostics(fit: Any) -> Dict[str, Any]:
         "min_ess_bulk": min_ess,
         "divergences": n_divergent,
         "treedepth_hits": n_treedepth,
+        "n_stuck_params": n_stuck,
+        "stuck_params": stuck_names,
         "diagnose_text": diag_text,
     }
 
 
-def _gate_fit(diagnostics: Dict[str, Any]) -> str:
-    """Apply acceptance gate. Returns 'OK', 'WARN', or 'FAIL'.
+def _gate_fit(diagnostics: Dict[str, Any], *, strict: bool = True) -> str:
+    """Apply acceptance gate. Returns 'OK', 'WARN', 'MARGINAL', or 'FAIL'.
 
-    Logic:
+    Logic (strict=True, used for steps 1-3.5):
         FAIL — non-convergence (Rhat > 1.01, ESS < 400) or any divergences.
         WARN — minor issues (treedepth hits, domain warnings).
         OK   — clean diagnostics.
 
-    Tighter thresholds ensure posterior draws are reliable for inference.
+    Logic (strict=False, used for steps 4-5):
+        FAIL     — Rhat > 1.05, ESS < 200, or > 2 divergences.
+        MARGINAL — passes relaxed but would fail strict thresholds.
+        WARN     — treedepth hits only.
+        OK       — passes strict thresholds too.
     """
     rhat = diagnostics.get("max_rhat", float("nan"))
     ess = diagnostics.get("min_ess_bulk", 0)
     div = diagnostics.get("divergences", 0)
     td = diagnostics.get("treedepth_hits", 0)
 
-    # Hard fail: non-convergent chains or any divergent transitions
-    # Divergences indicate the sampler could not explore the posterior
-    # properly — even 1 divergence is concerning for inference.
-    if (not np.isfinite(rhat)) or rhat > 1.01 or ess < 400 or div > 0:
+    if strict:
+        # Hard fail: non-convergent chains or any divergent transitions
+        if (not np.isfinite(rhat)) or rhat > 1.01 or ess < 400 or div > 0:
+            return "FAIL"
+        if td > 0:
+            return "WARN"
+        return "OK"
+
+    # Relaxed gate (steps 4-5): accept slightly imperfect posteriors
+    if (not np.isfinite(rhat)) or rhat > 1.05 or ess < 200 or div > 2:
         return "FAIL"
 
-    # Warning band: treedepth hits (sampler reached max depth)
+    # Passes relaxed thresholds — would it also pass strict?
+    would_fail_strict = rhat > 1.01 or ess < 400 or div > 0
+    if would_fail_strict:
+        return "MARGINAL"
+
     if td > 0:
         return "WARN"
-
     return "OK"
 
 
@@ -671,13 +833,29 @@ def _try_b1_b2(
     output_dir: Optional[Path],
     adapt_delta: float = _ADAPT_DELTA,
     max_treedepth: int = _MAX_TREEDEPTH,
+    chains: int = _CHAINS,
     method_label: str = "hierarchical",
-) -> Optional[Dict[str, Any]]:
-    """Attempt B1 (logistic) + B2 (ordinal) fits.
+    attempt: str = "both",
+    strict_gate: bool = True,
+) -> Dict[str, Any]:
+    """Attempt B1 (logistic) and/or B2 (ordinal) fits.
 
-    Returns metric_result dict on success, or None if either model FAILs
-    or raises an exception (e.g. Stan compilation/sampling crash).
-    Failed diagnostics are logged at WARNING level but do not raise.
+    B1 and B2 are fitted independently — a failure in one does not
+    prevent the other from being attempted.
+
+    Parameters
+    ----------
+    attempt : "both", "b1_only", or "b2_only"
+        Which model types to fit.
+    strict_gate : bool
+        If True, use strict diagnostic thresholds. If False, use
+        relaxed thresholds (MARGINAL status for borderline fits).
+
+    Returns
+    -------
+    Dict with "logistic" and/or "ordinal" keys.  Each sub-dict has
+    a "status" field: "OK", "WARN", "MARGINAL", or "FAIL".
+    Always returns a dict (never None).
     """
     y_ordinal = (df["tier"].values + 1).astype(int)
     y_ordinal = np.clip(y_ordinal, 1, 3)
@@ -686,78 +864,104 @@ def _try_b1_b2(
     metric_result: Dict[str, Any] = {}
 
     # ── B1: Logistic ──
-    logger.info("Fitting B1 (%s logistic, Tier2)...", method_label)
-    try:
-        fit_b1 = _fit_stan_model(b1_stan_file, stan_data_b1, fit_id_b1, seed,
-                                 adapt_delta=adapt_delta, max_treedepth=max_treedepth)
-    except Exception as exc:
-        logger.warning("B1 %s logistic raised %s for %s: %s",
-                       method_label, type(exc).__name__, fit_id_b1, exc)
-        return None
-    diag_b1 = _check_diagnostics(fit_b1)
-    status_b1 = _gate_fit(diag_b1)
-    logger.info("B1 status: %s (rhat=%.4f, ess=%.0f, div=%d) [%s]",
-                status_b1, diag_b1["max_rhat"],
-                diag_b1["min_ess_bulk"], diag_b1["divergences"], method_label)
+    if attempt in ("both", "b1_only"):
+        logger.info("Fitting B1 (%s logistic, Tier2)...", method_label)
+        b1_failed = False
+        try:
+            fit_b1 = _fit_stan_model(b1_stan_file, stan_data_b1, fit_id_b1, seed,
+                                     adapt_delta=adapt_delta, max_treedepth=max_treedepth,
+                                     chains=chains)
+        except Exception as exc:
+            logger.warning("B1 %s logistic raised %s for %s: %s",
+                           method_label, type(exc).__name__, fit_id_b1, exc)
+            metric_result["logistic"] = {
+                "fit_id": fit_id_b1, "status": "FAIL",
+                "method": f"{method_label} logistic",
+            }
+            b1_failed = True
 
-    if status_b1 == "FAIL":
-        logger.warning("B1 %s logistic FAILED for %s", method_label, fit_id_b1)
-        _save_artifacts(fit_id_b1, "logistic", {}, diag_b1, status_b1,
-                        b1_stan_file, output_dir)
-        return None
+        if not b1_failed:
+            diag_b1 = _check_diagnostics(fit_b1)
+            status_b1 = _gate_fit(diag_b1, strict=strict_gate)
+            logger.info("B1 status: %s (rhat=%.4f, ess=%.0f, div=%d) [%s]",
+                        status_b1, diag_b1["max_rhat"],
+                        diag_b1["min_ess_bulk"], diag_b1["divergences"], method_label)
 
-    amp_b1 = _compute_amplification_logistic(fit_b1, col_names, dim_levels)
-    amp_b1_summary = {dim: {k: v for k, v in dd.items() if k != "A_draws"}
-                      for dim, dd in amp_b1.items()}
-    diag_b1_payload = {k: v for k, v in diag_b1.items() if k != "diagnose_text"}
-    if status_b1 != "OK":
-        diag_b1_payload["diagnose_text"] = diag_b1.get("diagnose_text", "")
-
-    metric_result["logistic"] = {
-        "fit_id": fit_id_b1, "diagnostics": diag_b1_payload,
-        "status": status_b1, "amplification": amp_b1_summary,
-        "method": f"{method_label} logistic",
-    }
-    _save_artifacts(fit_id_b1, "logistic", amp_b1, diag_b1, status_b1,
-                    b1_stan_file, output_dir)
+            if status_b1 == "FAIL":
+                logger.warning("B1 %s logistic FAILED for %s", method_label, fit_id_b1)
+                diag_b1_payload = {k: v for k, v in diag_b1.items() if k != "diagnose_text"}
+                diag_b1_payload["diagnose_text"] = diag_b1.get("diagnose_text", "")
+                metric_result["logistic"] = {
+                    "fit_id": fit_id_b1, "diagnostics": diag_b1_payload,
+                    "status": "FAIL", "method": f"{method_label} logistic",
+                }
+                _save_artifacts(fit_id_b1, "logistic", {}, diag_b1, status_b1,
+                                b1_stan_file, output_dir)
+            else:
+                amp_b1 = _compute_amplification_logistic(fit_b1, col_names, dim_levels)
+                amp_b1_summary = {dim: {k: v for k, v in dd.items() if k != "A_draws"}
+                                  for dim, dd in amp_b1.items()}
+                diag_b1_payload = {k: v for k, v in diag_b1.items() if k != "diagnose_text"}
+                if status_b1 != "OK":
+                    diag_b1_payload["diagnose_text"] = diag_b1.get("diagnose_text", "")
+                metric_result["logistic"] = {
+                    "fit_id": fit_id_b1, "diagnostics": diag_b1_payload,
+                    "status": status_b1, "amplification": amp_b1_summary,
+                    "method": f"{method_label} logistic",
+                }
+                _save_artifacts(fit_id_b1, "logistic", amp_b1, diag_b1, status_b1,
+                                b1_stan_file, output_dir)
 
     # ── B2: Ordinal ──
-    logger.info("Fitting B2 (%s ordinal, Tier 0/1/2)...", method_label)
-    try:
-        fit_b2 = _fit_stan_model(b2_stan_file, stan_data_b2, fit_id_b2, seed,
-                                 adapt_delta=adapt_delta, max_treedepth=max_treedepth)
-    except Exception as exc:
-        logger.warning("B2 %s ordinal raised %s for %s: %s",
-                       method_label, type(exc).__name__, fit_id_b2, exc)
-        return None
-    diag_b2 = _check_diagnostics(fit_b2)
-    status_b2 = _gate_fit(diag_b2)
-    logger.info("B2 status: %s (rhat=%.4f, ess=%.0f, div=%d) [%s]",
-                status_b2, diag_b2["max_rhat"],
-                diag_b2["min_ess_bulk"], diag_b2["divergences"], method_label)
+    if attempt in ("both", "b2_only"):
+        logger.info("Fitting B2 (%s ordinal, Tier 0/1/2)...", method_label)
+        b2_failed = False
+        try:
+            fit_b2 = _fit_stan_model(b2_stan_file, stan_data_b2, fit_id_b2, seed,
+                                     adapt_delta=adapt_delta, max_treedepth=max_treedepth,
+                                     chains=chains)
+        except Exception as exc:
+            logger.warning("B2 %s ordinal raised %s for %s: %s",
+                           method_label, type(exc).__name__, fit_id_b2, exc)
+            metric_result["ordinal"] = {
+                "fit_id": fit_id_b2, "status": "FAIL",
+                "method": f"{method_label} ordinal",
+            }
+            b2_failed = True
 
-    if status_b2 == "FAIL":
-        logger.warning("B2 %s ordinal FAILED for %s", method_label, fit_id_b2)
-        _save_artifacts(fit_id_b2, "ordinal", {}, diag_b2, status_b2,
-                        b2_stan_file, output_dir)
-        return None
+        if not b2_failed:
+            diag_b2 = _check_diagnostics(fit_b2)
+            status_b2 = _gate_fit(diag_b2, strict=strict_gate)
+            logger.info("B2 status: %s (rhat=%.4f, ess=%.0f, div=%d) [%s]",
+                        status_b2, diag_b2["max_rhat"],
+                        diag_b2["min_ess_bulk"], diag_b2["divergences"], method_label)
 
-    amp_b2 = _compute_amplification_ordinal(fit_b2, col_names, dim_levels)
-    tier_probs = _compute_ordinal_tier_probs(fit_b2, col_names, dim_levels)
-    amp_b2_summary = {dim: {k: v for k, v in dd.items() if k != "A_draws"}
-                      for dim, dd in amp_b2.items()}
-    diag_b2_payload = {k: v for k, v in diag_b2.items() if k != "diagnose_text"}
-    if status_b2 != "OK":
-        diag_b2_payload["diagnose_text"] = diag_b2.get("diagnose_text", "")
-
-    metric_result["ordinal"] = {
-        "fit_id": fit_id_b2, "diagnostics": diag_b2_payload,
-        "status": status_b2, "amplification": amp_b2_summary,
-        "tier_probs": tier_probs,
-        "method": f"{method_label} ordinal",
-    }
-    _save_artifacts(fit_id_b2, "ordinal", amp_b2, diag_b2, status_b2,
-                    b2_stan_file, output_dir)
+            if status_b2 == "FAIL":
+                logger.warning("B2 %s ordinal FAILED for %s", method_label, fit_id_b2)
+                diag_b2_payload = {k: v for k, v in diag_b2.items() if k != "diagnose_text"}
+                diag_b2_payload["diagnose_text"] = diag_b2.get("diagnose_text", "")
+                metric_result["ordinal"] = {
+                    "fit_id": fit_id_b2, "diagnostics": diag_b2_payload,
+                    "status": "FAIL", "method": f"{method_label} ordinal",
+                }
+                _save_artifacts(fit_id_b2, "ordinal", {}, diag_b2, status_b2,
+                                b2_stan_file, output_dir)
+            else:
+                amp_b2 = _compute_amplification_ordinal(fit_b2, col_names, dim_levels)
+                tier_probs = _compute_ordinal_tier_probs(fit_b2, col_names, dim_levels)
+                amp_b2_summary = {dim: {k: v for k, v in dd.items() if k != "A_draws"}
+                                  for dim, dd in amp_b2.items()}
+                diag_b2_payload = {k: v for k, v in diag_b2.items() if k != "diagnose_text"}
+                if status_b2 != "OK":
+                    diag_b2_payload["diagnose_text"] = diag_b2.get("diagnose_text", "")
+                metric_result["ordinal"] = {
+                    "fit_id": fit_id_b2, "diagnostics": diag_b2_payload,
+                    "status": status_b2, "amplification": amp_b2_summary,
+                    "tier_probs": tier_probs,
+                    "method": f"{method_label} ordinal",
+                }
+                _save_artifacts(fit_id_b2, "ordinal", amp_b2, diag_b2, status_b2,
+                                b2_stan_file, output_dir)
 
     return metric_result
 
@@ -772,33 +976,45 @@ def _try_per_dimension(
     fit_id_prefix: str,
     seed: int,
     output_dir: Optional[Path],
+    attempt: str = "both",
+    strict_gate: bool = True,
 ) -> Optional[Dict[str, Any]]:
-    """Fallback 2: fit separate per-dimension models.
+    """Fallback: fit separate per-dimension models with partial credit.
 
-    Each model has one demographic dimension × severity interactions,
-    yielding ~4-8 columns instead of ~20+.  Results are merged.
+    Each model has one demographic dimension x severity interactions,
+    yielding ~4-8 columns instead of ~20+.  Results are merged across
+    dimensions.
+
+    If some dimensions fail, retries them with 8 chains.  Returns
+    partial results (with ``partial=True``) if at least one dimension
+    succeeds.  Returns None only if ALL dimensions fail.
     """
     combined_logistic: Dict[str, Any] = {"amplification": {}, "per_dim_fits": {}}
     combined_ordinal: Dict[str, Any] = {"amplification": {}, "tier_probs": {},
                                         "per_dim_fits": {}}
-    all_ok = True
+    succeeded_dims: List[str] = []
+    failed_dims: List[str] = []
 
-    for dim in DIMENSIONS:
+    def _fit_dim(dim: str, chains: int = _CHAINS) -> Optional[Dict[str, Any]]:
+        """Fit a single dimension, return result dict or None."""
         if dim not in df.columns:
-            continue
+            return None
 
         X_dim, col_names_dim = _build_design_matrix(df, severity_metric, dimensions=[dim])
-        dim_levels = _get_dimension_levels(df, dimensions=[dim])
+        X_dim, col_names_dim = _drop_zero_variance_columns(X_dim, col_names_dim)
+        dim_lvls = _get_dimension_levels(df, dimensions=[dim])
 
         if X_dim.shape[1] == 0:
             logger.warning("Per-dimension %s: empty design matrix, skipping", dim)
-            continue
+            return None
 
         if use_random_intercept:
             b1_stan = _LOGIT_STAN
             b2_stan = _ORDINAL_STAN
-            common_data = {"N": len(df), "K": X_dim.shape[1], "X": X_dim.tolist(),
-                           "J": J, "jj": jj.tolist()}
+            common_data: Dict[str, Any] = {
+                "N": len(df), "K": X_dim.shape[1], "X": X_dim.tolist(),
+                "J": J, "jj": jj.tolist(),
+            }
         else:
             b1_stan = _LOGIT_FIXED_STAN
             b2_stan = _ORDINAL_FIXED_STAN
@@ -807,52 +1023,113 @@ def _try_per_dimension(
         y_logistic = (df["tier"].values == 2).astype(int).tolist()
         y_ordinal = np.clip((df["tier"].values + 1).astype(int), 1, 3).tolist()
 
-        fit_id_b1 = f"{fit_id_prefix}__dim_{dim}__B1"
-        fit_id_b2 = f"{fit_id_prefix}__dim_{dim}__B2"
+        suffix = "" if chains == _CHAINS else "__retry8"
+        fit_id_b1 = f"{fit_id_prefix}__dim_{dim}__B1{suffix}"
+        fit_id_b2 = f"{fit_id_prefix}__dim_{dim}__B2{suffix}"
 
-        logger.info("Per-dimension fallback: fitting %s (K=%d)...", dim, X_dim.shape[1])
+        logger.info("Per-dimension fallback: fitting %s (K=%d, chains=%d)...",
+                     dim, X_dim.shape[1], chains)
 
-        result = _try_b1_b2(
-            df=df, X=X_dim, col_names=col_names_dim, dim_levels=dim_levels,
+        return _try_b1_b2(
+            df=df, X=X_dim, col_names=col_names_dim, dim_levels=dim_lvls,
             b1_stan_file=b1_stan, b2_stan_file=b2_stan,
             stan_data_b1={**common_data, "y": y_logistic},
             stan_data_b2={**common_data, "y": y_ordinal},
             fit_id_b1=fit_id_b1, fit_id_b2=fit_id_b2,
-            seed=seed, output_dir=output_dir,
+            seed=seed, output_dir=output_dir, chains=chains,
             method_label=f"per-dim({dim})",
+            attempt=attempt, strict_gate=strict_gate,
         )
 
-        if result is None:
-            logger.warning("Per-dimension fallback: %s FAILED", dim)
-            all_ok = False
-            break
+    def _dim_succeeded(result: Dict[str, Any]) -> bool:
+        """Check if at least one model type succeeded in a dimension fit."""
+        b1_ok = result.get("logistic", {}).get("status", "FAIL") != "FAIL"
+        b2_ok = result.get("ordinal", {}).get("status", "FAIL") != "FAIL"
+        if attempt == "b1_only":
+            return b1_ok
+        if attempt == "b2_only":
+            return b2_ok
+        return b1_ok or b2_ok
 
-        # Merge amplification results
-        combined_logistic["amplification"].update(result["logistic"]["amplification"])
-        combined_logistic["per_dim_fits"][dim] = result["logistic"]
-        combined_ordinal["amplification"].update(result["ordinal"]["amplification"])
-        if "tier_probs" in result["ordinal"]:
-            combined_ordinal["tier_probs"].update(result["ordinal"].get("tier_probs", {}))
-        combined_ordinal["per_dim_fits"][dim] = result["ordinal"]
+    def _merge_dim(dim: str, result: Dict[str, Any]) -> None:
+        """Merge a successful dimension result into combined dicts."""
+        logistic = result.get("logistic", {})
+        if logistic.get("status", "FAIL") != "FAIL" and "amplification" in logistic:
+            combined_logistic["amplification"].update(logistic["amplification"])
+            combined_logistic["per_dim_fits"][dim] = logistic
+        ordinal = result.get("ordinal", {})
+        if ordinal.get("status", "FAIL") != "FAIL" and "amplification" in ordinal:
+            combined_ordinal["amplification"].update(ordinal["amplification"])
+            if "tier_probs" in ordinal:
+                combined_ordinal["tier_probs"].update(ordinal.get("tier_probs", {}))
+            combined_ordinal["per_dim_fits"][dim] = ordinal
 
-    if not all_ok:
+    # First pass: try all dimensions with standard chain count
+    for dim in DIMENSIONS:
+        result = _fit_dim(dim)
+        if result is not None and _dim_succeeded(result):
+            succeeded_dims.append(dim)
+            _merge_dim(dim, result)
+        else:
+            logger.warning("Per-dimension fallback: %s FAILED (first pass)", dim)
+            failed_dims.append(dim)
+
+    # Retry pass: re-attempt failed dimensions with 8 chains
+    if failed_dims:
+        retry_dims = failed_dims[:]
+        for dim in retry_dims:
+            logger.info("Per-dimension fallback: retrying %s with 8 chains...", dim)
+            result = _fit_dim(dim, chains=8)
+            if result is not None and _dim_succeeded(result):
+                succeeded_dims.append(dim)
+                failed_dims.remove(dim)
+                _merge_dim(dim, result)
+                logger.info("Per-dimension fallback: %s succeeded on retry", dim)
+            else:
+                logger.warning("Per-dimension fallback: %s FAILED on retry too", dim)
+
+    # Return partial results if at least one dimension succeeded
+    if not succeeded_dims:
         return None
 
-    return {
-        "logistic": {
-            "method": "per-dimension logistic",
-            "status": "OK",
-            "amplification": combined_logistic["amplification"],
-            "per_dim_fits": combined_logistic["per_dim_fits"],
-        },
-        "ordinal": {
-            "method": "per-dimension ordinal",
-            "status": "OK",
-            "amplification": combined_ordinal["amplification"],
-            "tier_probs": combined_ordinal["tier_probs"],
-            "per_dim_fits": combined_ordinal["per_dim_fits"],
-        },
+    is_partial = len(failed_dims) > 0
+    if is_partial:
+        logger.warning(
+            "Per-dimension fallback: partial results — succeeded: %s, failed: %s",
+            succeeded_dims, failed_dims,
+        )
+
+    logistic_result: Dict[str, Any] = {
+        "method": "per-dimension logistic",
+        "amplification": combined_logistic["amplification"],
+        "per_dim_fits": combined_logistic["per_dim_fits"],
+        "partial": is_partial,
+        "dimensions_succeeded": succeeded_dims,
+        "dimensions_failed": failed_dims,
     }
+    ordinal_result: Dict[str, Any] = {
+        "method": "per-dimension ordinal",
+        "amplification": combined_ordinal["amplification"],
+        "tier_probs": combined_ordinal["tier_probs"],
+        "per_dim_fits": combined_ordinal["per_dim_fits"],
+        "partial": is_partial,
+        "dimensions_succeeded": succeeded_dims,
+        "dimensions_failed": failed_dims,
+    }
+
+    # Determine status for each model type based on what we have
+    logistic_result["status"] = (
+        "OK" if combined_logistic["per_dim_fits"] and not is_partial
+        else "WARN" if combined_logistic["per_dim_fits"]
+        else "FAIL"
+    )
+    ordinal_result["status"] = (
+        "OK" if combined_ordinal["per_dim_fits"] and not is_partial
+        else "WARN" if combined_ordinal["per_dim_fits"]
+        else "FAIL"
+    )
+
+    return {"logistic": logistic_result, "ordinal": ordinal_result}
 
 
 # ------------------------------------------------------------------
@@ -964,8 +1241,15 @@ def run_bayes_robustness(
 
             _validate_case_ids(df, f"{model}/{severity_metric}")
 
+            # ── Pre-flight: collapse rare severity bands ──
+            df = _collapse_rare_severity_bands(df, severity_metric)
+
             # Build design matrix (shared by B1 and B2)
+            # Adaptive interaction pruning is built into _build_design_matrix
             X, col_names = _build_design_matrix(df, severity_metric)
+
+            # ── Pre-flight: drop zero-variance columns ──
+            X, col_names = _drop_zero_variance_columns(X, col_names)
             dim_levels = _get_dimension_levels(df)
 
             # Complaint ID integer mapping
@@ -1025,9 +1309,51 @@ def run_bayes_robustness(
                 "use_random_intercept": use_random_intercept,
             }
 
-            # ── Fit B1 + B2 (with 5-step fallback chain for monetary_severity) ──
+            # ── Build response variables ──
             y_logistic = (df["tier"].values == 2).astype(int).tolist()
             y_ordinal = np.clip((df["tier"].values + 1).astype(int), 1, 3).tolist()
+
+            # ── Pre-fit separation check ──────────────────────────────
+            # Complete or quasi-complete separation makes the logistic
+            # likelihood flat, so the MCMC sampler gets stuck at initial
+            # values (constant draws → rhat >> 1, ess = num_chains).
+            # Detect this BEFORE entering the fallback chain to avoid
+            # wasting time on 5 doomed fits.
+            _MIN_EVENTS = 10  # need ≥10 in each class for stable logistic
+            n_pos = sum(y_logistic)
+            n_neg = len(y_logistic) - n_pos
+            if n_pos < _MIN_EVENTS or n_neg < _MIN_EVENTS:
+                logger.warning(
+                    "%s/%s: skipping Bayesian fits — response has %d "
+                    "tier-2 vs %d non-tier-2 (need ≥%d in each class to "
+                    "avoid complete separation)",
+                    model, severity_metric, n_pos, n_neg, _MIN_EVENTS,
+                )
+                model_results[severity_metric] = {
+                    **metric_result,
+                    "status": "SKIP",
+                    "reason": (
+                        f"complete separation: {n_pos} tier-2 vs "
+                        f"{n_neg} non-tier-2 (min {_MIN_EVENTS} required)"
+                    ),
+                }
+                continue
+
+            # Similarly check ordinal: need ≥5 observations per tier level
+            _MIN_PER_LEVEL = 5
+            ordinal_counts = np.bincount(y_ordinal, minlength=4)[1:]  # levels 1,2,3
+            sparse_levels = [
+                f"tier{i}" for i, c in enumerate(ordinal_counts)
+                if c < _MIN_PER_LEVEL
+            ]
+            if sparse_levels:
+                logger.warning(
+                    "%s/%s: ordinal response has sparse levels %s "
+                    "(counts: tier0=%d, tier1=%d, tier2=%d); "
+                    "B2 ordinal may fail",
+                    model, severity_metric, sparse_levels,
+                    ordinal_counts[0], ordinal_counts[1], ordinal_counts[2],
+                )
 
             fit_prefix = f"{model.replace('-', '')}__{severity_metric.replace('_', '')}"
 
@@ -1060,40 +1386,90 @@ def run_bayes_robustness(
                     return _LOGIT_STAN, _ORDINAL_STAN
                 return _LOGIT_FIXED_STAN, _ORDINAL_FIXED_STAN
 
-            # ── 5-step fallback chain (applied to both severity metrics) ──
-            # If singleton ratio is high, we start with fixed-effect models.
+            # ── Fallback chain with independent B1/B2 tracking ──
             # The chain progressively tries more robust configurations.
+            # B1 (logistic) and B2 (ordinal) are tracked independently:
+            # if one succeeds at step N, only the other is retried.
+            #
+            # Steps 1-3.5 use strict diagnostic gates.
+            # Steps 4-5 use relaxed gates (MARGINAL status for borderline fits).
             attempted: List[str] = []
-            result: Optional[Dict[str, Any]] = None
-            fallback_used: Optional[str] = None
+            result_b1: Optional[Dict[str, Any]] = None
+            result_b2: Optional[Dict[str, Any]] = None
+            fallback_b1: Optional[str] = None
+            fallback_b2: Optional[str] = None
+            need_b1 = True
+            need_b2 = True
+
+            _FALLBACK_ORDER = [
+                "standard", "category-RE", "per-dimension",
+                "main-effects-only", "flex-prior", "aggressive-sampler",
+            ]
+
+            def _which_attempt() -> str:
+                if need_b1 and need_b2:
+                    return "both"
+                if need_b1:
+                    logger.info("  (attempting B1 logistic only — B2 already resolved)")
+                    return "b1_only"
+                logger.info("  (attempting B2 ordinal only — B1 already resolved)")
+                return "b2_only"
+
+            def _harvest(
+                step_result: Dict[str, Any],
+                label: str,
+            ) -> None:
+                """Extract successful B1/B2 from step_result into tracking vars."""
+                nonlocal result_b1, result_b2, fallback_b1, fallback_b2
+                nonlocal need_b1, need_b2
+                b1 = step_result.get("logistic", {})
+                b2 = step_result.get("ordinal", {})
+                if need_b1 and b1.get("status") not in ("FAIL", None):
+                    result_b1 = b1
+                    fallback_b1 = label
+                    need_b1 = False
+                    logger.info("  -> B1 logistic resolved at [%s] (status=%s)",
+                                label, b1.get("status"))
+                if need_b2 and b2.get("status") not in ("FAIL", None):
+                    result_b2 = b2
+                    fallback_b2 = label
+                    need_b2 = False
+                    logger.info("  -> B2 ordinal resolved at [%s] (status=%s)",
+                                label, b2.get("status"))
+
+            def _latest_fallback() -> Optional[str]:
+                """Return the latest (worst) fallback step used."""
+                if fallback_b1 is None and fallback_b2 is None:
+                    return None
+                idx_b1 = _FALLBACK_ORDER.index(fallback_b1) if fallback_b1 in _FALLBACK_ORDER else -1
+                idx_b2 = _FALLBACK_ORDER.index(fallback_b2) if fallback_b2 in _FALLBACK_ORDER else -1
+                idx = max(idx_b1, idx_b2)
+                return _FALLBACK_ORDER[idx] if idx >= 0 else (fallback_b1 or fallback_b2)
 
             # ── Step 1: standard fit ──
-            step_label = "standard"
             method_lbl = "hierarchical" if use_random_intercept else "fixed-effect"
             logger.info("%s fallback chain: step 1 -- %s fit (K=%d)",
                         severity_metric, method_lbl, X.shape[1])
             b1_stan, b2_stan = _pick_stan_files(use_random_intercept, flex=False)
             sd_b1, sd_b2 = _make_stan_data(X, use_random_intercept)
-            result = _try_b1_b2(
+            step_result = _try_b1_b2(
                 df=df, X=X, col_names=col_names, dim_levels=dim_levels,
                 b1_stan_file=b1_stan, b2_stan_file=b2_stan,
                 stan_data_b1=sd_b1, stan_data_b2=sd_b2,
                 fit_id_b1=f"B1__{fit_prefix}", fit_id_b2=f"B2__{fit_prefix}",
                 seed=seed, output_dir=output_dir,
-                method_label=method_lbl,
+                method_label=method_lbl, attempt=_which_attempt(),
             )
-            if result is not None:
-                fallback_used = step_label
-                logger.info("%s: step 1 (%s) succeeded", severity_metric, method_lbl)
+            _harvest(step_result, "standard")
+            if not need_b1 and not need_b2:
+                logger.info("%s: step 1 (%s) succeeded for both B1+B2", severity_metric, method_lbl)
             else:
                 attempted.append(f"step 1: {method_lbl} (K={X.shape[1]})")
-                logger.warning("%s: step 1 (%s) FAILED", severity_metric, method_lbl)
+                logger.warning("%s: step 1 (%s) — need_b1=%s, need_b2=%s",
+                               severity_metric, method_lbl, need_b1, need_b2)
 
             # ── Fallback 2: category-level random intercept ──
-            if result is None:
-                # Use product_category as grouping variable (coarser
-                # than complaint ID, so random intercepts are
-                # identifiable even with many singletons).
+            if need_b1 or need_b2:
                 cat_col = "product_category"
                 if cat_col in df.columns and df[cat_col].notna().sum() > 0:
                     cat_vals = df[cat_col].fillna("_unknown_").values
@@ -1111,7 +1487,7 @@ def run_bayes_robustness(
                         "N": len(df), "K": X.shape[1], "X": X.tolist(),
                         "J": J_cat, "jj": jj_cat.tolist(),
                     }
-                    result = _try_b1_b2(
+                    step_result = _try_b1_b2(
                         df=df, X=X, col_names=col_names, dim_levels=dim_levels,
                         b1_stan_file=b1_stan_cat, b2_stan_file=b2_stan_cat,
                         stan_data_b1={**common_cat, "y": y_logistic},
@@ -1120,13 +1496,15 @@ def run_bayes_robustness(
                         fit_id_b2=f"B2__{fit_prefix}__catRE",
                         seed=seed, output_dir=output_dir,
                         method_label=f"category-RE({cat_col})",
+                        attempt=_which_attempt(),
                     )
-                    if result is not None:
-                        fallback_used = "category-RE"
+                    _harvest(step_result, "category-RE")
+                    if not need_b1 and not need_b2:
                         logger.info("%s: step 2 (category RE) succeeded", severity_metric)
                     else:
                         attempted.append(f"step 2: category-RE({cat_col}, J={J_cat})")
-                        logger.warning("%s: step 2 (category RE) FAILED", severity_metric)
+                        logger.warning("%s: step 2 (category RE) — need_b1=%s, need_b2=%s",
+                                       severity_metric, need_b1, need_b2)
                 else:
                     attempted.append(f"step 2: category-RE skipped ({cat_col} not available)")
                     logger.warning(
@@ -1134,13 +1512,13 @@ def run_bayes_robustness(
                         severity_metric, cat_col,
                     )
 
-            # ── Fallback 3: per-dimension models ──
-            if result is None:
+            # ── Fallback 3: per-dimension models (partial credit + retry) ──
+            if need_b1 or need_b2:
                 logger.info(
                     "%s fallback chain: step 3 -- per-dimension models",
                     severity_metric,
                 )
-                result = _try_per_dimension(
+                per_dim_result = _try_per_dimension(
                     df=df,
                     severity_metric=severity_metric,
                     jj=jj, J=J,
@@ -1148,31 +1526,72 @@ def run_bayes_robustness(
                     fit_id_prefix=fit_prefix,
                     seed=seed,
                     output_dir=output_dir,
+                    attempt=_which_attempt(),
                 )
-                if result is not None:
-                    fallback_used = "per-dimension"
-                    logger.info("%s: step 3 (per-dimension) succeeded", severity_metric)
+                if per_dim_result is not None:
+                    is_partial = per_dim_result.get("logistic", {}).get("partial", False)
+                    label = "per-dimension (partial)" if is_partial else "per-dimension"
+                    _harvest(per_dim_result, label)
+                    if not need_b1 and not need_b2:
+                        logger.info("%s: step 3 (per-dimension) succeeded", severity_metric)
+                    else:
+                        attempted.append("step 3: per-dimension models (partial)")
+                        logger.warning("%s: step 3 — need_b1=%s, need_b2=%s",
+                                       severity_metric, need_b1, need_b2)
                 else:
                     attempted.append("step 3: per-dimension models")
                     logger.warning("%s: step 3 (per-dimension) FAILED", severity_metric)
 
-            # ── Fallback 4: stronger priors (main=0.8, interaction=0.4) ──
-            # Build per-column prior_sd once for steps 4 and 5:
-            # 0.8 for main effects, 0.4 for interaction terms (columns
-            # containing '__x__').
+            # ── Fallback 3.5: main-effects-only model ──
+            if need_b1 or need_b2:
+                logger.info(
+                    "%s fallback chain: step 3.5 -- main-effects-only model",
+                    severity_metric,
+                )
+                X_main, col_names_main = _build_design_matrix(
+                    df, severity_metric, include_interactions=False,
+                )
+                X_main, col_names_main = _drop_zero_variance_columns(X_main, col_names_main)
+                dim_levels_main = _get_dimension_levels(df)
+
+                b1_stan_main, b2_stan_main = _pick_stan_files(use_random_intercept, flex=False)
+                sd_b1_main, sd_b2_main = _make_stan_data(X_main, use_random_intercept)
+
+                step_result = _try_b1_b2(
+                    df=df, X=X_main, col_names=col_names_main,
+                    dim_levels=dim_levels_main,
+                    b1_stan_file=b1_stan_main, b2_stan_file=b2_stan_main,
+                    stan_data_b1=sd_b1_main, stan_data_b2=sd_b2_main,
+                    fit_id_b1=f"B1__{fit_prefix}__mainonly",
+                    fit_id_b2=f"B2__{fit_prefix}__mainonly",
+                    seed=seed, output_dir=output_dir,
+                    method_label="main-effects-only",
+                    attempt=_which_attempt(),
+                )
+                _harvest(step_result, "main-effects-only")
+                if not need_b1 and not need_b2:
+                    logger.info("%s: step 3.5 (main-effects-only) succeeded", severity_metric)
+                else:
+                    attempted.append(f"step 3.5: main-effects-only (K={X_main.shape[1]})")
+                    logger.warning("%s: step 3.5 — need_b1=%s, need_b2=%s",
+                                   severity_metric, need_b1, need_b2)
+
+            # ── Fallback 4: stronger priors with relaxed gate ──
+            # Build per-column prior_sd: 0.8 for main effects, 0.4 for
+            # interaction terms (columns containing '__x__').
             flex_prior_sd = np.array([
                 0.4 if "__x__" in col else 0.8 for col in col_names
             ])
-            if result is None:
+            if need_b1 or need_b2:
                 logger.info(
-                    "%s fallback chain: step 4 -- stronger priors (main=0.8, interaction=0.4)",
+                    "%s fallback chain: step 4 -- stronger priors + relaxed gate",
                     severity_metric,
                 )
                 b1_flex, b2_flex = _pick_stan_files(use_random_intercept, flex=True)
                 sd_b1_flex, sd_b2_flex = _make_stan_data(
                     X, use_random_intercept, prior_sd=flex_prior_sd,
                 )
-                result = _try_b1_b2(
+                step_result = _try_b1_b2(
                     df=df, X=X, col_names=col_names, dim_levels=dim_levels,
                     b1_stan_file=b1_flex, b2_stan_file=b2_flex,
                     stan_data_b1=sd_b1_flex, stan_data_b2=sd_b2_flex,
@@ -1180,27 +1599,28 @@ def run_bayes_robustness(
                     fit_id_b2=f"B2__{fit_prefix}__flex",
                     seed=seed, output_dir=output_dir,
                     method_label="flex-prior",
+                    attempt=_which_attempt(),
+                    strict_gate=False,
                 )
-                if result is not None:
-                    fallback_used = "flex-prior"
+                _harvest(step_result, "flex-prior")
+                if not need_b1 and not need_b2:
                     logger.info("%s: step 4 (stronger priors) succeeded", severity_metric)
                 else:
-                    attempted.append("step 4: flex priors (main=0.8, interaction=0.4)")
-                    logger.warning("%s: step 4 (stronger priors) FAILED", severity_metric)
+                    attempted.append("step 4: flex priors + relaxed gate")
+                    logger.warning("%s: step 4 — need_b1=%s, need_b2=%s",
+                                   severity_metric, need_b1, need_b2)
 
-            # ── Fallback 5: aggressive sampler (max_treedepth=15) ──
-            if result is None:
+            # ── Fallback 5: aggressive sampler with relaxed gate ──
+            if need_b1 or need_b2:
                 logger.info(
-                    "%s fallback chain: step 5 -- aggressive sampler (max_treedepth=15)",
+                    "%s fallback chain: step 5 -- aggressive sampler + relaxed gate",
                     severity_metric,
                 )
-                # Re-use stronger priors from step 4 combined with
-                # aggressive sampler tuning (higher max_treedepth).
                 b1_flex, b2_flex = _pick_stan_files(use_random_intercept, flex=True)
                 sd_b1_agg, sd_b2_agg = _make_stan_data(
                     X, use_random_intercept, prior_sd=flex_prior_sd,
                 )
-                result = _try_b1_b2(
+                step_result = _try_b1_b2(
                     df=df, X=X, col_names=col_names, dim_levels=dim_levels,
                     b1_stan_file=b1_flex, b2_stan_file=b2_flex,
                     stan_data_b1=sd_b1_agg, stan_data_b2=sd_b2_agg,
@@ -1210,16 +1630,48 @@ def run_bayes_robustness(
                     adapt_delta=0.99,
                     max_treedepth=15,
                     method_label="aggressive-sampler",
+                    attempt=_which_attempt(),
+                    strict_gate=False,
                 )
-                if result is not None:
-                    fallback_used = "aggressive-sampler"
+                _harvest(step_result, "aggressive-sampler")
+                if not need_b1 and not need_b2:
                     logger.info("%s: step 5 (aggressive sampler) succeeded", severity_metric)
                 else:
-                    attempted.append("step 5: aggressive sampler (max_treedepth=15)")
-                    logger.warning("%s: step 5 (aggressive sampler) FAILED", severity_metric)
+                    attempted.append("step 5: aggressive sampler + relaxed gate")
+                    logger.warning("%s: step 5 — need_b1=%s, need_b2=%s",
+                                   severity_metric, need_b1, need_b2)
 
-            # ── All fallbacks exhausted -> record failure and continue ──
-            if result is None:
+            # ── Assemble final metric_result ──
+            logger.info(
+                "%s/%s fallback chain summary: B1=%s (step=%s), B2=%s (step=%s)",
+                model, severity_metric,
+                result_b1.get("status", "FAIL") if result_b1 else "FAIL",
+                fallback_b1 or "none",
+                result_b2.get("status", "FAIL") if result_b2 else "FAIL",
+                fallback_b2 or "none",
+            )
+            if result_b1 is not None:
+                metric_result["logistic"] = result_b1
+            else:
+                metric_result["logistic"] = {"status": "FAIL"}
+
+            if result_b2 is not None:
+                metric_result["ordinal"] = result_b2
+            else:
+                metric_result["ordinal"] = {"status": "FAIL"}
+
+            # Track which fallback each model type used
+            if fallback_b1:
+                metric_result["fallback_step_b1"] = fallback_b1
+            if fallback_b2:
+                metric_result["fallback_step_b2"] = fallback_b2
+            # Backward compat: overall fallback_step = latest/worst of the two
+            fb = _latest_fallback()
+            if fb:
+                metric_result["fallback_step"] = fb
+
+            # Record total failure only if BOTH B1 and B2 failed
+            if need_b1 and need_b2:
                 msg_lines = [
                     f"All Bayesian fallbacks FAILED for {model}/{severity_metric}.",
                     "Attempted strategies:",
@@ -1229,16 +1681,15 @@ def run_bayes_robustness(
                 msg_lines.append("Posterior draws are unreliable for all attempted configurations.")
                 full_msg = "\n".join(msg_lines)
                 logger.error(full_msg)
-                model_results[severity_metric] = {
-                    "status": "FAIL",
-                    "error": full_msg,
-                    "metric": severity_metric,
-                }
-                continue
-
-            if fallback_used is not None:
-                metric_result["fallback_step"] = fallback_used
-            metric_result.update(result)
+                metric_result["status"] = "FAIL"
+                metric_result["error"] = full_msg
+            elif need_b1 or need_b2:
+                failed_type = "B1 logistic" if need_b1 else "B2 ordinal"
+                ok_type = "B2 ordinal" if need_b1 else "B1 logistic"
+                logger.warning(
+                    "%s/%s: %s succeeded but %s failed after all fallbacks",
+                    model, severity_metric, ok_type, failed_type,
+                )
 
             model_results[severity_metric] = metric_result
 

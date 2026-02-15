@@ -1325,6 +1325,14 @@ def logistic_interaction_tier2(
                     dimension, model, n_nan, len(interaction_terms),
                     {t: f"{float(params[t]):.2f}" for t in interaction_terms},
                 )
+                logger.info(
+                    "GEE interaction %s/%s: no fallback attempted — "
+                    "the interaction term is the quantity of interest so "
+                    "main-effects-only GEE would not answer the same question; "
+                    "Bayesian robustness models handle separation via "
+                    "regularising priors (see bayes_robustness.py)",
+                    dimension, model,
+                )
 
         # Joint test for interaction terms
         if interaction_terms and not separation_detected:

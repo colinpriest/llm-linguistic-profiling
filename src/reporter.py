@@ -1641,7 +1641,7 @@ def _build_tab_disparate_impact_association(
                 fallbacks = log_diag.get("fallback_actions", [])
                 method = logistic.get("method", "MLE logit")
 
-                status_color = {"OK": "#2ecc71", "WARN": "#f39c12", "FAIL": "#e74c3c"}.get(status, "#333")
+                status_color = {"OK": "#2ecc71", "WARN": "#f39c12", "MARGINAL": "#e67e22", "FAIL": "#e74c3c"}.get(status, "#333")
                 parts.append(f'<p style="margin-top:10px;"><strong>Method:</strong> {html.escape(method)} '
                              f'| <strong>Status:</strong> <span style="color:{status_color};font-weight:bold;">{status}</span></p>')
 
@@ -3308,7 +3308,7 @@ def _build_tab_severity(
     # ── Bayesian robustness status banner ──
     bayes_rob = sev.get("bayesian_robustness", {})
     if bayes_rob:
-        n_fail, n_warn, n_fallback = 0, 0, 0
+        n_fail, n_warn, n_marginal, n_fallback = 0, 0, 0, 0
         fallback_details = []
         for model_name in models:
             mr = bayes_rob.get(model_name, {})
@@ -3326,6 +3326,8 @@ def _build_tab_severity(
                     status = mm.get(mtype, {}).get("status", "")
                     if status == "FAIL":
                         n_fail += 1
+                    elif status == "MARGINAL":
+                        n_marginal += 1
                     elif status == "WARN":
                         n_warn += 1
 
@@ -3336,7 +3338,14 @@ def _build_tab_severity(
                          'See Panel 11 (Bayesian Robustness) for details. '
                          'Frequentist results remain valid but Bayesian robustness checks are incomplete.')
             parts.append('</div>')
-        elif n_fallback > 0:
+        if n_marginal > 0:
+            parts.append('<div style="background:#fdf2e9;border-left:4px solid #e67e22;padding:12px;margin:10px 0;">')
+            parts.append(f'<strong style="color:#e67e22;">&#9888; Bayesian Marginal Convergence:</strong> '
+                         f'{n_marginal} Stan model(s) converged under relaxed criteria '
+                         '(rhat &le; 1.05, ESS &ge; 200, divergences &le; 2). '
+                         'Interpret with caution. See Panel 11 for details.')
+            parts.append('</div>')
+        if n_fallback > 0 and n_fail == 0:
             parts.append('<div style="background:#fef9e7;border-left:4px solid #f39c12;padding:12px;margin:10px 0;">')
             parts.append(f'<strong style="color:#f39c12;">&#9888; Bayesian Fallback Strategies Used:</strong> '
                          f'{n_fallback} model configuration(s) required fallback strategies to achieve convergence. '
@@ -3345,7 +3354,7 @@ def _build_tab_severity(
                 parts.append(f'<br><small>Affected: {"; ".join(fallback_details[:3])}'
                              f'{"..." if len(fallback_details) > 3 else ""}</small>')
             parts.append('</div>')
-        elif n_warn > 0:
+        elif n_warn > 0 and n_fail == 0 and n_marginal == 0:
             parts.append('<div style="background:#fef9e7;border-left:4px solid #f39c12;padding:12px;margin:10px 0;">')
             parts.append(f'<strong style="color:#f39c12;">&#9888; Bayesian Model Warnings:</strong> '
                          f'{n_warn} Stan model(s) had minor issues (e.g., treedepth hits). '
@@ -4337,7 +4346,7 @@ def _build_tab_severity(
         # Status summary cards
         parts.append('<h3>Model Fit Status</h3>')
         parts.append('<div class="metrics-grid">')
-        n_ok, n_warn, n_fail, n_skip = 0, 0, 0, 0
+        n_ok, n_warn, n_marginal, n_fail, n_skip = 0, 0, 0, 0, 0
         for model in models:
             mr = bayes_rob.get(model, {})
             if mr.get("skipped"):
@@ -4354,11 +4363,14 @@ def _build_tab_severity(
                         n_ok += 1
                     elif status == "WARN":
                         n_warn += 1
+                    elif status == "MARGINAL":
+                        n_marginal += 1
                     elif status == "FAIL":
                         n_fail += 1
 
         status_colors = [("#2ecc71", "#eafaf1", "OK", n_ok),
                          ("#f39c12", "#fef9e7", "WARN", n_warn),
+                         ("#e67e22", "#fdf2e9", "MARGINAL", n_marginal),
                          ("#e74c3c", "#fdedec", "FAIL", n_fail),
                          ("#95a5a6", "#f2f3f4", "SKIPPED", n_skip)]
         for color, bg, label, count in status_colors:
@@ -4370,9 +4382,11 @@ def _build_tab_severity(
 
         # Detailed diagnostics table
         parts.append('<h3>MCMC Diagnostics</h3>')
-        parts.append('<p>Acceptance criteria: R-hat &le; 1.01, ESS &ge; 400, 0 divergences. '
+        parts.append('<p>Strict criteria (steps 1-3.5): R-hat &le; 1.01, ESS &ge; 400, 0 divergences. '
+                     'Relaxed criteria (steps 4-5): R-hat &le; 1.05, ESS &ge; 200, divergences &le; 2. '
                      'Status: <span style="color:#2ecc71">OK</span> = clean, '
                      '<span style="color:#f39c12">WARN</span> = minor issues (treedepth hits), '
+                     '<span style="color:#e67e22">MARGINAL</span> = converged under relaxed criteria (interpret with caution), '
                      '<span style="color:#e74c3c">FAIL</span> = non-convergent (results unreliable).</p>')
         parts.append('<table class="sortable"><thead><tr>')
         parts.append('<th>Model</th><th>Metric</th><th>Type</th><th>Status</th>')
@@ -4412,10 +4426,14 @@ def _build_tab_severity(
                     td = diag.get("treedepth_hits", 0)
 
                     # Status color
-                    s_colors = {"OK": "#2ecc71", "WARN": "#f39c12", "FAIL": "#e74c3c"}
+                    s_colors = {"OK": "#2ecc71", "WARN": "#f39c12", "MARGINAL": "#e67e22", "FAIL": "#e74c3c"}
                     s_color = s_colors.get(status, "#333")
-                    row_bg = ' style="background:#fdedec;"' if status == "FAIL" else (
-                        ' style="background:#fef9e7;"' if status == "WARN" else "")
+                    row_bg = (
+                        ' style="background:#fdedec;"' if status == "FAIL"
+                        else ' style="background:#fdf2e9;"' if status == "MARGINAL"
+                        else ' style="background:#fef9e7;"' if status == "WARN"
+                        else ""
+                    )
 
                     # Highlight problematic diagnostics
                     rhat_style = ' style="color:#e74c3c;font-weight:bold;"' if is_estimable(rhat) and rhat > 1.01 else ""
@@ -4460,8 +4478,10 @@ def _build_tab_severity(
             fallback_desc = {
                 "category-RE": "Used product_category random effects instead of complaint-level",
                 "per-dimension": "Fitted separate models per demographic dimension",
-                "flex-prior": "Applied tighter priors (main=0.8, interaction=0.4)",
-                "aggressive-sampler": "Increased max_treedepth to 15",
+                "per-dimension (partial)": "Fitted per-dimension models; some dimensions did not converge",
+                "main-effects-only": "Fitted without interaction terms (main effects only)",
+                "flex-prior": "Applied tighter priors (main=0.8, interaction=0.4) with relaxed diagnostics",
+                "aggressive-sampler": "Increased max_treedepth to 15 with relaxed diagnostics",
             }
             for model, metric, fb in fallback_actions:
                 desc = fallback_desc.get(fb, fb)
@@ -4497,6 +4517,13 @@ def _build_tab_severity(
                     if not mdata or mdata.get("status") == "FAIL":
                         continue
 
+                    # Annotate MARGINAL or partial results
+                    type_suffix = ""
+                    if mdata.get("status") == "MARGINAL":
+                        type_suffix = " *"
+                    if mdata.get("partial"):
+                        type_suffix += " &dagger;"
+
                     amp = mdata.get("amplification", {})
                     for dim in ["age", "geographic", "education", "socioeconomic"]:
                         dim_amp = amp.get(dim, {})
@@ -4522,7 +4549,7 @@ def _build_tab_severity(
                         parts.append(f'<td>{html.escape(model)}</td>')
                         parts.append(f'<td>{metric.replace("_", " ").title()}</td>')
                         parts.append(f'<td>{dim.title()}</td>')
-                        parts.append(f'<td>{mlabel}</td>')
+                        parts.append(f'<td>{mlabel}{type_suffix}</td>')
                         parts.append(f'<td>{_fmt(a_mean, 4)}</td>')
                         parts.append(f'<td>[{_fmt(a_lo, 4)}, {_fmt(a_hi, 4)}]</td>')
                         # Color-code P(A>0)
@@ -4533,7 +4560,18 @@ def _build_tab_severity(
                         parts.append(f'<td>{_fmt(d_high, 4)}</td>')
                         parts.append('</tr>')
 
+                    # Note partial dimensions
+                    if mdata.get("partial") and mdata.get("dimensions_failed"):
+                        failed = mdata["dimensions_failed"]
+                        parts.append(f'<tr><td colspan="9" style="color:#e67e22;font-style:italic;">'
+                                     f'&dagger; {mlabel}: dimensions not converged: {", ".join(failed)}'
+                                     f'</td></tr>')
+
         parts.append('</tbody></table>')
+        # Footnote legend for annotations
+        parts.append('<p style="font-size:0.85em;color:#666;margin-top:5px;">'
+                     '* = converged under relaxed criteria (MARGINAL). '
+                     '&dagger; = partial per-dimension results (some dimensions failed to converge).</p>')
 
         # Note about non-confirmatory status
         parts.append('<div style="background:#f8f9fa;border-left:4px solid #95a5a6;padding:12px;margin-top:15px;">')

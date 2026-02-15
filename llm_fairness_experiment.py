@@ -119,9 +119,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def setup_logging(output_dir: str, verbose: bool) -> None:
+def setup_logging(output_dir: str, verbose: bool, timestamp: str) -> None:
     """Configure console and file logging."""
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     log_path = Path(output_dir) / f"experiment_{timestamp}.log"
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -175,7 +174,10 @@ def main() -> None:
             print(f"ERROR: Invalid --skip-steps value: {args.skip_steps!r}", file=sys.stderr)
             sys.exit(1)
 
-    setup_logging(args.output_dir, args.verbose)
+    # Single timestamp (UTC) shared by log file and all output artifacts
+    run_timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+    setup_logging(args.output_dir, args.verbose, run_timestamp)
     logger = logging.getLogger(__name__)
 
     logger.info("LLM Fairness Experiment v1.2")
@@ -209,6 +211,7 @@ def main() -> None:
         clear_exec_cache=args.clear_exec_cache,
         verbose=args.verbose,
         api_key=api_key,
+        timestamp=run_timestamp,
     )
 
     try:
@@ -292,6 +295,9 @@ def main() -> None:
     if examples_html:
         logger.info("Worked examples HTML: %s", examples_html)
         logger.info("Worked examples JSON: %s", examples_json)
+
+    # Generate paper bundle AFTER reporter + worked-examples have written files
+    experiment.generate_paper_bundle()
 
     # Summary
     logger.info("=" * 60)
