@@ -194,6 +194,77 @@ def _cell_count_analysis(
     return sparse, counts
 
 
+def _check_logistic_separation(
+    X: np.ndarray,
+    y: List[int],
+    col_names: List[str],
+    min_events: int = 2,
+) -> Dict[str, Any]:
+    """Check for near-separation in the logistic model.
+
+    For each dummy column (main effects and interactions), count the
+    number of positive and negative events where the column is 1.
+    Near-separation occurs when any cell has fewer than *min_events*
+    in the minority class — the logistic likelihood becomes flat and
+    MCMC chains get stuck at different modes (high rhat, low ESS,
+    zero divergences).
+
+    Returns a dict with the check results and a flag indicating
+    whether MCMC should be skipped for B1 logistic.
+    """
+    y_arr = np.asarray(y, dtype=int)
+    n_pos_total = int(y_arr.sum())
+    n_neg_total = len(y_arr) - n_pos_total
+
+    separation_cells: List[Dict[str, Any]] = []
+    n_checked = 0
+
+    for j, col in enumerate(col_names):
+        col_vals = X[:, j]
+        # Only check binary dummy columns (0/1)
+        unique_vals = np.unique(col_vals)
+        if len(unique_vals) > 2:
+            continue
+        if not (0.0 in unique_vals and 1.0 in unique_vals):
+            continue
+
+        n_checked += 1
+        mask = col_vals == 1.0
+        n_in_cell = int(mask.sum())
+        if n_in_cell == 0:
+            continue
+        n_pos_in_cell = int(y_arr[mask].sum())
+        n_neg_in_cell = n_in_cell - n_pos_in_cell
+        minority_count = min(n_pos_in_cell, n_neg_in_cell)
+
+        if minority_count < min_events:
+            separation_cells.append({
+                "column": col,
+                "n_total": n_in_cell,
+                "n_pos": n_pos_in_cell,
+                "n_neg": n_neg_in_cell,
+                "minority_count": minority_count,
+                "type": "complete" if minority_count == 0 else "near",
+            })
+
+    n_separation = len(separation_cells)
+    # Recommend skipping MCMC if >25% of dummy columns have separation
+    # OR if any column has complete separation (0 minority events)
+    has_complete = any(c["type"] == "complete" for c in separation_cells)
+    skip_mcmc_b1 = has_complete or (
+        n_checked > 0 and n_separation / n_checked > 0.25
+    )
+
+    return {
+        "n_columns_checked": n_checked,
+        "n_separation_cells": n_separation,
+        "separation_ratio": n_separation / n_checked if n_checked > 0 else 0.0,
+        "has_complete_separation": has_complete,
+        "skip_mcmc_b1": skip_mcmc_b1,
+        "separation_cells": separation_cells,
+    }
+
+
 def _preflight_diagnostics(
     *,
     X: np.ndarray,
@@ -209,7 +280,7 @@ def _preflight_diagnostics(
     """Run pre-flight statistical checks on the design matrix and outcome.
 
     Returns a dict with EPP, rank, condition number, sparse cells,
-    predicted difficulty, and recommendations.
+    logistic separation risk, predicted difficulty, and recommendations.
     """
     N, K = X.shape
     n_pos = sum(y_logistic)
@@ -237,6 +308,9 @@ def _preflight_diagnostics(
     # Cell sparsity
     sparse_cells, cell_counts = _cell_count_analysis(df, severity_metric)
 
+    # Logistic separation check
+    separation = _check_logistic_separation(X, y_logistic, col_names)
+
     # Tier distribution
     tier_counts = df["tier"].value_counts().sort_index().to_dict()
     tier2_rate = n_pos / N if N > 0 else 0.0
@@ -257,6 +331,8 @@ def _preflight_diagnostics(
         difficulty_score += 1
     if pct_singletons > 0.5:
         difficulty_score += 1
+    if separation["skip_mcmc_b1"]:
+        difficulty_score += 2
 
     if difficulty_score >= 4:
         predicted_difficulty = "very_hard"
@@ -285,7 +361,7 @@ def _preflight_diagnostics(
     if pct_singletons > 0.5:
         recommendations.append(
             "100% singleton observations prevent complaint-level random "
-            "intercepts; consider using persona-decisions data (36 obs/complaint)"
+            "intercepts; fixed-effect models used instead"
         )
     if tier2_rate < 0.05:
         recommendations.append(
@@ -296,6 +372,15 @@ def _preflight_diagnostics(
         recommendations.append(
             f"{len(sparse_cells)} cross-tab cells have <5 observations; "
             "some interaction effects may be unidentifiable"
+        )
+    if separation["skip_mcmc_b1"]:
+        n_sep = separation["n_separation_cells"]
+        n_chk = separation["n_columns_checked"]
+        sep_type = "complete" if separation["has_complete_separation"] else "near"
+        recommendations.append(
+            f"B1 logistic has {sep_type} separation in {n_sep}/{n_chk} "
+            f"dummy columns; MCMC will be skipped in favour of "
+            "Pathfinder/ADVI for B1"
         )
 
     return {
@@ -315,6 +400,7 @@ def _preflight_diagnostics(
         "pct_singletons": pct_singletons,
         "predicted_difficulty": predicted_difficulty,
         "recommendations": recommendations,
+        "logistic_separation": separation,
     }
 
 
@@ -1162,35 +1248,134 @@ def _build_postmortem(
     if not root_causes:
         root_causes.append("No clear root cause identified from pre-flight metrics")
 
-    # 7. Recommendations
+    # 7. Context-aware recommendations
+    # Build lookup of which strategies were attempted and their outcomes
+    _step_labels = {a.get("label", ""): a for a in attempted}
+    b1_resolved = result_b1 is not None and result_b1.get("status") not in ("FAIL", None)
+    b2_resolved = result_b2 is not None and result_b2.get("status") not in ("FAIL", None)
+    b1_step = fallback_b1 or "none"
+    b2_step = fallback_b2 or "none"
+
+    def _was_attempted(label: str) -> bool:
+        return label in _step_labels
+
+    def _step_outcome(label: str, model_type: str = "b1") -> str:
+        info = _step_labels.get(label, {})
+        return info.get(f"{model_type}_status", "N/A")
+
     recommendations: List[str] = []
+
+    # Main-effects-only
     if epp < 10:
+        if _was_attempted("main-effects-only"):
+            b1_out = _step_outcome("main-effects-only", "b1")
+            b2_out = _step_outcome("main-effects-only", "b2")
+            recommendations.append(
+                f"Main-effects-only model was attempted (B1={b1_out}, B2={b2_out}); "
+                f"EPP={epp:.1f} remains low — data may be fundamentally "
+                "overparameterized for this sample size"
+            )
+        else:
+            recommendations.append(
+                f"Drop interaction terms to reduce K (EPP={epp:.1f}, need >=10)"
+            )
+
+    # Per-dimension models
+    if K > 10:
+        if _was_attempted("per-dimension") or _was_attempted("per-dimension (partial)"):
+            label = "per-dimension (partial)" if _was_attempted("per-dimension (partial)") else "per-dimension"
+            b1_out = _step_outcome(label, "b1")
+            b2_out = _step_outcome(label, "b2")
+            recommendations.append(
+                f"Per-dimension models were attempted (B1={b1_out}, B2={b2_out})"
+            )
+        else:
+            recommendations.append(
+                "Consider per-dimension models (K=3-5 each) to reduce "
+                "effective dimensionality"
+            )
+
+    # ADVI / Pathfinder
+    advi_attempted = _was_attempted("variational-advi")
+    pf_attempted = _was_attempted("pathfinder")
+    if advi_attempted or pf_attempted or b1_step in ("variational-advi", "pathfinder") or b2_step in ("variational-advi", "pathfinder"):
+        parts = []
+        if advi_attempted:
+            parts.append(f"ADVI: B1={_step_outcome('variational-advi', 'b1')}, B2={_step_outcome('variational-advi', 'b2')}")
+        if pf_attempted:
+            parts.append(f"Pathfinder: B1={_step_outcome('pathfinder', 'b1')}, B2={_step_outcome('pathfinder', 'b2')}")
+        if b1_step in ("variational-advi", "pathfinder"):
+            parts.append(f"B1 resolved via {b1_step}")
+        if b2_step in ("variational-advi", "pathfinder"):
+            parts.append(f"B2 resolved via {b2_step}")
         recommendations.append(
-            "Consider using main-effects-only model (no interactions) "
-            "to improve events-per-parameter ratio"
+            "Approximate inference attempted: " + "; ".join(parts)
         )
+    elif not b1_resolved or not b2_resolved:
+        recommendations.append(
+            "Variational inference (ADVI) or Pathfinder may provide "
+            "approximate posteriors when MCMC fails to converge"
+        )
+
+    # MAP
+    map_attempted = _was_attempted("map-estimate")
+    if map_attempted or b1_step == "map-estimate" or b2_step == "map-estimate":
+        b1_out = _step_outcome("map-estimate", "b1") if map_attempted else "N/A"
+        b2_out = _step_outcome("map-estimate", "b2") if map_attempted else "N/A"
+        resolved_via = []
+        if b1_step == "map-estimate":
+            resolved_via.append("B1")
+        if b2_step == "map-estimate":
+            resolved_via.append("B2")
+        if resolved_via:
+            recommendations.append(
+                f"MAP point estimate resolved {', '.join(resolved_via)} "
+                "(no posterior uncertainty — treat as directional evidence only)"
+            )
+        else:
+            recommendations.append(
+                f"MAP was attempted but failed (B1={b1_out}, B2={b2_out})"
+            )
+    elif not b1_resolved or not b2_resolved:
+        recommendations.append(
+            "MAP point estimates can provide directional evidence "
+            "even without full posterior uncertainty"
+        )
+
+    # Stronger priors
+    if n_pos / N < 0.10 if N > 0 else False:
+        if _was_attempted("flex-prior"):
+            b1_out = _step_outcome("flex-prior", "b1")
+            b2_out = _step_outcome("flex-prior", "b2")
+            recommendations.append(
+                f"Stronger priors were attempted via flex-prior step "
+                f"(B1={b1_out}, B2={b2_out})"
+            )
+        else:
+            recommendations.append(
+                "Consider stronger priors (N(0, 0.3)) to regularize "
+                "coefficients for rare outcomes"
+            )
+
+    # Singleton warning (informational, no misleading suggestion)
     if pct_singletons > 0.5:
         recommendations.append(
-            "Consider using persona_decisions data (36 obs/complaint) instead "
-            "of baseline (1 obs/complaint) to enable random intercepts"
+            f"Singleton structure ({pct_singletons:.0%} of complaints have "
+            "1 observation) prevents complaint-level random intercepts; "
+            "fixed-effect models used instead"
         )
-    recommendations.append(
-        "Variational inference (ADVI) or Pathfinder may provide approximate "
-        "posteriors when MCMC fails to converge"
-    )
-    recommendations.append(
-        "MAP point estimates can provide directional evidence "
-        "even without full posterior uncertainty"
-    )
-    if K > 10:
+
+    # Separation risk
+    sep = preflight.get("logistic_separation", {}) if preflight else {}
+    if sep.get("skip_mcmc_b1"):
+        n_sep = sep.get("n_separation_cells", 0)
+        n_chk = sep.get("n_columns_checked", 0)
         recommendations.append(
-            "Consider per-dimension models (K=3-5 each) to reduce "
-            "effective dimensionality"
-        )
-    if n_pos / N < 0.10 if N > 0 else False:
-        recommendations.append(
-            "Consider stronger priors (N(0, 0.3)) to regularize "
-            "coefficients for rare outcomes"
+            f"B1 logistic near-separation detected ({n_sep}/{n_chk} dummy columns); "
+            f"MCMC steps were skipped for B1 — resolved via {b1_step}"
+            if b1_resolved else
+            f"B1 logistic near-separation detected ({n_sep}/{n_chk} dummy columns); "
+            "MCMC steps were skipped but non-MCMC fallbacks also failed"
         )
 
     return {
@@ -2371,6 +2556,28 @@ def run_bayes_robustness(
                     metric_result["col_names"] = col_names
                     dim_levels = _get_dimension_levels(df)
 
+            # ── Pre-flight: B1 logistic separation skip ──
+            # When per-cell separation is detected, MCMC steps 1-5 will
+            # waste minutes on doomed fits.  Mark B1 as needing non-MCMC
+            # only and record a synthetic "skipped" entry in attempted.
+            b1_skip_mcmc = bool(
+                preflight.get("logistic_separation", {}).get("skip_mcmc_b1")
+            )
+            if b1_skip_mcmc:
+                sep_info = preflight["logistic_separation"]
+                logger.warning(
+                    "PRE-FLIGHT %s/%s: B1 logistic separation detected — "
+                    "%d/%d dummy columns have <%d minority-class events "
+                    "(%s separation). Skipping MCMC steps 1-5 for B1; "
+                    "will attempt ADVI/Pathfinder/MAP directly.",
+                    model, severity_metric,
+                    sep_info["n_separation_cells"],
+                    sep_info["n_columns_checked"],
+                    2,  # min_events default
+                    "complete" if sep_info["has_complete_separation"] else "near",
+                )
+                metric_result["b1_skip_mcmc"] = True
+
             # ── Fallback chain with independent B1/B2 tracking ──
             # The chain progressively tries more robust configurations.
             # B1 (logistic) and B2 (ordinal) are tracked independently:
@@ -2379,6 +2586,9 @@ def run_bayes_robustness(
             # Steps 1-3.5 use strict diagnostic gates.
             # Steps 4-5 use relaxed gates (MARGINAL status for borderline fits).
             # Steps 6-8 use non-MCMC methods (ADVI, Pathfinder, MAP).
+            #
+            # When b1_skip_mcmc is set, MCMC steps attempt B2 only;
+            # B1 is deferred to the non-MCMC steps (6-8).
             attempted: List[Dict[str, Any]] = []
             result_b1: Optional[Dict[str, Any]] = None
             result_b2: Optional[Dict[str, Any]] = None
@@ -2415,14 +2625,30 @@ def run_bayes_robustness(
                         entry[f"{prefix}_div"] = diag.get("divergences", 0)
                 return entry
 
-            def _which_attempt() -> str:
-                if need_b1 and need_b2:
+            def _which_attempt(mcmc_step: bool = True) -> str:
+                """Decide which model types to attempt at this step.
+
+                When *mcmc_step* is True (steps 1-5) and b1_skip_mcmc is
+                set, B1 logistic is deferred even if still needed.
+                Returns "skip" if neither model type should be attempted.
+                """
+                eff_need_b1 = need_b1 and not (mcmc_step and b1_skip_mcmc)
+                if eff_need_b1 and need_b2:
                     return "both"
-                if need_b1:
+                if eff_need_b1:
                     logger.info("  (attempting B1 logistic only — B2 already resolved)")
                     return "b1_only"
-                logger.info("  (attempting B2 ordinal only — B1 already resolved)")
-                return "b2_only"
+                if need_b2:
+                    if mcmc_step and b1_skip_mcmc and need_b1:
+                        logger.info("  (attempting B2 ordinal only — B1 deferred: separation risk)")
+                    else:
+                        logger.info("  (attempting B2 ordinal only — B1 already resolved)")
+                    return "b2_only"
+                if mcmc_step and b1_skip_mcmc and need_b1:
+                    # B2 resolved, B1 deferred — nothing to do at this MCMC step
+                    return "skip"
+                # Both resolved
+                return "both"
 
             def _harvest(
                 step_result: Dict[str, Any],
@@ -2457,28 +2683,36 @@ def run_bayes_robustness(
 
             # ── Step 1: standard fit ──
             method_lbl = "hierarchical" if use_random_intercept else "fixed-effect"
-            logger.info("%s fallback chain: step 1 -- %s fit (K=%d)",
-                        severity_metric, method_lbl, X.shape[1])
-            b1_stan, b2_stan = _pick_stan_files(use_random_intercept, flex=False)
-            sd_b1, sd_b2 = _make_stan_data(X, use_random_intercept)
-            step_result = _try_b1_b2(
-                df=df, X=X, col_names=col_names, dim_levels=dim_levels,
-                b1_stan_file=b1_stan, b2_stan_file=b2_stan,
-                stan_data_b1=sd_b1, stan_data_b2=sd_b2,
-                fit_id_b1=f"B1__{fit_prefix}", fit_id_b2=f"B2__{fit_prefix}",
-                seed=seed, output_dir=output_dir,
-                method_label=method_lbl, attempt=_which_attempt(),
-            )
-            _harvest(step_result, "standard")
-            attempted.append(_step_diag(1, "standard", f"{method_lbl} (K={X.shape[1]})", step_result))
-            if not need_b1 and not need_b2:
-                logger.info("%s: step 1 (%s) succeeded for both B1+B2", severity_metric, method_lbl)
+            _step1_attempt = _which_attempt()
+            if _step1_attempt == "skip":
+                logger.info("%s: step 1 skipped (B2 resolved, B1 deferred to non-MCMC)",
+                            severity_metric)
+                attempted.append({"step": 1, "label": "standard",
+                                  "description": f"{method_lbl} (K={X.shape[1]}) — skipped (B1 separation)",
+                                  "b1_status": "SKIP", "b2_status": "N/A"})
             else:
-                logger.warning("%s: step 1 (%s) — need_b1=%s, need_b2=%s",
-                               severity_metric, method_lbl, need_b1, need_b2)
+                logger.info("%s fallback chain: step 1 -- %s fit (K=%d)",
+                            severity_metric, method_lbl, X.shape[1])
+                b1_stan, b2_stan = _pick_stan_files(use_random_intercept, flex=False)
+                sd_b1, sd_b2 = _make_stan_data(X, use_random_intercept)
+                step_result = _try_b1_b2(
+                    df=df, X=X, col_names=col_names, dim_levels=dim_levels,
+                    b1_stan_file=b1_stan, b2_stan_file=b2_stan,
+                    stan_data_b1=sd_b1, stan_data_b2=sd_b2,
+                    fit_id_b1=f"B1__{fit_prefix}", fit_id_b2=f"B2__{fit_prefix}",
+                    seed=seed, output_dir=output_dir,
+                    method_label=method_lbl, attempt=_step1_attempt,
+                )
+                _harvest(step_result, "standard")
+                attempted.append(_step_diag(1, "standard", f"{method_lbl} (K={X.shape[1]})", step_result))
+                if not need_b1 and not need_b2:
+                    logger.info("%s: step 1 (%s) succeeded for both B1+B2", severity_metric, method_lbl)
+                else:
+                    logger.warning("%s: step 1 (%s) — need_b1=%s, need_b2=%s",
+                                   severity_metric, method_lbl, need_b1, need_b2)
 
             # ── Fallback 2: category-level random intercept ──
-            if need_b1 or need_b2:
+            if (need_b1 or need_b2) and _which_attempt() != "skip":
                 cat_col = "product_category"
                 if cat_col in df.columns and df[cat_col].notna().sum() > 0:
                     cat_vals = df[cat_col].fillna("_unknown_").values
@@ -2522,7 +2756,7 @@ def run_bayes_robustness(
                     )
 
             # ── Fallback 3: per-dimension models (partial credit + retry) ──
-            if need_b1 or need_b2:
+            if (need_b1 or need_b2) and _which_attempt() != "skip":
                 logger.info(
                     "%s fallback chain: step 3 -- per-dimension models",
                     severity_metric,
@@ -2552,7 +2786,7 @@ def run_bayes_robustness(
                     logger.warning("%s: step 3 (per-dimension) FAILED", severity_metric)
 
             # ── Fallback 3.5: main-effects-only model ──
-            if need_b1 or need_b2:
+            if (need_b1 or need_b2) and _which_attempt() != "skip":
                 logger.info(
                     "%s fallback chain: step 3.5 -- main-effects-only model",
                     severity_metric,
@@ -2591,7 +2825,7 @@ def run_bayes_robustness(
             flex_prior_sd = np.array([
                 0.4 if "__x__" in col else 0.8 for col in col_names
             ])
-            if need_b1 or need_b2:
+            if (need_b1 or need_b2) and _which_attempt() != "skip":
                 logger.info(
                     "%s fallback chain: step 4 -- stronger priors + relaxed gate",
                     severity_metric,
@@ -2620,7 +2854,7 @@ def run_bayes_robustness(
                                    severity_metric, need_b1, need_b2)
 
             # ── Fallback 5: aggressive sampler with relaxed gate ──
-            if need_b1 or need_b2:
+            if (need_b1 or need_b2) and _which_attempt() != "skip":
                 logger.info(
                     "%s fallback chain: step 5 -- aggressive sampler + relaxed gate",
                     severity_metric,
