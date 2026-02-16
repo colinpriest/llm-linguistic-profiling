@@ -48,6 +48,25 @@ def _fmt_pval(v: Any) -> str:
     return f"{fv:.4f}"
 
 
+def _fmt_pval_latex(v: Any) -> str:
+    """Format a p-value for raw LaTeX (no escape pass).
+
+    Returns ready-to-embed LaTeX: math-mode scientific notation, dagger
+    for separation, or plain decimal.
+    """
+    if not is_estimable(v):
+        if isinstance(v, NEValue) and v.code == NECode.SINGULAR_MATRIX:
+            return r"N/A$^{\dagger}$"
+        return "---"
+    fv = float(v)
+    if fv < 1e-3:
+        # e.g. 5.11e-05 -> $5.11\times10^{-5}$
+        mantissa, exp = f"{fv:.2e}".split("e")
+        exp_int = int(exp)
+        return f"${mantissa}\\times10^{{{exp_int}}}$"
+    return f"{fv:.4f}"
+
+
 def _fmt_effect(v: Any) -> str:
     """Format an effect size to 3 decimal places."""
     if not is_estimable(v):
@@ -344,23 +363,28 @@ class TableGenerator:
             (r"Tier 0", "No action warranted", "Baseline category", "Primary (reference)"),
             (r"Tier 1", "Non-monetary remediation or guidance", "Positive remediation", "Primary"),
             (r"Tier 2", "Monetary remediation recommended", "Most consequential allocation", "Primary"),
-            (r"\path{Y2 = 1[T=2]}", "Binary: monetary remediation", "Primary distributive endpoint", "Confirmatory"),
-            (r"\path{Y1+ = 1[T>=1]}", "Binary: any positive remediation", "Sensitivity check", "Exploratory"),
-            (r"\path{F = 1[need_more_info]}", "Model requests additional information", "Operational friction (secondary)", "Exploratory"),
-            (r"\path{M = 1[amount_extractable]}", "Dollar amount present indicator", "Two-part severity handling", "Descriptive"),
-            (r"\path{S \in \{L,M,H\}}", r"Monetary severity band (within \path{M=1})", "Severity amplification", "Confirmatory (M=1)"),
+            (r"$Y_2=\mathbf{1}[T=2]$", "Binary: monetary remediation", "Primary distributive endpoint", "Confirmatory"),
+            (r"$Y_1^{+}=\mathbf{1}[T\ge 1]$", "Binary: any positive remediation", "Sensitivity check", "Exploratory"),
+            (r"\indcode{F}{need_more_info}", "Model requests additional information", "Operational friction (secondary)", "Exploratory"),
+            (r"\indcode{M}{amount_extractable}", "Dollar amount present indicator", "Two-part severity handling", "Descriptive"),
+            (r"$S\in\{L,M,H\}$", r"Monetary severity band (within $M=1$)", "Severity amplification", r"Confirmatory ($M=1$)"),
             ("Issue severity", r"Product $\times$ issue derived score", "Severity amplification", "Confirmatory (all)"),
         ]
         tex_lines = [
             r"\begin{table}[htbp]",
             r"\centering",
             r"\small",
+            r"\setlength{\tabcolsep}{5pt}",
+            r"\renewcommand{\arraystretch}{1.12}",
             r"\caption{Endpoint definitions and analysis roles.}",
             r"\label{tab:endpoints}",
-            r"\begin{tabular}{>{\RaggedRight\arraybackslash}p{0.18\linewidth}",
-            r"                >{\RaggedRight\arraybackslash}p{0.34\linewidth}",
-            r"                >{\RaggedRight\arraybackslash}p{0.30\linewidth}",
-            r"                >{\RaggedRight\arraybackslash}p{0.14\linewidth}}",
+            "",
+            r"\begin{tabularx}{\linewidth}{@{}",
+            r"  >{\RaggedRight\arraybackslash}p{0.20\linewidth}",
+            r"  >{\RaggedRight\arraybackslash\hsize=1.08\hsize}X",
+            r"  >{\RaggedRight\arraybackslash\hsize=0.92\hsize}X",
+            r"  >{\RaggedRight\arraybackslash}p{0.18\linewidth}",
+            r"@{}}",
             r"\toprule",
             r"Endpoint & Definition & Rationale & Used as \\",
             r"\midrule",
@@ -368,7 +392,7 @@ class TableGenerator:
         for endpoint, definition, rationale, used_as in tex_rows:
             tex_lines.append(f"{endpoint} & {definition} & {rationale} & {used_as} \\\\")
         tex_lines.append(r"\bottomrule")
-        tex_lines.append(r"\end{tabular}")
+        tex_lines.append(r"\end{tabularx}")
         tex_lines.append(r"\end{table}")
 
         tex_name = _build_filename("table", "main", "endpoint_definitions", "na", "all", 1, "tex")
@@ -417,12 +441,19 @@ class TableGenerator:
         severity = self.ar.get("severity", {})
         dim_sev = severity.get("dimension_severity", {})
 
-        rows = []
-        for dim in ["age", "geographic", "education", "socioeconomic"]:
-            # Get dimension-level disparity from causal analysis
-            rates = causal.get("rates_by_persona", {})
-            effect_sizes = causal.get("effect_sizes", {})
+        # LaTeX dimension labels (allow hyphenation for long words)
+        _dim_tex = {
+            "age": "Age",
+            "geographic": "Geographic",
+            "education": "Education",
+            "socioeconomic": r"Socio\-economic",
+        }
 
+        rows = []          # plain-text tuples for md/csv
+        tex_rows = []      # LaTeX-ready tuples (no escape pass)
+        needs_dagger = False
+
+        for dim in ["age", "geographic", "education", "socioeconomic"]:
             # Get dimension-specific interaction data
             dim_data = {}
             for metric in ["monetary_severity", "issue_severity"]:
@@ -443,12 +474,23 @@ class TableGenerator:
             gee_dim = gee.get("issue_severity", {}).get(model, {}).get(dim, {})
             int_p = gee_dim.get("interaction_p", ne_amp) if not gee_dim.get("skipped") else NE.skipped("GEE skipped")
 
+            p_latex = _fmt_pval_latex(int_p)
+            if r"\dagger" in p_latex:
+                needs_dagger = True
+
             rows.append((
                 dim.capitalize(),
                 _fmt_effect(max_min),
                 _fmt_effect(sd),
                 f"[{_fmt_effect(ci_lo)}, {_fmt_effect(ci_hi)}]",
                 _fmt_pval(int_p),
+            ))
+            tex_rows.append((
+                _dim_tex[dim],
+                _fmt_effect(max_min),
+                _fmt_effect(sd),
+                f"[{_fmt_effect(ci_lo)}, {_fmt_effect(ci_hi)}]",
+                p_latex,
             ))
 
         # Full persona grid summary
@@ -464,24 +506,63 @@ class TableGenerator:
         else:
             gap = ne_full
             bias_hi = ne_full
-        rows.append((
+
+        full_row = (
             "Full persona grid",
             _fmt_effect(gap) if full_amp else "---",
             _fmt_effect(bias_hi) if full_amp else "---",
             f"[{_fmt_effect(full_amp.get('ci_lower', ne_full))}, {_fmt_effect(full_amp.get('ci_upper', ne_full))}]" if full_amp else "---",
             "---",
-        ))
+        )
+        rows.append(full_row)
+        tex_rows.append(full_row)
 
+        # --- Custom LaTeX ---
+        model_clean = model.replace("-", "").replace("_", "")
+        caption = f"Distributive fairness results (Tier 2, matched-guise) -- {model}."
+        label = f"tab:fairness_tier2_{model_clean}"
+
+        tex_lines = [
+            r"\begin{table}[htbp]",
+            r"\centering",
+            r"\small",
+            r"\caption{" + _escape_latex(caption) + "}",
+            r"\label{" + label + "}",
+            r"\begin{tabular}{@{}p{0.30\linewidth}r r p{0.23\linewidth}p{0.17\linewidth}@{}}",
+            r"\toprule",
+            r"Dimension & Max--Min Gap & SD & 95\% CI & Interaction $p$ \\",
+            r"\midrule",
+        ]
+        for dim_label, mm, s, ci, p in tex_rows:
+            tex_lines.append(f"{dim_label} & {mm} & {s} & {ci} & {p} \\\\")
+        tex_lines.append(r"\bottomrule")
+        tex_lines.append(r"\end{tabular}")
+        if needs_dagger:
+            tex_lines.append("")
+            tex_lines.append(r"\vspace{2pt}")
+            tex_lines.append(
+                r"\parbox{0.94\linewidth}{\footnotesize $^{\dagger}$"
+                r" Interaction $p$-value unavailable / not estimable for this row.}"
+            )
+        tex_lines.append(r"\end{table}")
+
+        tex_name = _build_filename("table", "main", "distributive_fairness_tier2", model_clean, "matched", 1, "tex")
+        tex_path = out / tex_name
+        tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
+
+        # --- Markdown + CSV via DataFrame ---
         df = pd.DataFrame(rows, columns=["Dimension", "Max-Min Gap", "SD", "95% CI", "Interaction p"])
 
-        model_clean = model.replace("-", "").replace("_", "")
-        return _write_three_formats(
-            df, out, "table", "main", "distributive_fairness_tier2",
-            model_clean, "matched", 1,
-            caption=f"Distributive fairness results (Tier 2, matched-guise) -- {model}.",
-            label=f"tab:fairness_tier2_{model_clean}",
-            analysis_type="confirmatory",
-        )
+        md_name = _build_filename("table", "main", "distributive_fairness_tier2", model_clean, "matched", 1, "md")
+        md_path = out / md_name
+        md_path.write_text(_dataframe_to_markdown(df, caption), encoding="utf-8")
+
+        csv_name = _build_filename("table", "main", "distributive_fairness_tier2", model_clean, "matched", 1, "csv")
+        csv_path = out / csv_name
+        df.to_csv(csv_path, index=False, encoding="utf-8")
+
+        logger.info("Written table: distributive_fairness_tier2 (.tex/.md/.csv)")
+        return [tex_path, md_path, csv_path]
 
     def _table5_neutralisation(self, out: Path, model: str) -> List[Path]:
         """Table 5: Neutralisation mitigation (primary endpoint)."""
@@ -545,7 +626,9 @@ class TableGenerator:
         gee = severity.get("gee_interactions_tier2", {}).get(metric, {}).get(model, {})
         miss_diag = severity.get("missingness_diagnostic", {})
 
-        rows = []
+        rows = []          # plain-text for md/csv
+        tex_rows = []      # LaTeX-ready
+        has_separation = False
         ne_amp_t6 = NE.missing_data(context="amplification table")
         for dim in ["age", "geographic", "education", "socioeconomic"]:
             gee_dim = gee.get(dim, {})
@@ -558,7 +641,6 @@ class TableGenerator:
                 )
             else:
                 int_p = gee_dim.get("interaction_p", ne_amp_t6)
-            n_obs = gee_dim.get("n_obs", 0) if not gee_dim.get("skipped") else 0
 
             # Amplification should be read from dimension-specific interaction output.
             # Fallback to the model-level interaction object for backward compatibility.
@@ -578,17 +660,19 @@ class TableGenerator:
             if metric == "monetary_severity" and miss_diag:
                 coverage = _fmt_pct(100 * (1 - miss_diag.get("pct_missing", 0)))
 
-            # BH q-value (will be applied in paper_bundle)
-            row = [
-                dim.capitalize(),
-                _fmt_pval(int_p),
-                _fmt_effect(A),
-                _fmt_effect(R),
-                f"[{_fmt_effect(ci_lo)}, {_fmt_effect(ci_hi)}]",
-            ]
+            p_plain = _fmt_pval(int_p)
+            p_latex = _fmt_pval_latex(int_p)
+            if r"\dagger" in p_latex:
+                has_separation = True
+
+            ci_str = f"[{_fmt_effect(ci_lo)}, {_fmt_effect(ci_hi)}]"
+            row_plain = [dim.capitalize(), p_plain, _fmt_effect(A), _fmt_effect(R), ci_str]
+            row_tex = [dim.capitalize(), p_latex, _fmt_effect(A), _fmt_effect(R), ci_str]
             if metric == "monetary_severity":
-                row.append(coverage)
-            rows.append(tuple(row))
+                row_plain.append(coverage)
+                row_tex.append(coverage)
+            rows.append(tuple(row_plain))
+            tex_rows.append(tuple(row_tex))
 
         columns = ["Dimension", "Interaction p", "A (high-low)", "R (ratio)", "95% CI"]
         if metric == "monetary_severity":
@@ -598,22 +682,56 @@ class TableGenerator:
         model_clean = model.replace("-", "").replace("_", "")
         metric_clean = metric.replace("_", "")
         subset = "amount_present" if metric == "monetary_severity" else "all"
-
-        has_separation = any("Sep." in str(r[1]) for r in rows)
         caption = f"Severity amplification (confirmatory) -- {model}, {metric.replace('_', ' ')}."
-        if has_separation:
-            caption += (
-                r" $\dagger$\,Sep.\ = quasi-complete separation in persona $\times$ severity"
-                r" cells; Wald test not identified."
-            )
+        label = f"tab:amplification_{model_clean}_{metric_clean}"
 
-        return _write_three_formats(
-            df, out, "table", "main", f"severity_amplification_confirmatory",
-            model_clean, f"{metric_clean}__{subset}", 1,
-            caption=caption,
-            label=f"tab:amplification_{model_clean}_{metric_clean}",
-            analysis_type="confirmatory",
-        )
+        # --- Custom LaTeX ---
+        col_spec = "lrrrr"
+        if metric == "monetary_severity":
+            col_spec += "r"
+        tex_lines = [
+            r"\begin{table}[htbp]",
+            r"\centering",
+            r"\caption{" + _escape_latex(caption) + "}",
+            r"\label{" + label + "}",
+            r"\begin{tabular}{" + col_spec + "}",
+            r"\toprule",
+        ]
+        header = " & ".join(columns) + r" \\"
+        # Escape the % in "95% CI" for LaTeX
+        header = header.replace("95% CI", r"95\% CI")
+        tex_lines.append(header)
+        tex_lines.append(r"\midrule")
+        for row_tex in tex_rows:
+            tex_lines.append(" & ".join(str(c) for c in row_tex) + r" \\")
+        tex_lines.append(r"\bottomrule")
+        tex_lines.append(r"\end{tabular}")
+        if has_separation:
+            tex_lines.append("")
+            tex_lines.append(r"\vspace{2pt}")
+            tex_lines.append(
+                r"\parbox{0.95\linewidth}{\footnotesize $^\dagger$ Sep."
+                r" = quasi-complete separation in persona $\times$ severity"
+                r" cells; Wald test not identified.}"
+            )
+        tex_lines.append(r"\end{table}")
+
+        topic = "severity_amplification_confirmatory"
+        tex_name = _build_filename("table", "main", topic, model_clean, f"{metric_clean}__{subset}", 1, "tex")
+        tex_path = out / tex_name
+        tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
+
+        # --- Markdown + CSV via DataFrame ---
+        md_name = _build_filename("table", "main", topic, model_clean, f"{metric_clean}__{subset}", 1, "md")
+        md_path = out / md_name
+        md_path.write_text(_dataframe_to_markdown(df, caption), encoding="utf-8")
+
+        csv_name = _build_filename("table", "main", topic, model_clean, f"{metric_clean}__{subset}", 1, "csv")
+        csv_path = out / csv_name
+        df.to_csv(csv_path, index=False, encoding="utf-8")
+
+        logger.info("Written table: %s (.tex/.md/.csv)", topic)
+        return [tex_path, md_path, csv_path]
 
     def _table7_persona_explainability(self, out: Path) -> List[Path]:
         """Table 7: Top text features predicting persona dimensions (LightGBM)."""
@@ -769,6 +887,8 @@ class TableGenerator:
 
     def _table10_operational_friction(self, out: Path, model: str) -> List[Path]:
         """Table 10: Operational friction (need_more_info) rates by dimension."""
+        from src.schemas import CAUSAL_DIMS
+
         model_r = self.ar.get(model, {})
         proc_corr = model_r.get("process_correlation", {})
         info_rates = proc_corr.get("info_rates_by_dimension", {})
@@ -780,34 +900,86 @@ class TableGenerator:
         proc_causal = model_r.get("process_causal", {})
         causal_rates = proc_causal.get("info_rates_by_dimension", {}) if proc_causal else {}
 
-        rows = []
+        rows = []          # plain-text for md/csv
+        tex_rows = []      # LaTeX-ready
+        dagger_dims_seen: set = set()   # first occurrence gets the dagger
+        has_estimation_only = False
+
         for dim in sorted(info_rates.keys()):
             dim_rates = info_rates[dim]
             causal_dim = causal_rates.get(dim, {})
+            is_estimation_only = dim not in CAUSAL_DIMS
             for value in sorted(dim_rates.keys()):
                 corr_rate = dim_rates[value]
                 caus_rate = causal_dim.get(value)
-                rows.append((
-                    dim.capitalize(),
-                    value,
-                    _fmt_pct(corr_rate * 100, 1) if corr_rate is not None else "---",
-                    _fmt_pct(caus_rate * 100, 1) if caus_rate is not None else "---",
-                ))
+                corr_str = _fmt_pct(corr_rate * 100, 1) if corr_rate is not None else "---"
+                caus_str = _fmt_pct(caus_rate * 100, 1) if caus_rate is not None else "---"
+
+                rows.append((dim.capitalize(), value, corr_str, caus_str))
+
+                # LaTeX: add dagger on first row of each estimation-only dim
+                dim_label = dim.capitalize()
+                if is_estimation_only and dim not in dagger_dims_seen:
+                    dim_label = dim_label + r"$^{\dagger}$"
+                    dagger_dims_seen.add(dim)
+                    has_estimation_only = True
+                tex_rows.append((dim_label, value, corr_str, caus_str))
 
         if not rows:
             return []
 
+        # --- Custom LaTeX ---
+        model_clean = model.replace("-", "").replace("_", "")
+        caption = f"Operational friction (need_more_info) rates by dimension -- {model}."
+        label = f"tab:friction_{model_clean}"
+
+        tex_lines = [
+            r"\begin{table}[htbp]",
+            r"\centering",
+            r"\caption{Operational friction (\texttt{need\_more\_info}) rates by dimension -- "
+            + _escape_latex(model) + ".}",
+            r"\label{" + label + "}",
+            r"\begin{tabular}{lrrr}",
+            r"\toprule",
+            r"Dimension & Value & Correlational Rate & Causal Rate \\",
+            r"\midrule",
+        ]
+        for dim_label, value, corr, caus in tex_rows:
+            tex_lines.append(
+                f"{dim_label} & {_escape_latex(value)} & {corr} & {caus} \\\\"
+            )
+        tex_lines.append(r"\bottomrule")
+        tex_lines.append(r"\end{tabular}")
+        if has_estimation_only:
+            tex_lines.append("")
+            tex_lines.append(r"\vspace{2pt}")
+            tex_lines.append(
+                r"\parbox{0.95\linewidth}{\footnotesize $^{\dagger}$"
+                r" ESL and Gender were estimation-only dimensions and were not"
+                r" included in the causal analysis; therefore, causal rates are"
+                r" reported as `---'.}"
+            )
+        tex_lines.append(r"\end{table}")
+
+        tex_name = _build_filename("table", "main", "operational_friction", model_clean, "all", 1, "tex")
+        tex_path = out / tex_name
+        tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
+
+        # --- Markdown + CSV via DataFrame ---
         df = pd.DataFrame(rows, columns=[
             "Dimension", "Value", "Correlational Rate", "Causal Rate",
         ])
 
-        model_clean = model.replace("-", "").replace("_", "")
-        return _write_three_formats(
-            df, out, "table", "main", "operational_friction",
-            model_clean, "all", 1,
-            caption=f"Operational friction (need_more_info) rates by dimension -- {model}.",
-            label=f"tab:friction_{model_clean}",
-        )
+        md_name = _build_filename("table", "main", "operational_friction", model_clean, "all", 1, "md")
+        md_path = out / md_name
+        md_path.write_text(_dataframe_to_markdown(df, caption), encoding="utf-8")
+
+        csv_name = _build_filename("table", "main", "operational_friction", model_clean, "all", 1, "csv")
+        csv_path = out / csv_name
+        df.to_csv(csv_path, index=False, encoding="utf-8")
+
+        logger.info("Written table: operational_friction (.tex/.md/.csv)")
+        return [tex_path, md_path, csv_path]
 
     # ==================================================================
     # APPENDIX TABLES
@@ -1434,6 +1606,7 @@ class TableGenerator:
 
     def _tableB1_bayes_model_spec(self, out: Path) -> List[Path]:
         """Table B1: Bayesian model specification and priors."""
+        # Plain-text rows for md/csv
         rows = [
             (
                 "B1 (logistic)",
@@ -1441,13 +1614,13 @@ class TableGenerator:
                 "Y2 = 1[tier == 2]",
                 "beta ~ N(0, 1.5); alpha ~ N(0, 3); sigma_u ~ Exp(1)",
                 "Complaint (non-centred)",
-                "Dim dummies + severity dummies + interactions",
+                "Dimension dummies, severity dummies, and interactions",
             ),
             (
                 "B2 (ordinal)",
                 "Ordered-logistic",
                 "tier in {0,1,2} -> y in {1,2,3}",
-                "beta ~ N(0, 1.5); alpha ~ N(0, 3); c ~ N(0, 3); sigma_u ~ Exp(1)",
+                "beta ~ N(0, 1.5); alpha ~ N(0, 3); c_k ~ N(0, 3); sigma_u ~ Exp(1)",
                 "Complaint (non-centred)",
                 "Same as B1",
             ),
@@ -1455,15 +1628,66 @@ class TableGenerator:
         df = pd.DataFrame(rows, columns=[
             "Model", "Likelihood", "Endpoint", "Priors", "Random Effects", "Predictors",
         ])
-        return _write_three_formats(
-            df, out, "table", "robustness", "bayes_model_spec",
-            "na", "all", 1,
-            caption="Bayesian model specification and priors.",
-            label="tab:bayes_spec",
-            col_spec=r"l l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X l l",
-            use_tabularx=True,
-            font_size="footnotesize",
-        )
+
+        caption = "Bayesian model specification and priors."
+        label = "tab:bayes_spec"
+
+        # --- Custom LaTeX ---
+        tex_lines = [
+            r"\begin{table}[htbp]",
+            r"\centering",
+            r"\caption{" + _escape_latex(caption) + "}",
+            r"\label{" + label + "}",
+            r"\footnotesize",
+            r"\setlength{\tabcolsep}{4pt}",
+            r"\renewcommand{\arraystretch}{1.12}",
+            "",
+            r"\begin{tabularx}{\linewidth}{@{}",
+            r"  L{0.11\linewidth}",
+            r"  L{0.14\linewidth}",
+            r"  L{0.16\linewidth}",
+            r"  Y",
+            r"  L{0.15\linewidth}",
+            r"  Y",
+            r"@{}}",
+            r"\toprule",
+            r"Model & Likelihood & Endpoint & Priors & Random Effects & Predictors \\",
+            r"\midrule",
+            r"B1 (logistic) &",
+            r"Bernoulli--logit &",
+            r"$Y_2=\mathbf{1}[\mathrm{tier}=2]$ &",
+            r"$\beta \sim \mathcal{N}(0,1.5)$; $\alpha \sim \mathcal{N}(0,3)$;"
+            r" $\sigma_u \sim \operatorname{Exp}(1)$ &",
+            r"Complaint (non-centred) &",
+            r"Dimension dummies, severity dummies, and interactions \\",
+            r"B2 (ordinal) &",
+            r"Ordered--logistic &",
+            r"$\text{tier}\in\{0,1,2\}\rightarrow y\in\{1,2,3\}$ &",
+            r"$\beta \sim \mathcal{N}(0,1.5)$; $\alpha \sim \mathcal{N}(0,3)$;"
+            r" $c_k \sim \mathcal{N}(0,3)$; $\sigma_u \sim \operatorname{Exp}(1)$ &",
+            r"Complaint (non-centred) &",
+            r"Same as B1 \\",
+            r"\bottomrule",
+            r"\end{tabularx}",
+            r"\normalsize",
+            r"\end{table}",
+        ]
+
+        tex_name = _build_filename("table", "robustness", "bayes_model_spec", "na", "all", 1, "tex")
+        tex_path = out / tex_name
+        tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
+
+        # --- Markdown + CSV via DataFrame ---
+        md_name = _build_filename("table", "robustness", "bayes_model_spec", "na", "all", 1, "md")
+        md_path = out / md_name
+        md_path.write_text(_dataframe_to_markdown(df, caption), encoding="utf-8")
+
+        csv_name = _build_filename("table", "robustness", "bayes_model_spec", "na", "all", 1, "csv")
+        csv_path = out / csv_name
+        df.to_csv(csv_path, index=False, encoding="utf-8")
+
+        logger.info("Written table: bayes_model_spec (.tex/.md/.csv)")
+        return [tex_path, md_path, csv_path]
 
     def _tableB2_bayes_amplification(self, out: Path, model: str, metric: str) -> List[Path]:
         """Table B2: Bayesian amplification robustness (Tier2)."""
@@ -1476,7 +1700,9 @@ class TableGenerator:
         if not metric_data or metric_data.get("skipped"):
             return []
 
-        rows = []
+        rows = []          # plain-text for md/csv
+        tex_rows = []      # LaTeX-ready
+        has_wide_subset = False
         for model_type, label in [("logistic", "B1"), ("ordinal", "B2")]:
             mt_data = metric_data.get(model_type, {})
             if not mt_data or mt_data.get("error"):
@@ -1484,15 +1710,20 @@ class TableGenerator:
             status = mt_data.get("status", "FAIL")
             amp = mt_data.get("amplification", {})
             subset = metric_data.get("subset", "all")
-            endpoint = "Y2 = 1[tier==2]" if model_type == "logistic" else "tier (ordinal)"
+            if len(subset) > 5:
+                has_wide_subset = True
+            # LaTeX subset: escape underscores and allow line-break
+            subset_tex = subset.replace("_", r"\_\allowbreak ")
+            endpoint_plain = "Y2 = 1[tier==2]" if model_type == "logistic" else "tier (ordinal)"
+            endpoint_tex = (
+                r"$Y_2=\mathbf{1}[\mathrm{tier}=2]$"
+                if model_type == "logistic"
+                else "tier (ordinal)"
+            )
 
             ne_bayes_amp = NE.missing_data(context="Bayes amp table")
             for dim, dim_data in amp.items():
-                rows.append((
-                    f"{label} ({dim})",
-                    metric.replace("_", " "),
-                    subset,
-                    endpoint,
+                common = (
                     _fmt_effect(dim_data.get("A_mean", ne_bayes_amp)),
                     _fmt_effect(dim_data.get("A_CrI_low", ne_bayes_amp)),
                     _fmt_effect(dim_data.get("A_CrI_high", ne_bayes_amp)),
@@ -1500,6 +1731,14 @@ class TableGenerator:
                     _fmt_effect(dim_data.get("D_low_mean", ne_bayes_amp)),
                     _fmt_effect(dim_data.get("D_high_mean", ne_bayes_amp)),
                     status,
+                )
+                rows.append((
+                    f"{label} ({dim})", metric.replace("_", " "),
+                    subset, endpoint_plain, *common,
+                ))
+                tex_rows.append((
+                    f"{label} ({dim})", metric.replace("_", " "),
+                    subset_tex, endpoint_tex, *common,
                 ))
 
         if not rows:
@@ -1513,20 +1752,75 @@ class TableGenerator:
 
         model_clean = model.replace("-", "").replace("_", "")
         metric_clean = metric.replace("_", "")
-        return _write_three_formats(
-            df, out, "table", "robustness", "bayes_amplification_tier2",
-            model_clean, metric_clean, 1,
-            caption=f"Bayesian amplification robustness -- {model}, {metric.replace('_', ' ')}.",
-            label=f"tab:bayes_amp_{model_clean}_{metric_clean}",
-            col_spec=(
-                r">{\raggedright\arraybackslash}X "
-                r"l l "
-                r">{\raggedright\arraybackslash}X "
-                r"r r r r r r l"
-            ),
-            use_tabularx=True,
-            font_size="footnotesize",
-        )
+        caption = f"Bayesian amplification robustness -- {model}, {metric.replace('_', ' ')}."
+        label = f"tab:bayes_amp_{model_clean}_{metric_clean}"
+
+        # --- Custom LaTeX ---
+        # Wider text columns when subset contains long values (e.g. "amount_present")
+        if has_wide_subset:
+            col_sev, col_sub, col_end, col_stat = "0.10", "0.10", "0.10", "0.08"
+        else:
+            col_sev, col_sub, col_end, col_stat = "0.08", "0.05", "0.09", "0.09"
+
+        tex_lines = [
+            r"\begin{table}[htbp]",
+            r"\centering",
+            r"\caption{" + _escape_latex(caption) + "}",
+            r"\label{" + label + "}",
+            r"\footnotesize",
+            r"\setlength{\tabcolsep}{2.5pt}",
+            r"\renewcommand{\arraystretch}{1.08}",
+            "",
+            r"\begin{tabular}{@{}",
+            r"L{0.12\linewidth}",
+            r"L{" + col_sev + r"\linewidth}",
+            r"L{" + col_sub + r"\linewidth}",
+            r"L{" + col_end + r"\linewidth}",
+            r"R{0.06\linewidth}",
+            r"R{0.06\linewidth}",
+            r"R{0.06\linewidth}",
+            r"R{0.06\linewidth}",
+            r"R{0.06\linewidth}",
+            r"R{0.06\linewidth}",
+            r"L{" + col_stat + r"\linewidth}",
+            r"@{}}",
+            r"\toprule",
+            r"Model (dim) &",
+            r"Severity &",
+            r"Subset &",
+            r"Endpoint &",
+            r"\shortstack[r]{A\\mean} &",
+            r"\shortstack[r]{A CrI\\low} &",
+            r"\shortstack[r]{A CrI\\high} &",
+            r"\shortstack[r]{$P(A>0)$} &",
+            r"\shortstack[r]{D low\\mean} &",
+            r"\shortstack[r]{D high\\mean} &",
+            r"Status \\",
+            r"\midrule",
+        ]
+        for row_tex in tex_rows:
+            tex_lines.append(" & ".join(str(c) for c in row_tex) + r" \\")
+        tex_lines.append(r"\bottomrule")
+        tex_lines.append(r"\end{tabular}")
+        tex_lines.append(r"\normalsize")
+        tex_lines.append(r"\end{table}")
+
+        topic = "bayes_amplification_tier2"
+        tex_name = _build_filename("table", "robustness", topic, model_clean, metric_clean, 1, "tex")
+        tex_path = out / tex_name
+        tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
+
+        # --- Markdown + CSV via DataFrame ---
+        md_name = _build_filename("table", "robustness", topic, model_clean, metric_clean, 1, "md")
+        md_path = out / md_name
+        md_path.write_text(_dataframe_to_markdown(df, caption), encoding="utf-8")
+
+        csv_name = _build_filename("table", "robustness", topic, model_clean, metric_clean, 1, "csv")
+        csv_path = out / csv_name
+        df.to_csv(csv_path, index=False, encoding="utf-8")
+
+        logger.info("Written table: %s (.tex/.md/.csv)", topic)
+        return [tex_path, md_path, csv_path]
 
     def _tableB3_bayes_ordinal_tiers(self, out: Path, model: str, metric: str) -> List[Path]:
         """Table B3: Bayesian ordinal tier-shift summary.

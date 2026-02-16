@@ -672,10 +672,10 @@ class FigureGenerator:
         n_cases = min(3, len(self.complaints))
         examples = self.complaints[:n_cases]
 
-        fig, axes = plt.subplots(n_cases, 1, figsize=(17, 4.5 * n_cases))
+        fig, axes = plt.subplots(n_cases, 1, figsize=(17, 9 * n_cases))
         if n_cases == 1:
             axes = [axes]
-        fig.suptitle("Worked Examples", fontsize=16, fontweight="bold")
+        fig.suptitle("Worked Examples", fontsize=32, fontweight="bold")
 
         for idx, (ax, complaint) in enumerate(zip(axes, examples)):
             ax.set_xlim(0, 1)
@@ -692,7 +692,7 @@ class FigureGenerator:
             ax.add_patch(bg)
 
             text = complaint.narrative[:500] + ("..." if len(complaint.narrative) > 500 else "")
-            wrapped = textwrap.fill(text, width=120)
+            wrapped = textwrap.fill(text, width=70)
             header = (
                 f"Case {idx+1} (ID: {complaint.case_id[:8]}...)\n"
                 f"Product: {complaint.product_category}  |  Issue: {complaint.issue_category}\n"
@@ -702,7 +702,7 @@ class FigureGenerator:
             )
             display_text = f"{header}\n{wrapped}"
             ax.text(0.02, 0.95, display_text, transform=ax.transAxes,
-                    fontsize=9, family="monospace", verticalalignment="top")
+                    fontsize=18, family="monospace", verticalalignment="top")
 
         fig.tight_layout(rect=[0, 0, 1, 0.95])
 

@@ -45,7 +45,7 @@ T = TypeVar("T")
 # Increment when analysis logic changes to invalidate cached results
 _ANALYSIS_VERSIONS: Dict[str, str] = {
     "severity_analysis": "1.1",  # v1.1: content-based hashing (not shape-based)
-    "bayes_robustness": "3.2",  # v3.2: logistic separation check, MCMC skip, context-aware recs
+    "bayes_robustness": "3.3",  # v3.3: ordinal imbalance check, B2 MCMC skip
     "repeated_measures": "1.0",  # v1.0: includes model diagnostics
     "correlation_analysis": "1.0",  # v1.0: includes model diagnostics
 }

@@ -311,9 +311,26 @@ def _preflight_diagnostics(
     # Logistic separation check
     separation = _check_logistic_separation(X, y_logistic, col_names)
 
-    # Tier distribution
+    # Tier distribution and ordinal imbalance check
     tier_counts = df["tier"].value_counts().sort_index().to_dict()
     tier2_rate = n_pos / N if N > 0 else 0.0
+
+    # Ordinal imbalance: when the smallest tier has <10% of observations,
+    # the ordinal cutpoints are heavily asymmetric.  The gap between
+    # cutpoints creates a ridge in the posterior that MCMC can't traverse
+    # (stuck chains, high rhat, low ESS, zero divergences).
+    y_ord_arr = np.asarray(y_ordinal, dtype=int)
+    ordinal_counts = np.bincount(y_ord_arr, minlength=4)[1:]  # levels 1,2,3
+    ordinal_rates = ordinal_counts / N if N > 0 else np.zeros(3)
+    min_tier_rate = float(np.min(ordinal_rates)) if len(ordinal_rates) > 0 else 1.0
+    min_tier_idx = int(np.argmin(ordinal_rates)) if len(ordinal_rates) > 0 else -1
+    ordinal_imbalance = {
+        "tier_counts": {f"tier{i}": int(ordinal_counts[i]) for i in range(len(ordinal_counts))},
+        "tier_rates": {f"tier{i}": float(ordinal_rates[i]) for i in range(len(ordinal_rates))},
+        "min_tier_rate": min_tier_rate,
+        "min_tier_label": f"tier{min_tier_idx}",
+        "skip_mcmc_b2": min_tier_rate < 0.10,
+    }
 
     # Predicted difficulty
     difficulty_score = 0
@@ -332,6 +349,8 @@ def _preflight_diagnostics(
     if pct_singletons > 0.5:
         difficulty_score += 1
     if separation["skip_mcmc_b1"]:
+        difficulty_score += 2
+    if ordinal_imbalance["skip_mcmc_b2"]:
         difficulty_score += 2
 
     if difficulty_score >= 4:
@@ -382,6 +401,14 @@ def _preflight_diagnostics(
             f"dummy columns; MCMC will be skipped in favour of "
             "Pathfinder/ADVI for B1"
         )
+    if ordinal_imbalance["skip_mcmc_b2"]:
+        recommendations.append(
+            f"B2 ordinal has severe tier imbalance "
+            f"({ordinal_imbalance['min_tier_label']} = {min_tier_rate:.1%} of obs); "
+            "asymmetric cutpoints create a posterior ridge that MCMC cannot "
+            "traverse. MCMC will be skipped for B2 in favour of "
+            "Pathfinder/ADVI"
+        )
 
     return {
         "N": N,
@@ -401,6 +428,7 @@ def _preflight_diagnostics(
         "predicted_difficulty": predicted_difficulty,
         "recommendations": recommendations,
         "logistic_separation": separation,
+        "ordinal_imbalance": ordinal_imbalance,
     }
 
 
@@ -1232,6 +1260,14 @@ def _build_postmortem(
             f"Rare outcome: Tier-2 rate of {n_pos / N:.1%} causes potential "
             "separation and wide posteriors"
         )
+    ord_imb = preflight.get("ordinal_imbalance", {}) if preflight else {}
+    if ord_imb.get("skip_mcmc_b2"):
+        root_causes.append(
+            f"Ordinal tier imbalance: {ord_imb.get('min_tier_label', '?')} "
+            f"has only {ord_imb.get('min_tier_rate', 0):.1%} of observations; "
+            "asymmetric cutpoints create a posterior ridge that prevents "
+            "MCMC convergence for B2 ordinal"
+        )
     if condition_number > 1e10:
         root_causes.append(
             f"Ill-conditioned design matrix (condition number = {condition_number:.2e})"
@@ -1375,6 +1411,19 @@ def _build_postmortem(
             f"MCMC steps were skipped for B1 — resolved via {b1_step}"
             if b1_resolved else
             f"B1 logistic near-separation detected ({n_sep}/{n_chk} dummy columns); "
+            "MCMC steps were skipped but non-MCMC fallbacks also failed"
+        )
+
+    # Ordinal imbalance risk
+    ord_imb = preflight.get("ordinal_imbalance", {}) if preflight else {}
+    if ord_imb.get("skip_mcmc_b2"):
+        min_label = ord_imb.get("min_tier_label", "?")
+        min_rate = ord_imb.get("min_tier_rate", 0)
+        recommendations.append(
+            f"B2 ordinal tier imbalance detected ({min_label} = {min_rate:.1%} of obs); "
+            f"MCMC steps were skipped for B2 — resolved via {b2_step}"
+            if b2_resolved else
+            f"B2 ordinal tier imbalance detected ({min_label} = {min_rate:.1%} of obs); "
             "MCMC steps were skipped but non-MCMC fallbacks also failed"
         )
 
@@ -2578,6 +2627,26 @@ def run_bayes_robustness(
                 )
                 metric_result["b1_skip_mcmc"] = True
 
+            # ── Pre-flight: B2 ordinal imbalance skip ──
+            # When the smallest ordinal tier has <10% of observations,
+            # asymmetric cutpoints create a posterior ridge that MCMC
+            # cannot traverse (stuck chains, high rhat, zero divergences).
+            b2_skip_mcmc = bool(
+                preflight.get("ordinal_imbalance", {}).get("skip_mcmc_b2")
+            )
+            if b2_skip_mcmc:
+                imb_info = preflight["ordinal_imbalance"]
+                logger.warning(
+                    "PRE-FLIGHT %s/%s: B2 ordinal imbalance detected — "
+                    "%s has only %.1f%% of observations (threshold: 10%%). "
+                    "Skipping MCMC steps 1-5 for B2; "
+                    "will attempt ADVI/Pathfinder/MAP directly.",
+                    model, severity_metric,
+                    imb_info["min_tier_label"],
+                    imb_info["min_tier_rate"] * 100,
+                )
+                metric_result["b2_skip_mcmc"] = True
+
             # ── Fallback chain with independent B1/B2 tracking ──
             # The chain progressively tries more robust configurations.
             # B1 (logistic) and B2 (ordinal) are tracked independently:
@@ -2587,8 +2656,9 @@ def run_bayes_robustness(
             # Steps 4-5 use relaxed gates (MARGINAL status for borderline fits).
             # Steps 6-8 use non-MCMC methods (ADVI, Pathfinder, MAP).
             #
-            # When b1_skip_mcmc is set, MCMC steps attempt B2 only;
-            # B1 is deferred to the non-MCMC steps (6-8).
+            # When b1_skip_mcmc is set, MCMC steps skip B1 (separation risk).
+            # When b2_skip_mcmc is set, MCMC steps skip B2 (ordinal imbalance).
+            # Both are deferred to the non-MCMC steps (6-8).
             attempted: List[Dict[str, Any]] = []
             result_b1: Optional[Dict[str, Any]] = None
             result_b2: Optional[Dict[str, Any]] = None
@@ -2628,24 +2698,31 @@ def run_bayes_robustness(
             def _which_attempt(mcmc_step: bool = True) -> str:
                 """Decide which model types to attempt at this step.
 
-                When *mcmc_step* is True (steps 1-5) and b1_skip_mcmc is
-                set, B1 logistic is deferred even if still needed.
+                When *mcmc_step* is True (steps 1-5):
+                - b1_skip_mcmc defers B1 logistic (separation risk)
+                - b2_skip_mcmc defers B2 ordinal (ordinal imbalance)
                 Returns "skip" if neither model type should be attempted.
                 """
                 eff_need_b1 = need_b1 and not (mcmc_step and b1_skip_mcmc)
-                if eff_need_b1 and need_b2:
+                eff_need_b2 = need_b2 and not (mcmc_step and b2_skip_mcmc)
+                if eff_need_b1 and eff_need_b2:
                     return "both"
                 if eff_need_b1:
-                    logger.info("  (attempting B1 logistic only — B2 already resolved)")
+                    if mcmc_step and b2_skip_mcmc and need_b2:
+                        logger.info("  (attempting B1 logistic only — B2 deferred: ordinal imbalance)")
+                    else:
+                        logger.info("  (attempting B1 logistic only — B2 already resolved)")
                     return "b1_only"
-                if need_b2:
+                if eff_need_b2:
                     if mcmc_step and b1_skip_mcmc and need_b1:
                         logger.info("  (attempting B2 ordinal only — B1 deferred: separation risk)")
                     else:
                         logger.info("  (attempting B2 ordinal only — B1 already resolved)")
                     return "b2_only"
-                if mcmc_step and b1_skip_mcmc and need_b1:
-                    # B2 resolved, B1 deferred — nothing to do at this MCMC step
+                # Neither effective — check if any deferred
+                any_deferred = (mcmc_step and b1_skip_mcmc and need_b1) or \
+                               (mcmc_step and b2_skip_mcmc and need_b2)
+                if any_deferred:
                     return "skip"
                 # Both resolved
                 return "both"
@@ -2685,11 +2762,18 @@ def run_bayes_robustness(
             method_lbl = "hierarchical" if use_random_intercept else "fixed-effect"
             _step1_attempt = _which_attempt()
             if _step1_attempt == "skip":
-                logger.info("%s: step 1 skipped (B2 resolved, B1 deferred to non-MCMC)",
-                            severity_metric)
+                skip_reasons = []
+                if b1_skip_mcmc and need_b1:
+                    skip_reasons.append("B1 separation")
+                if b2_skip_mcmc and need_b2:
+                    skip_reasons.append("B2 ordinal imbalance")
+                skip_desc = " + ".join(skip_reasons) if skip_reasons else "deferred"
+                logger.info("%s: step 1 skipped (%s — deferred to non-MCMC)",
+                            severity_metric, skip_desc)
                 attempted.append({"step": 1, "label": "standard",
-                                  "description": f"{method_lbl} (K={X.shape[1]}) — skipped (B1 separation)",
-                                  "b1_status": "SKIP", "b2_status": "N/A"})
+                                  "description": f"{method_lbl} (K={X.shape[1]}) — skipped ({skip_desc})",
+                                  "b1_status": "SKIP" if b1_skip_mcmc else "N/A",
+                                  "b2_status": "SKIP" if b2_skip_mcmc else "N/A"})
             else:
                 logger.info("%s fallback chain: step 1 -- %s fit (K=%d)",
                             severity_metric, method_lbl, X.shape[1])
