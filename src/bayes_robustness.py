@@ -1033,12 +1033,17 @@ def _build_postmortem(
     J: int,
     pct_singletons: float,
     preflight: Optional[Dict[str, Any]] = None,
+    result_b1: Optional[Dict[str, Any]] = None,
+    result_b2: Optional[Dict[str, Any]] = None,
+    fallback_b1: Optional[str] = None,
+    fallback_b2: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Build a structured post-mortem report when all fallbacks fail.
+    """Build a structured post-mortem diagnostic report.
 
-    The report contains enough detail for a statistician to evaluate
-    whether the attempted strategies were reasonable and suggest
-    further approaches.
+    Always generated — regardless of whether fits succeeded, partially
+    succeeded, or completely failed.  Contains enough detail for a
+    statistician to evaluate the data characteristics, the attempted
+    strategies, and their outcomes.
     """
     N, K = X.shape
     n_pos = sum(y_logistic)
@@ -1199,6 +1204,14 @@ def _build_postmortem(
         "root_causes": root_causes,
         "recommendations": recommendations,
         "preflight": preflight,
+        "final_resolution": {
+            "b1_status": result_b1.get("status", "FAIL") if result_b1 else "FAIL",
+            "b1_method": result_b1.get("method", fallback_b1 or "none") if result_b1 else "none",
+            "b1_step": fallback_b1 or "none",
+            "b2_status": result_b2.get("status", "FAIL") if result_b2 else "FAIL",
+            "b2_method": result_b2.get("method", fallback_b2 or "none") if result_b2 else "none",
+            "b2_step": fallback_b2 or "none",
+        },
     }
 
 
@@ -1242,9 +1255,27 @@ def _log_postmortem(
     ds = postmortem["data_summary"]
     dm = postmortem["design_matrix_diagnostics"]
 
+    # Determine overall outcome for header
+    fr = postmortem.get("final_resolution", {})
+    b1_ok = fr.get("b1_status", "FAIL") not in ("FAIL", "none")
+    b2_ok = fr.get("b2_status", "FAIL") not in ("FAIL", "none")
+    if b1_ok and b2_ok:
+        outcome_tag = "OK"
+    elif b1_ok or b2_ok:
+        outcome_tag = "PARTIAL"
+    else:
+        outcome_tag = "FAIL"
+
     logger.warning("=" * 60)
-    logger.warning("POST-MORTEM: %s / %s", model_name, severity_metric)
+    logger.warning("POST-MORTEM [%s]: %s / %s", outcome_tag, model_name, severity_metric)
     logger.warning("=" * 60)
+
+    # Final resolution
+    logger.warning(
+        "  Resolution: B1 logistic=%s (step=%s) | B2 ordinal=%s (step=%s)",
+        fr.get("b1_status", "?"), fr.get("b1_step", "?"),
+        fr.get("b2_status", "?"), fr.get("b2_step", "?"),
+    )
 
     # Data summary
     logger.warning(
@@ -1291,8 +1322,9 @@ def _log_postmortem(
             step_info["b2_status"], b2_detail,
         )
 
-    # Root causes
-    logger.warning("  Root causes:")
+    # Root causes / risk factors (adaptive label)
+    rc_label = "Root causes" if outcome_tag != "OK" else "Data risk factors"
+    logger.warning("  %s:", rc_label)
     for cause in postmortem["root_causes"]:
         logger.warning("    - %s", cause)
 
@@ -1302,6 +1334,101 @@ def _log_postmortem(
         logger.warning("    - %s", rec)
 
     logger.warning("=" * 60)
+
+
+def _log_consolidated_summary(results: Dict[str, Any]) -> None:
+    """Log a consolidated summary table across all (model, metric) combos.
+
+    Always called at the end of run_bayes_robustness so a statistician
+    can see every combination's pre-flight difficulty, fallback path,
+    and final B1/B2 outcome in one place.
+    """
+    rows: List[Dict[str, str]] = []
+    status_counts: Dict[str, int] = {"OK": 0, "WARN": 0, "MARGINAL": 0, "FAIL": 0}
+    b1_counts: Dict[str, int] = {"OK": 0, "WARN": 0, "MARGINAL": 0, "FAIL": 0, "SKIP": 0}
+    b2_counts: Dict[str, int] = {"OK": 0, "WARN": 0, "MARGINAL": 0, "FAIL": 0, "SKIP": 0}
+
+    for model_name, model_results in results.items():
+        for metric, mr in model_results.items():
+            if mr.get("skipped"):
+                rows.append({
+                    "model": model_name, "metric": metric,
+                    "preflight": "N/A",
+                    "b1": f"SKIP ({mr.get('reason', '?')})",
+                    "b2": f"SKIP ({mr.get('reason', '?')})",
+                    "steps_tried": "0",
+                })
+                b1_counts["SKIP"] += 1
+                b2_counts["SKIP"] += 1
+                continue
+
+            pf = mr.get("preflight", {})
+            pf_diff = pf.get("predicted_difficulty", "?")
+            pf_epp = pf.get("epp", 0)
+            pf_str = f"{pf_diff} (EPP={pf_epp:.1f})" if isinstance(pf_epp, (int, float)) else pf_diff
+
+            pm = mr.get("postmortem", {})
+            fr = pm.get("final_resolution", {})
+            b1_status = fr.get("b1_status", mr.get("logistic", {}).get("status", "?"))
+            b1_step = fr.get("b1_step", mr.get("fallback_step_b1", "?"))
+            b2_status = fr.get("b2_status", mr.get("ordinal", {}).get("status", "?"))
+            b2_step = fr.get("b2_step", mr.get("fallback_step_b2", "?"))
+
+            n_steps = len(pm.get("per_step_diagnostics", []))
+
+            rows.append({
+                "model": model_name, "metric": metric,
+                "preflight": pf_str,
+                "b1": f"{b1_status} @ {b1_step}",
+                "b2": f"{b2_status} @ {b2_step}",
+                "steps_tried": str(n_steps),
+            })
+
+            b1_counts[b1_status] = b1_counts.get(b1_status, 0) + 1
+            b2_counts[b2_status] = b2_counts.get(b2_status, 0) + 1
+
+    if not rows:
+        return
+
+    # Compute column widths
+    headers = ["Model", "Metric", "Pre-flight", "B1 Logistic", "B2 Ordinal", "Steps"]
+    keys = ["model", "metric", "preflight", "b1", "b2", "steps_tried"]
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, k in enumerate(keys):
+            widths[i] = max(widths[i], len(row[k]))
+
+    sep = "  ".join("-" * w for w in widths)
+    hdr = "  ".join(h.ljust(w) for h, w in zip(headers, widths))
+
+    logger.warning("")
+    logger.warning("=" * 72)
+    logger.warning("BAYESIAN ROBUSTNESS — CONSOLIDATED SUMMARY")
+    logger.warning("=" * 72)
+    logger.warning("  %s", hdr)
+    logger.warning("  %s", sep)
+    for row in rows:
+        line = "  ".join(row[k].ljust(w) for k, w in zip(keys, widths))
+        logger.warning("  %s", line)
+    logger.warning("  %s", sep)
+
+    # Totals
+    def _fmt_counts(counts: Dict[str, int]) -> str:
+        parts = []
+        for status in ["OK", "WARN", "MARGINAL", "FAIL", "SKIP"]:
+            n = counts.get(status, 0)
+            if n > 0:
+                parts.append(f"{n} {status}")
+        return ", ".join(parts) if parts else "none"
+
+    logger.warning("  Totals (%d combos):  B1: %s  |  B2: %s",
+                   len(rows), _fmt_counts(b1_counts), _fmt_counts(b2_counts))
+
+    logger.warning("  Fallback order: standard -> category-RE -> per-dimension -> "
+                   "main-effects-only -> flex-prior -> aggressive-sampler -> "
+                   "variational-advi -> pathfinder -> map-estimate")
+    logger.warning("=" * 72)
+    logger.warning("")
 
 
 # ------------------------------------------------------------------
@@ -1556,8 +1683,10 @@ def _try_per_dimension(
             combined_ordinal["per_dim_fits"][dim] = ordinal
 
     # First pass: try all dimensions with standard chain count
+    first_pass_results: Dict[str, Optional[Dict[str, Any]]] = {}
     for dim in DIMENSIONS:
         result = _fit_dim(dim)
+        first_pass_results[dim] = result
         if result is not None and _dim_succeeded(result):
             succeeded_dims.append(dim)
             _merge_dim(dim, result)
@@ -1565,10 +1694,30 @@ def _try_per_dimension(
             logger.warning("Per-dimension fallback: %s FAILED (first pass)", dim)
             failed_dims.append(dim)
 
-    # Retry pass: re-attempt failed dimensions with 8 chains
+    # Retry pass: re-attempt failed dimensions with 8 chains,
+    # but ONLY if the failure was due to an exception (no diagnostics),
+    # not a diagnostic gate failure.  When chains complete but R-hat/ESS
+    # fail, the posterior geometry is the problem — more chains won't help.
     if failed_dims:
         retry_dims = failed_dims[:]
         for dim in retry_dims:
+            fp = first_pass_results.get(dim)
+            # Check if first-pass failure had diagnostics (chains ran OK
+            # but convergence failed) — skip retry in that case
+            has_diag = False
+            if fp is not None:
+                for mtype in ("logistic", "ordinal"):
+                    if fp.get(mtype, {}).get("diagnostics"):
+                        has_diag = True
+                        break
+            if has_diag:
+                logger.info(
+                    "Per-dimension fallback: skipping 8-chain retry for %s "
+                    "(chains completed but diagnostics failed — posterior "
+                    "geometry issue, not initialization)", dim,
+                )
+                continue
+
             logger.info("Per-dimension fallback: retrying %s with 8 chains...", dim)
             result = _fit_dim(dim, chains=8)
             if result is not None and _dim_succeeded(result):
@@ -1685,13 +1834,23 @@ def _try_variational(
         amp_summary = {dim: {k: v for k, v in dd.items() if k != "A_draws"}
                        for dim, dd in amp.items()}
 
-        result = {
+        result: Dict[str, Any] = {
             "fit_id": fit_id,
             "diagnostics": vi_diag,
             "status": "ADVI",
             "amplification": amp_summary,
             "method": f"ADVI-{algorithm} {model_type}",
         }
+        if model_type == "ordinal":
+            try:
+                result["tier_probs"] = _compute_ordinal_tier_probs(
+                    vb, col_names, dim_levels,
+                )
+            except Exception as tp_exc:
+                logger.warning(
+                    "ADVI tier_probs computation failed for %s: %s: %s",
+                    fit_id, type(tp_exc).__name__, tp_exc,
+                )
         _save_artifacts(fit_id, model_type, amp, vi_diag, "ADVI",
                         stan_file, output_dir)
         logger.info("ADVI succeeded for %s", fit_id)
@@ -1763,13 +1922,23 @@ def _try_pathfinder(
         amp_summary = {dim: {k: v for k, v in dd.items() if k != "A_draws"}
                        for dim, dd in amp.items()}
 
-        result = {
+        result: Dict[str, Any] = {
             "fit_id": fit_id,
             "diagnostics": pf_diag,
             "status": "PATHFINDER",
             "amplification": amp_summary,
             "method": f"pathfinder {model_type}",
         }
+        if model_type == "ordinal":
+            try:
+                result["tier_probs"] = _compute_ordinal_tier_probs(
+                    pf, col_names, dim_levels,
+                )
+            except Exception as tp_exc:
+                logger.warning(
+                    "Pathfinder tier_probs computation failed for %s: %s: %s",
+                    fit_id, type(tp_exc).__name__, tp_exc,
+                )
         _save_artifacts(fit_id, model_type, amp, pf_diag, "PATHFINDER",
                         stan_file, output_dir)
         logger.info("Pathfinder succeeded for %s", fit_id)
@@ -1879,13 +2048,23 @@ def _try_map_estimate(
         amp_summary = {dim: {k: v for k, v in dd.items() if k != "A_draws"}
                        for dim, dd in amp.items()}
 
-        result = {
+        result: Dict[str, Any] = {
             "fit_id": fit_id,
             "diagnostics": map_diag,
             "status": "MAP",
             "amplification": amp_summary,
             "method": f"MAP {model_type}",
         }
+        if model_type == "ordinal":
+            try:
+                result["tier_probs"] = _compute_ordinal_tier_probs(
+                    adapter, col_names, dim_levels,
+                )
+            except Exception as tp_exc:
+                logger.warning(
+                    "MAP tier_probs computation failed for %s: %s: %s",
+                    fit_id, type(tp_exc).__name__, tp_exc,
+                )
         _save_artifacts(fit_id, model_type, amp, map_diag, "MAP",
                         stan_file, output_dir)
         logger.info("MAP succeeded for %s", fit_id)
@@ -2291,10 +2470,10 @@ def run_bayes_robustness(
                 method_label=method_lbl, attempt=_which_attempt(),
             )
             _harvest(step_result, "standard")
+            attempted.append(_step_diag(1, "standard", f"{method_lbl} (K={X.shape[1]})", step_result))
             if not need_b1 and not need_b2:
                 logger.info("%s: step 1 (%s) succeeded for both B1+B2", severity_metric, method_lbl)
             else:
-                attempted.append(_step_diag(1, "standard", f"{method_lbl} (K={X.shape[1]})", step_result))
                 logger.warning("%s: step 1 (%s) — need_b1=%s, need_b2=%s",
                                severity_metric, method_lbl, need_b1, need_b2)
 
@@ -2329,10 +2508,10 @@ def run_bayes_robustness(
                         attempt=_which_attempt(),
                     )
                     _harvest(step_result, "category-RE")
+                    attempted.append(_step_diag(2, "category-RE", f"category-RE({cat_col}, J={J_cat})", step_result))
                     if not need_b1 and not need_b2:
                         logger.info("%s: step 2 (category RE) succeeded", severity_metric)
                     else:
-                        attempted.append(_step_diag(2, "category-RE", f"category-RE({cat_col}, J={J_cat})", step_result))
                         logger.warning("%s: step 2 (category RE) — need_b1=%s, need_b2=%s",
                                        severity_metric, need_b1, need_b2)
                 else:
@@ -2362,10 +2541,10 @@ def run_bayes_robustness(
                     is_partial = per_dim_result.get("logistic", {}).get("partial", False)
                     label = "per-dimension (partial)" if is_partial else "per-dimension"
                     _harvest(per_dim_result, label)
+                    attempted.append(_step_diag(3, label, "per-dimension models", per_dim_result))
                     if not need_b1 and not need_b2:
                         logger.info("%s: step 3 (per-dimension) succeeded", severity_metric)
                     else:
-                        attempted.append(_step_diag(3, label, "per-dimension models", per_dim_result))
                         logger.warning("%s: step 3 — need_b1=%s, need_b2=%s",
                                        severity_metric, need_b1, need_b2)
                 else:
@@ -2399,10 +2578,10 @@ def run_bayes_robustness(
                     attempt=_which_attempt(),
                 )
                 _harvest(step_result, "main-effects-only")
+                attempted.append(_step_diag("3.5", "main-effects-only", f"main-effects-only (K={X_main.shape[1]})", step_result))
                 if not need_b1 and not need_b2:
                     logger.info("%s: step 3.5 (main-effects-only) succeeded", severity_metric)
                 else:
-                    attempted.append(_step_diag("3.5", "main-effects-only", f"main-effects-only (K={X_main.shape[1]})", step_result))
                     logger.warning("%s: step 3.5 — need_b1=%s, need_b2=%s",
                                    severity_metric, need_b1, need_b2)
 
@@ -2433,10 +2612,10 @@ def run_bayes_robustness(
                     strict_gate=False,
                 )
                 _harvest(step_result, "flex-prior")
+                attempted.append(_step_diag(4, "flex-prior", "flex priors + relaxed gate", step_result))
                 if not need_b1 and not need_b2:
                     logger.info("%s: step 4 (stronger priors) succeeded", severity_metric)
                 else:
-                    attempted.append(_step_diag(4, "flex-prior", "flex priors + relaxed gate", step_result))
                     logger.warning("%s: step 4 — need_b1=%s, need_b2=%s",
                                    severity_metric, need_b1, need_b2)
 
@@ -2464,10 +2643,10 @@ def run_bayes_robustness(
                     strict_gate=False,
                 )
                 _harvest(step_result, "aggressive-sampler")
+                attempted.append(_step_diag(5, "aggressive-sampler", "aggressive sampler + relaxed gate", step_result))
                 if not need_b1 and not need_b2:
                     logger.info("%s: step 5 (aggressive sampler) succeeded", severity_metric)
                 else:
-                    attempted.append(_step_diag(5, "aggressive-sampler", "aggressive sampler + relaxed gate", step_result))
                     logger.warning("%s: step 5 — need_b1=%s, need_b2=%s",
                                    severity_metric, need_b1, need_b2)
 
@@ -2496,10 +2675,10 @@ def run_bayes_robustness(
                         model_type="ordinal", seed=seed, output_dir=output_dir,
                     )
                 _harvest(vi_result, "variational-advi")
+                attempted.append(_step_diag(6, "variational-advi", "ADVI meanfield", vi_result))
                 if not need_b1 and not need_b2:
                     logger.info("%s: step 6 (ADVI) succeeded", severity_metric)
                 else:
-                    attempted.append(_step_diag(6, "variational-advi", "ADVI meanfield", vi_result))
                     logger.warning("%s: step 6 (ADVI) — need_b1=%s, need_b2=%s",
                                    severity_metric, need_b1, need_b2)
 
@@ -2528,10 +2707,10 @@ def run_bayes_robustness(
                         model_type="ordinal", seed=seed, output_dir=output_dir,
                     )
                 _harvest(pf_result, "pathfinder")
+                attempted.append(_step_diag(7, "pathfinder", "Pathfinder (4 paths)", pf_result))
                 if not need_b1 and not need_b2:
                     logger.info("%s: step 7 (Pathfinder) succeeded", severity_metric)
                 else:
-                    attempted.append(_step_diag(7, "pathfinder", "Pathfinder (4 paths)", pf_result))
                     logger.warning("%s: step 7 (Pathfinder) — need_b1=%s, need_b2=%s",
                                    severity_metric, need_b1, need_b2)
 
@@ -2560,10 +2739,10 @@ def run_bayes_robustness(
                         model_type="ordinal", seed=seed, output_dir=output_dir,
                     )
                 _harvest(map_result, "map-estimate")
+                attempted.append(_step_diag(8, "map-estimate", "MAP (L-BFGS)", map_result))
                 if not need_b1 and not need_b2:
                     logger.info("%s: step 8 (MAP) succeeded", severity_metric)
                 else:
-                    attempted.append(_step_diag(8, "map-estimate", "MAP (L-BFGS)", map_result))
                     logger.warning("%s: step 8 (MAP) — need_b1=%s, need_b2=%s",
                                    severity_metric, need_b1, need_b2)
 
@@ -2596,7 +2775,7 @@ def run_bayes_robustness(
             if fb:
                 metric_result["fallback_step"] = fb
 
-            # Record total failure / partial failure and generate post-mortem
+            # Record total failure / partial failure status
             if need_b1 and need_b2:
                 msg_lines = [
                     f"All Bayesian fallbacks FAILED for {model}/{severity_metric}.",
@@ -2613,20 +2792,6 @@ def run_bayes_robustness(
                 metric_result["status"] = "FAIL"
                 metric_result["error"] = full_msg
 
-                # Generate post-mortem
-                postmortem = _build_postmortem(
-                    df=df, X=X, col_names=col_names,
-                    y_logistic=y_logistic, y_ordinal=y_ordinal,
-                    severity_metric=severity_metric, model_name=model,
-                    attempted=attempted,
-                    use_random_intercept=use_random_intercept,
-                    J=J, pct_singletons=pct_singletons,
-                    preflight=preflight,
-                )
-                _log_postmortem(postmortem, model, severity_metric)
-                _save_postmortem(postmortem, model, severity_metric, output_dir)
-                metric_result["postmortem"] = postmortem
-
             elif need_b1 or need_b2:
                 failed_type = "B1 logistic" if need_b1 else "B2 ordinal"
                 ok_type = "B2 ordinal" if need_b1 else "B1 logistic"
@@ -2635,23 +2800,28 @@ def run_bayes_robustness(
                     model, severity_metric, ok_type, failed_type,
                 )
 
-                # Generate partial post-mortem for the failed model type
-                postmortem = _build_postmortem(
-                    df=df, X=X, col_names=col_names,
-                    y_logistic=y_logistic, y_ordinal=y_ordinal,
-                    severity_metric=severity_metric, model_name=model,
-                    attempted=attempted,
-                    use_random_intercept=use_random_intercept,
-                    J=J, pct_singletons=pct_singletons,
-                    preflight=preflight,
-                )
-                _log_postmortem(postmortem, model, severity_metric)
-                _save_postmortem(postmortem, model, severity_metric, output_dir)
-                metric_result["postmortem"] = postmortem
+            # ALWAYS generate post-mortem diagnostic report
+            postmortem = _build_postmortem(
+                df=df, X=X, col_names=col_names,
+                y_logistic=y_logistic, y_ordinal=y_ordinal,
+                severity_metric=severity_metric, model_name=model,
+                attempted=attempted,
+                use_random_intercept=use_random_intercept,
+                J=J, pct_singletons=pct_singletons,
+                preflight=preflight,
+                result_b1=result_b1, result_b2=result_b2,
+                fallback_b1=fallback_b1, fallback_b2=fallback_b2,
+            )
+            _log_postmortem(postmortem, model, severity_metric)
+            _save_postmortem(postmortem, model, severity_metric, output_dir)
+            metric_result["postmortem"] = postmortem
 
             model_results[severity_metric] = metric_result
 
         results[model] = model_results
+
+    # Consolidated summary across all (model, metric) combinations
+    _log_consolidated_summary(results)
 
     # Cache the results
     if use_cache and cache is not None:

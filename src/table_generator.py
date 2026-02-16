@@ -1529,23 +1529,23 @@ class TableGenerator:
         )
 
     def _tableB3_bayes_ordinal_tiers(self, out: Path, model: str, metric: str) -> List[Path]:
-        """Table B3: Bayesian ordinal tier-shift summary."""
+        """Table B3: Bayesian ordinal tier-shift summary.
+
+        Always produces an artifact: real tier probabilities when
+        available, or a diagnostic failure table when all models failed.
+        """
         bayes = self.ar.get("severity", {}).get("bayesian_robustness", {})
         model_bayes = bayes.get(model, {})
-        if not model_bayes or model_bayes.get("skipped") or model_bayes.get("error"):
-            return []
+        metric_data = model_bayes.get(metric, {}) if model_bayes else {}
 
-        metric_data = model_bayes.get(metric, {})
-        if not metric_data or metric_data.get("skipped"):
-            return []
+        model_clean = model.replace("-", "").replace("_", "")
+        metric_clean = metric.replace("_", "")
+        caption_base = f"Bayesian ordinal tier distribution -- {model}, {metric.replace('_', ' ')}"
+        label = f"tab:bayes_ordinal_{model_clean}_{metric_clean}"
 
-        ordinal = metric_data.get("ordinal", {})
-        if not ordinal or ordinal.get("error"):
-            return []
-
+        # --- Try to build a real tier-probability table ---
+        ordinal = metric_data.get("ordinal", {}) if metric_data else {}
         tier_probs = ordinal.get("tier_probs", {})
-        if not tier_probs:
-            return []
 
         rows = []
         for sev_band in ["low", "medium", "high"]:
@@ -1565,20 +1565,123 @@ class TableGenerator:
 
             rows.append((sev_band.capitalize(), _fmt_cri(t0), _fmt_cri(t1), _fmt_cri(t2)))
 
-        if not rows:
-            return []
+        if rows:
+            method = ordinal.get("method", "MCMC")
+            caption = f"{caption_base} (method: {method})."
+            df = pd.DataFrame(rows, columns=[
+                "Severity band", "P(tier=0) [95% CrI]",
+                "P(tier=1) [95% CrI]", "P(tier=2) [95% CrI]",
+            ])
+            return _write_three_formats(
+                df, out, "table", "robustness", "bayes_ordinal_tier_distribution",
+                model_clean, metric_clean, 1,
+                caption=caption, label=label,
+            )
 
-        df = pd.DataFrame(rows, columns=[
-            "Severity band", "P(tier=0) [95% CrI]", "P(tier=1) [95% CrI]", "P(tier=2) [95% CrI]",
-        ])
+        # --- Failure path: produce diagnostic artifact ---
+        # Collect failure reasons from postmortem / metric_data
+        failure_rows: List[Tuple[str, str]] = []
+        pm = metric_data.get("postmortem", {})
 
-        model_clean = model.replace("-", "").replace("_", "")
-        metric_clean = metric.replace("_", "")
+        # -- Section 1: Overall status --
+        ordinal_status = ordinal.get("status", "N/A") if ordinal else "N/A"
+        fallback_step = metric_data.get("fallback_step_b2", metric_data.get("fallback_step", "N/A"))
+        failure_rows.append(("B2 ordinal status", str(ordinal_status)))
+        failure_rows.append(("Final fallback step", str(fallback_step)))
+
+        # Skipped entirely?
+        if not model_bayes or model_bayes.get("skipped"):
+            failure_rows.append(("Reason", f"Model skipped: {model_bayes.get('reason', 'unknown')}"))
+        elif not metric_data or metric_data.get("skipped"):
+            failure_rows.append(("Reason", f"Metric skipped: {metric_data.get('reason', 'unknown')}"))
+        elif metric_data.get("status") == "SKIP":
+            failure_rows.append(("Reason", metric_data.get("reason", "unknown")))
+
+        # -- Section 2: Data summary (from postmortem) --
+        ds = pm.get("data_summary", {})
+        if ds:
+            failure_rows.append(("---", "--- Data summary ---"))
+            failure_rows.append(("Observations (N)", f"{ds.get('N', '?')}"))
+            failure_rows.append(("Parameters (K)", f"{ds.get('K', '?')}"))
+            failure_rows.append(("Complaint groups (J)", f"{ds.get('J', '?')}"))
+            epp = ds.get("events_per_param", 0)
+            epp_str = f"{epp:.1f}" if isinstance(epp, (int, float)) else str(epp)
+            epp_flag = " [LOW]" if isinstance(epp, (int, float)) and epp < 10 else ""
+            failure_rows.append(("Events per parameter", f"{epp_str}{epp_flag}"))
+            t2_rate = ds.get("tier2_rate", 0)
+            failure_rows.append(("Tier-2 rate", f"{t2_rate:.1%}" if isinstance(t2_rate, (int, float)) else str(t2_rate)))
+            pct_sing = ds.get("pct_singletons", 0)
+            failure_rows.append(("Singleton complaints", f"{pct_sing:.0%}" if isinstance(pct_sing, (int, float)) else str(pct_sing)))
+            failure_rows.append(("Random intercepts", "Yes" if ds.get("use_random_intercept") else "No (too many singletons)"))
+            tier_dist = ds.get("tier_distribution", {})
+            if tier_dist:
+                failure_rows.append(("Tier distribution", ", ".join(f"tier {k}: {v}" for k, v in sorted(tier_dist.items()))))
+
+        # -- Section 3: Design matrix diagnostics --
+        dm = pm.get("design_matrix_diagnostics", {})
+        if dm:
+            failure_rows.append(("---", "--- Design matrix ---"))
+            failure_rows.append(("Matrix rank", f"{dm.get('rank', '?')}/{dm.get('K', '?')}"))
+            cond = dm.get("condition_number", 0)
+            cond_str = f"{cond:.2e}" if isinstance(cond, (int, float)) else str(cond)
+            cond_flag = " [ILL-CONDITIONED]" if dm.get("ill_conditioned") else ""
+            failure_rows.append(("Condition number", f"{cond_str}{cond_flag}"))
+            failure_rows.append(("Main-effect columns", f"{dm.get('n_main_effect_cols', '?')}"))
+            failure_rows.append(("Interaction columns", f"{dm.get('n_interaction_cols', '?')}"))
+
+        # -- Section 4: Cross-tab sparsity --
+        sp = pm.get("cross_tab_sparsity", {})
+        if sp and sp.get("n_sparse_cells", 0) > 0:
+            failure_rows.append(("---", "--- Cell sparsity ---"))
+            failure_rows.append(("Sparse cells (<5 obs)", f"{sp['n_sparse_cells']}/{sp.get('total_cells', '?')} ({sp.get('sparsity_ratio', 0):.0%})"))
+
+        # -- Section 5: Root causes --
+        root_causes = pm.get("root_causes", [])
+        if root_causes:
+            failure_rows.append(("---", "--- Root causes ---"))
+            for i, cause in enumerate(root_causes):
+                failure_rows.append((f"Root cause {i + 1}", cause))
+
+        # -- Section 6: Fallback chain with per-step diagnostics --
+        per_step = pm.get("per_step_diagnostics", [])
+        if per_step:
+            failure_rows.append(("---", "--- Fallback chain (B2 ordinal) ---"))
+        for step_info in per_step:
+            b2_status = step_info.get("b2_status", "N/A")
+            detail = step_info.get("description", step_info.get("label", "?"))
+            diag_parts = []
+            if "b2_rhat" in step_info:
+                diag_parts.append(f"rhat={step_info['b2_rhat']:.4f}")
+            if "b2_ess" in step_info:
+                diag_parts.append(f"ess={step_info['b2_ess']:.0f}")
+            if "b2_div" in step_info:
+                diag_parts.append(f"div={step_info['b2_div']}")
+            diag_str = f" ({', '.join(diag_parts)})" if diag_parts else ""
+            failure_rows.append((
+                f"Step {step_info.get('step', '?')} [{step_info.get('label', '?')}]",
+                f"B2={b2_status}{diag_str} -- {detail}",
+            ))
+
+        # -- Section 7: Recommendations --
+        recs = pm.get("recommendations", [])
+        if recs:
+            failure_rows.append(("---", "--- Recommendations ---"))
+            for i, rec in enumerate(recs):
+                failure_rows.append((f"Recommendation {i + 1}", rec))
+
+        if not failure_rows:
+            failure_rows.append(("Status", "No Bayesian ordinal results available"))
+
+        df = pd.DataFrame(failure_rows, columns=["Diagnostic", "Detail"])
+        caption = (
+            f"{caption_base}. "
+            f"\\textbf{{All Bayesian ordinal tier models for {model} {metric.replace('_', ' ')} failed.}} "
+            "This table documents the fallback chain and root causes."
+        )
         return _write_three_formats(
             df, out, "table", "robustness", "bayes_ordinal_tier_distribution",
             model_clean, metric_clean, 1,
-            caption=f"Bayesian ordinal tier distribution -- {model}, {metric.replace('_', ' ')}.",
-            label=f"tab:bayes_ordinal_{model_clean}_{metric_clean}",
+            caption=caption, label=label,
         )
 
     def _tableB4_bayes_diagnostics(self, out: Path, model: str) -> List[Path]:
