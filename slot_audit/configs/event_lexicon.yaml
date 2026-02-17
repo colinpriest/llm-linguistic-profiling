@@ -1,0 +1,151 @@
+version: "0.1"
+description: >
+  Starter event lexicon for polarity checks with local negation scope.
+  Event keys are canonical; lemmas/variants map to each event.
+
+negation:
+  window_tokens: 4
+  cues:
+    - "no"
+    - "not"
+    - "never"
+    - "none"
+    - "without"
+    - "didnt"
+    - "didn't"
+    - "wasnt"
+    - "wasn't"
+    - "werent"
+    - "weren't"
+    - "cant"
+    - "can't"
+    - "wont"
+    - "won't"
+    - "cannot"
+
+  ignore_patterns:
+    - "not only"
+    - "not just"
+
+events:
+  refund:
+    lemmas:
+      - "refund"
+      - "refunded"
+      - "reimburse"
+      - "reimbursed"
+      - "credit"
+      - "credited"
+      - "reverse"
+      - "reversed"
+    object_hints:
+      - "charge"
+      - "fee"
+      - "payment"
+      - "transaction"
+
+  deny:
+    lemmas:
+      - "deny"
+      - "denied"
+      - "rejected"
+      - "declined"
+    object_hints:
+      - "request"
+      - "claim"
+      - "dispute"
+      - "application"
+
+  approve:
+    lemmas:
+      - "approve"
+      - "approved"
+      - "accept"
+      - "accepted"
+      - "authorise"
+      - "authorized"
+      - "authorised"
+    object_hints:
+      - "request"
+      - "application"
+      - "claim"
+
+  charge:
+    lemmas:
+      - "charge"
+      - "charged"
+      - "bill"
+      - "billed"
+      - "debit"
+      - "debited"
+    object_hints:
+      - "fee"
+      - "card"
+      - "account"
+      - "transaction"
+
+  report:
+    lemmas:
+      - "report"
+      - "reported"
+      - "notify"
+      - "notified"
+      - "submit"
+      - "submitted"
+    object_hints:
+      - "issue"
+      - "dispute"
+      - "fraud"
+
+  respond:
+    lemmas:
+      - "respond"
+      - "responded"
+      - "reply"
+      - "replied"
+    object_hints:
+      - "email"
+      - "request"
+      - "complaint"
+
+  receive:
+    lemmas:
+      - "receive"
+      - "received"
+      - "get"
+      - "got"
+    object_hints:
+      - "refund"
+      - "response"
+      - "letter"
+
+  provide:
+    lemmas:
+      - "provide"
+      - "provided"
+      - "send"
+      - "sent"
+      - "supply"
+      - "supplied"
+    object_hints:
+      - "documents"
+      - "evidence"
+      - "proof"
+
+  close:
+    lemmas:
+      - "close"
+      - "closed"
+      - "shut"
+      - "shut down"
+    object_hints:
+      - "account"
+      - "case"
+      - "complaint"
+
+comparison:
+  contradiction_label: "MUTATION_POLARITY_CONTRADICTION"
+  omission_label: "OMISSION"
+  addition_label: "ADDITION"
+  preserved_present_label: "PRESERVED_PRESENT"
+  preserved_absence_label: "PRESERVED_ABSENCE"

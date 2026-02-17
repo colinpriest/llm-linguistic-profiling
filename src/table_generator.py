@@ -776,22 +776,38 @@ class TableGenerator:
             "AUC", "Interpretation",
         ])
 
-        # Custom LaTeX with ragged columns for wide table
+        # Custom LaTeX – longtable with ragged columns for wide table
+        # Column widths: 0.11+0.08+0.09+0.32+0.05+0.25 = 0.90 (leaves room for \tabcolsep)
         tex_lines = [
-            r"\begin{table}[htbp]",
-            r"\centering",
+            r"% ---------- Table ----------",
             r"\small",
+            r"\begin{longtable}{@{}",
+            r"    >{\RaggedRight\arraybackslash}p{0.11\linewidth}",
+            r"    >{\RaggedRight\arraybackslash}p{0.08\linewidth}",
+            r"    >{\RaggedRight\arraybackslash}p{0.09\linewidth}",
+            r"    >{\RaggedRight\arraybackslash}p{0.32\linewidth}",
+            r"    >{\RaggedLeft\arraybackslash}p{0.05\linewidth}",
+            r"    >{\RaggedRight\arraybackslash}p{0.25\linewidth}@{}}",
             r"\caption{Top text features predicting persona dimensions (LightGBM classifiers).}",
-            r"\label{tab:persona_explainability}",
-            r"\begin{tabular}{>{\RaggedRight\arraybackslash}p{0.14\linewidth}",
-            r"                >{\RaggedRight\arraybackslash}p{0.10\linewidth}",
-            r"                >{\RaggedRight\arraybackslash}p{0.10\linewidth}",
-            r"                >{\RaggedRight\arraybackslash}p{0.28\linewidth}",
-            r"                r",
-            r"                >{\RaggedRight\arraybackslash}p{0.24\linewidth}}",
+            r"\label{tab:persona_explainability}\\",
             r"\toprule",
             r"Dimension & Value & Model & Top 3 Features & AUC & Interpretation \\",
             r"\midrule",
+            r"\endfirsthead",
+            r"",
+            r"\multicolumn{6}{@{}l}{\small\itshape Table \thetable\ (continued)}\\",
+            r"\toprule",
+            r"Dimension & Value & Model & Top 3 Features & AUC & Interpretation \\",
+            r"\midrule",
+            r"\endhead",
+            r"",
+            r"\midrule",
+            r"\multicolumn{6}{r@{}}{\small\itshape Continued on next page}\\",
+            r"\endfoot",
+            r"",
+            r"\bottomrule",
+            r"\endlastfoot",
+            r"",
         ]
         for _, row in df.iterrows():
             dim_esc = _escape_latex(str(row["Dimension"]))
@@ -803,9 +819,9 @@ class TableGenerator:
             auc_esc = _escape_latex(str(row["AUC"]))
             interp_esc = _escape_latex(str(row["Interpretation"]))
             tex_lines.append(
-                f"{dim_esc} & {val_esc} & {model_esc} & {feats_latex} & {auc_esc} & {interp_esc} \\\\"
+                f"{dim_esc} & {val_esc} & {model_esc} & {feats_latex} & {auc_esc} & {interp_esc} \\\\",
             )
-        tex_lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table}"])
+        tex_lines.append(r"\end{longtable}")
 
         tex_name = _build_filename("table", "main", "persona_explainability", "na", "all", 1, "tex")
         tex_path = out / tex_name

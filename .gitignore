@@ -24,6 +24,8 @@ cache/
 
 # Output (regenerable)
 output/
+slot_audit_out*/
+audit_out/
 
 # IDE
 .vscode/

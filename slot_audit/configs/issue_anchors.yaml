@@ -1,0 +1,97 @@
+version: "0.1"
+description: >
+  Starter issue-anchor dictionary for deterministic phrase matching.
+  Keep anchors relatively specific to reduce false positives.
+
+normalization:
+  lowercase: true
+  strip_punctuation: true
+  collapse_whitespace: true
+
+matching:
+  use_word_boundaries: true
+  allow_plural_s: true
+  max_ngram: 4
+
+anchors:
+  chargeback:
+    category: credit_card
+    synonyms:
+      - "chargeback"
+      - "merchant dispute"
+      - "card dispute"
+      - "disputed charge"
+      - "unauthorised charge"
+      - "unauthorized charge"
+
+  late_fee:
+    category: credit_card
+    synonyms:
+      - "late fee"
+      - "late payment fee"
+      - "penalty fee"
+
+  credit_report:
+    category: credit_reporting
+    synonyms:
+      - "credit report"
+      - "credit file"
+      - "credit bureau file"
+
+  hard_inquiry:
+    category: credit_reporting
+    synonyms:
+      - "hard inquiry"
+      - "hard enquiry"
+      - "credit inquiry"
+      - "credit enquiry"
+
+  debt_collection:
+    category: debt_collection
+    synonyms:
+      - "debt collection"
+      - "collection agency"
+      - "collector"
+      - "collection calls"
+      - "collections calls"
+
+  foreclosure:
+    category: mortgage
+    synonyms:
+      - "foreclosure"
+      - "foreclose"
+      - "foreclosed"
+
+  escrow:
+    category: mortgage
+    synonyms:
+      - "escrow"
+      - "escrow shortage"
+      - "impound account"
+
+  mortgage_servicer:
+    category: mortgage
+    synonyms:
+      - "servicer"
+      - "mortgage servicer"
+      - "loan servicer"
+
+  auto_loan:
+    category: auto
+    synonyms:
+      - "auto loan"
+      - "car loan"
+      - "vehicle loan"
+
+  unauthorised_transaction:
+    category: payments
+    synonyms:
+      - "unauthorised transaction"
+      - "unauthorized transaction"
+      - "fraudulent transaction"
+      - "unauthorised purchase"
+      - "unauthorized purchase"
+
+exclude_phrases:
+  - "customer service"
+  - "support team"
