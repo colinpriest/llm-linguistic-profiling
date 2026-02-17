@@ -126,6 +126,7 @@ class CrossModelRow:
     nexus_agree: Any
     conduct_agree: Any
     harm_agree: Any
+    evid_agree: Any = ""
 
 
 @dataclass
@@ -153,6 +154,7 @@ class CrossModelDimensionRow:
     nexus: float
     conduct: float
     harm: float
+    evid: float
     n: int
 
 
@@ -390,6 +392,7 @@ def _analysis_3_cross_model(
             "nexus": "bank_nexus" not in diffs,
             "conduct": "conduct_diff" not in diffs,
             "harm": "harm_diff" not in diffs,
+            "evid": "evidence_strength_diff" not in diffs,
         }
         for k, v in checks.items():
             if v:
@@ -399,7 +402,7 @@ def _analysis_3_cross_model(
             tier_m1=d1.tier.value, tier_m2=d2.tier.value,
             tier_agree=checks["tier"], entity_agree=checks["entity"],
             nexus_agree=checks["nexus"], conduct_agree=checks["conduct"],
-            harm_agree=checks["harm"],
+            harm_agree=checks["harm"], evid_agree=checks["evid"],
         ))
 
     if n_comp:
@@ -411,6 +414,7 @@ def _analysis_3_cross_model(
             nexus_agree=agree["nexus"] / n_comp,
             conduct_agree=agree["conduct"] / n_comp,
             harm_agree=agree["harm"] / n_comp,
+            evid_agree=agree["evid"] / n_comp,
         ))
 
     # --- Rewrites (aggregated tier agreement) ---
@@ -514,7 +518,7 @@ def _analysis_5_cross_model_by_dimension(
 
     for dim_key, dim_values in _DIMENSIONS:
         for dval in dim_values:
-            tier_a = entity_a = nexus_a = conduct_a = harm_a = 0
+            tier_a = entity_a = nexus_a = conduct_a = harm_a = evid_a = 0
             n_total = 0
 
             for c in complaints:
@@ -540,14 +544,16 @@ def _analysis_5_cross_model_by_dimension(
                         conduct_a += 1
                     if "harm_diff" not in diffs:
                         harm_a += 1
+                    if "evidence_strength_diff" not in diffs:
+                        evid_a += 1
 
             if n_total == 0:
                 continue
-            rates = [x / n_total for x in (tier_a, entity_a, nexus_a, conduct_a, harm_a)]
+            rates = [x / n_total for x in (tier_a, entity_a, nexus_a, conduct_a, harm_a, evid_a)]
             rows.append(CrossModelDimensionRow(
                 dimension=dim_key, value=dval,
                 tier=rates[0], entity=rates[1], nexus=rates[2],
-                conduct=rates[3], harm=rates[4],
+                conduct=rates[3], harm=rates[4], evid=rates[5],
                 n=n_total,
             ))
     return rows

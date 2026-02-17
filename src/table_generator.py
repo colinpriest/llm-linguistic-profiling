@@ -1232,7 +1232,10 @@ class TableGenerator:
 
         # Add model parameters
         for model in self.models:
-            rows.append((f"Model: {model}", "---", "temperature=1.0 (default)"))
+            is_reasoning = model.startswith(("gpt-5", "o1", "o3", "o4"))
+            temp_note = ("temperature=N/A (reasoning model)"
+                         if is_reasoning else "temperature=0.0")
+            rows.append((f"Model: {model}", "---", temp_note))
 
         df = pd.DataFrame(rows, columns=["Task/Parameter", "Version", "Notes"])
         return _write_three_formats(
@@ -2128,6 +2131,7 @@ class TableGenerator:
                 "Nexus": _fmt_agree(r["nexus_agree"]),
                 "Conduct": _fmt_agree(r["conduct_agree"]),
                 "Harm": _fmt_agree(r["harm_agree"]),
+                "Evid": _fmt_agree(r.get("evid_agree", "")),
             })
 
         df = pd.DataFrame(rows)
@@ -2137,7 +2141,7 @@ class TableGenerator:
             caption=f"Cross-model comparison: {_escape_latex(m1)} vs. {_escape_latex(m2)}.",
             label="tab:debiased_cross_model",
             use_tabularx=True,
-            col_spec=r"l >{\raggedright\arraybackslash}X c c r r r r r",
+            col_spec=r"l >{\raggedright\arraybackslash}X c c r r r r r r",
             font_size="footnotesize",
         )
 
@@ -2194,6 +2198,7 @@ class TableGenerator:
                 "Nexus %": _fmt_pct(float(r["nexus"]) * 100),
                 "Conduct %": _fmt_pct(float(r["conduct"]) * 100),
                 "Harm %": _fmt_pct(float(r["harm"]) * 100),
+                "Evid %": _fmt_pct(float(r["evid"]) * 100),
                 "N": _fmt_int(r["n"]),
             })
 
@@ -2204,7 +2209,7 @@ class TableGenerator:
             caption="Cross-model agreement by persona dimension.",
             label="tab:debiased_cross_dim",
             use_tabularx=True,
-            col_spec=r"l l r r r r r r",
+            col_spec=r"l l r r r r r r r",
             font_size="footnotesize",
         )
 

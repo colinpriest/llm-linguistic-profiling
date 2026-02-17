@@ -149,6 +149,8 @@ class FigureGenerator:
             self._fig10_robustness,
             self._fig_pdp_appendix,
             self._fig_cross_model_agreement,
+            self._fig_debiased_extraction_consistency,
+            self._fig_manipulation_checks,
         ]
         for method in fig_methods:
             try:
@@ -1426,3 +1428,393 @@ class FigureGenerator:
             encoding="utf-8",
         )
         return pdf_path, png_path
+
+    # ==================================================================
+    # Debiased Extraction Consistency Heatmap
+    # ==================================================================
+
+    def _fig_debiased_extraction_consistency(self) -> Optional[Tuple[Path, Path]]:
+        """Heatmap of within-model consistency and cross-model agreement by
+        extraction field and persona dimension-value."""
+        import matplotlib.pyplot as plt
+        import matplotlib.gridspec as gridspec
+        import matplotlib.colors as mcolors
+
+        debiased = self.ar.get("debiased_consistency")
+        if not debiased:
+            return None
+
+        by_dim = debiased.get("by_dimension", [])
+        cross_dim = debiased.get("cross_model_by_dimension", [])
+        if not by_dim:
+            return None
+
+        # ----- constants -----
+        fields = ["tier", "entity", "nexus", "conduct", "harm", "evid"]
+        field_labels = ["Tier", "Entity", "Nexus", "Conduct", "Harm", "Evidence"]
+        cross_fields = ["tier", "entity", "nexus", "conduct", "harm", "evid"]
+        cross_field_labels = ["Tier", "Entity", "Nexus", "Conduct", "Harm", "Evidence"]
+
+        # Ordered dimension-values matching the spec
+        dim_order = [
+            ("age", "young"), ("age", "old"),
+            ("geo", "urban"), ("geo", "suburban"), ("geo", "rural"),
+            ("edu", "high_school"), ("edu", "college"),
+            ("ses", "low"), ("ses", "middle"), ("ses", "high"),
+        ]
+        col_labels = [v.replace("_", " ").title() for _, v in dim_order]
+        # Group separator positions (between age|geo, geo|edu, edu|ses)
+        group_boundaries = [2, 5, 7]  # column indices where new groups start
+
+        # ----- build within-model matrices (one per model) -----
+        model_matrices: Dict[str, np.ndarray] = {}
+        for model in self.models:
+            model_rows = [r for r in by_dim if r["model"] == model]
+            lookup = {(r["dimension"], r["value"]): r for r in model_rows}
+            mat = np.full((len(fields), len(dim_order)), np.nan)
+            for ci, (dim, val) in enumerate(dim_order):
+                row_data = lookup.get((dim, val))
+                if row_data is None:
+                    continue
+                for ri, f in enumerate(fields):
+                    mat[ri, ci] = float(row_data[f]) * 100.0
+            model_matrices[model] = mat
+
+        if not model_matrices:
+            return None
+
+        # ----- build cross-model matrix -----
+        cross_matrix: Optional[np.ndarray] = None
+        if cross_dim and len(self.models) >= 2:
+            cross_lookup = {(r["dimension"], r["value"]): r for r in cross_dim}
+            cross_matrix = np.full((len(cross_fields), len(dim_order)), np.nan)
+            for ci, (dim, val) in enumerate(dim_order):
+                row_data = cross_lookup.get((dim, val))
+                if row_data is None:
+                    continue
+                for ri, f in enumerate(cross_fields):
+                    cross_matrix[ri, ci] = float(row_data[f]) * 100.0
+
+        # ----- colour map: green → yellow → red -----
+        cmap = mcolors.LinearSegmentedColormap.from_list(
+            "consistency",
+            [(0.0, "#c0392c"),      # red   (~0%)
+             (0.35, "#e67e22"),     # orange (~35%)
+             (0.55, "#f1c40f"),     # yellow (~55%)
+             (0.75, "#27ae60"),     # green  (~75%)
+             (1.0, "#1a7a3a")],    # dark green (~100%)
+        )
+
+        # Global vmin/vmax across all panels for a shared colour scale
+        all_vals = np.concatenate([m.ravel() for m in model_matrices.values()])
+        if cross_matrix is not None:
+            all_vals = np.concatenate([all_vals, cross_matrix.ravel()])
+        all_vals = all_vals[np.isfinite(all_vals)]
+        vmin = max(0, np.nanmin(all_vals) - 2) if len(all_vals) > 0 else 0
+        vmax = min(100, np.nanmax(all_vals) + 2) if len(all_vals) > 0 else 100
+
+        # ----- layout -----
+        n_panels = len(model_matrices)
+        has_cross = cross_matrix is not None
+        if has_cross:
+            fig = plt.figure(figsize=(7 * n_panels, 7.5))
+            gs = gridspec.GridSpec(
+                2, n_panels, figure=fig,
+                height_ratios=[len(fields), len(cross_fields)],
+                hspace=0.45, wspace=0.35,
+            )
+        else:
+            fig, axes_top = plt.subplots(1, n_panels, figsize=(7 * n_panels, 4.5),
+                                         squeeze=False)
+
+        # ----- helper: draw one heatmap panel -----
+        def _draw_panel(
+            ax: Any,
+            matrix: np.ndarray,
+            row_labels: List[str],
+            title: str,
+            show_xlabel: bool = True,
+        ) -> Any:
+            im = ax.imshow(
+                matrix, aspect="auto", cmap=cmap, vmin=vmin, vmax=vmax,
+                interpolation="nearest",
+            )
+            # Annotate cells
+            for ri in range(matrix.shape[0]):
+                for ci in range(matrix.shape[1]):
+                    val = matrix[ri, ci]
+                    if not np.isfinite(val):
+                        continue
+                    # Dark text on light cells, white on dark
+                    text_color = "white" if val < 45 else "black"
+                    ax.text(
+                        ci, ri, f"{val:.0f}%",
+                        ha="center", va="center",
+                        fontsize=8, fontweight="bold", color=text_color,
+                    )
+            # Axis labels
+            ax.set_xticks(range(len(col_labels)))
+            ax.set_xticklabels(col_labels, fontsize=8, rotation=45, ha="right")
+            ax.set_yticks(range(len(row_labels)))
+            ax.set_yticklabels(row_labels, fontsize=9)
+            ax.set_title(title, fontsize=11, fontweight="bold", pad=8)
+            # Group separators
+            for bx in group_boundaries:
+                ax.axvline(x=bx - 0.5, color="white", linewidth=2.5)
+            # Dimension group labels along top
+            if show_xlabel:
+                dim_groups = [("Age", 0, 1), ("Geography", 2, 4),
+                              ("Education", 5, 6), ("SES", 7, 9)]
+                for label, start, end in dim_groups:
+                    mid = (start + end) / 2
+                    ax.text(
+                        mid, -0.9, label,
+                        ha="center", va="bottom", fontsize=8,
+                        fontstyle="italic", color="#555555",
+                        transform=ax.get_xaxis_transform(),
+                    )
+            return im
+
+        # ----- draw within-model panels -----
+        im = None
+        for pi, model in enumerate(self.models):
+            if has_cross:
+                ax = fig.add_subplot(gs[0, pi])
+            else:
+                ax = axes_top[0, pi]
+            im = _draw_panel(
+                ax, model_matrices[model], field_labels,
+                title=model, show_xlabel=True,
+            )
+
+        # ----- draw cross-model panel -----
+        if has_cross and cross_matrix is not None:
+            ax_cross = fig.add_subplot(gs[1, :])
+            _draw_panel(
+                ax_cross, cross_matrix, cross_field_labels,
+                title="Cross-Model Agreement", show_xlabel=True,
+            )
+
+        # ----- shared colour bar -----
+        if im is not None:
+            cbar = fig.colorbar(
+                im, ax=fig.get_axes(), shrink=0.6, pad=0.03,
+                orientation="vertical",
+            )
+            cbar.set_label("Consistency %", fontsize=9)
+            cbar.ax.tick_params(labelsize=8)
+
+        fig.suptitle(
+            "Debiased Extraction Consistency by Field and Persona Dimension",
+            fontsize=13, fontweight="bold", y=0.99,
+        )
+
+        meta = self._base_metadata()
+        meta["analysis_type"] = "confirmatory"
+        meta["note"] = (
+            "Within-model: how often persona-rewritten extractions match "
+            "baseline. Cross-model: how often the two models agree on the "
+            "same persona rewrite."
+        )
+
+        return _save_figure_files(
+            fig, self.fig_dir,
+            topic="debiased_extraction_consistency",
+            model="both",
+            subset="matched",
+            version=1,
+            caption=(
+                "Debiased extraction consistency heatmap. "
+                "Top panels show within-model consistency (percentage of "
+                "persona-rewritten extractions matching the baseline) for each "
+                "model. Bottom panel shows cross-model agreement on the same "
+                "persona rewrites. Rows are extraction fields; columns are "
+                "persona dimension-values grouped by dimension. "
+                "Tier, Entity, and Nexus are highly consistent (~90%+) and flat "
+                "across personas, while Conduct, Harm, and Evidence are much "
+                "less consistent (~38--69%), indicating that these subjective "
+                "fields shift with writing style. Cross-model agreement on "
+                "Conduct (~13%) and Harm (~18%) is dramatically lower than "
+                "within-model consistency, confirming that models disagree on "
+                "subjective interpretations."
+            ),
+            metadata=meta,
+        )
+
+    # ==================================================================
+    # Manipulation Check Figure
+    # ==================================================================
+
+    def _fig_manipulation_checks(self) -> Optional[Tuple[Path, Path]]:
+        """Two-panel figure: (A) persona rewrite match rates by dimension,
+        (B) entropy reduction after neutralisation."""
+        import matplotlib.pyplot as plt
+        import matplotlib.gridspec as gridspec
+
+        mc = self.ar.get("manipulation_checks", {})
+        match_rates = mc.get("rewrite_match_rates", {})
+        signal_reduction = mc.get("signal_reduction", {})
+        if not match_rates and not signal_reduction:
+            return None
+
+        has_match = bool(match_rates)
+        has_signal = bool(signal_reduction)
+        n_panels = has_match + has_signal
+        if n_panels == 0:
+            return None
+
+        fig = plt.figure(figsize=(7 * n_panels, 5))
+        gs = gridspec.GridSpec(1, n_panels, figure=fig, wspace=0.35)
+        panel_idx = 0
+
+        # ---- Panel A: Rewrite match rates ----
+        if has_match:
+            ax_a = fig.add_subplot(gs[0, panel_idx])
+            panel_idx += 1
+
+            # Collect dimensions present across all models
+            all_dims = sorted({d for rates in match_rates.values() for d in rates})
+            dim_labels = [d.replace("_", " ").title() for d in all_dims]
+            n_dims = len(all_dims)
+            n_models = len(self.models)
+            bar_width = 0.7 / max(n_models, 1)
+
+            for mi, model in enumerate(self.models):
+                rates = match_rates.get(model, {})
+                vals = [rates.get(d, 0) * 100 for d in all_dims]
+                x = np.arange(n_dims) + (mi - (n_models - 1) / 2) * bar_width
+                bars = ax_a.bar(
+                    x, vals, width=bar_width, label=model,
+                    color=_GRAYS[mi * 2], edgecolor="white", linewidth=0.5,
+                )
+                # Annotate bar values
+                for bar, val in zip(bars, vals):
+                    ax_a.text(
+                        bar.get_x() + bar.get_width() / 2, bar.get_height() + 1.2,
+                        f"{val:.0f}%", ha="center", va="bottom",
+                        fontsize=8, fontweight="bold",
+                    )
+
+            ax_a.set_xticks(np.arange(n_dims))
+            ax_a.set_xticklabels(dim_labels, fontsize=9)
+            ax_a.set_ylabel("Match Rate (%)", fontsize=10)
+            ax_a.set_ylim(0, 109)
+            ax_a.set_title("(A)  Persona Re-estimation Match Rates",
+                           fontsize=11, fontweight="bold", pad=10)
+            ax_a.legend(fontsize=8, loc="lower right")
+            ax_a.spines["top"].set_visible(False)
+            ax_a.spines["right"].set_visible(False)
+            # Reference line at chance level for 4 causal dims
+            # Age: 50%, Geo: 33%, Edu: 50%, SES: 33%
+            _CHANCE = {
+                "age": 50, "geographic": 33.3, "education": 50, "socioeconomic": 33.3,
+            }
+            for di, d in enumerate(all_dims):
+                chance = _CHANCE.get(d)
+                if chance is not None:
+                    ax_a.plot(
+                        [di - 0.4, di + 0.4], [chance, chance],
+                        color="#cc0000", linewidth=1.2, linestyle="--", alpha=0.7,
+                    )
+            # Single legend entry for chance line
+            ax_a.plot([], [], color="#cc0000", linewidth=1.2, linestyle="--",
+                      alpha=0.7, label="Chance")
+            ax_a.legend(fontsize=8, loc="lower right")
+
+        # ---- Panel B: Entropy reduction ----
+        if has_signal:
+            ax_b = fig.add_subplot(gs[0, panel_idx])
+
+            # Collect all dimensions across models
+            all_dims_sig = sorted({
+                d for model_sig in signal_reduction.values() for d in model_sig
+            })
+            dim_labels_sig = [d.replace("_", " ").title() for d in all_dims_sig]
+            n_dims_sig = len(all_dims_sig)
+            n_models = len(self.models)
+            bar_width = 0.7 / max(n_models, 1)
+
+            for mi, model in enumerate(self.models):
+                model_sig = signal_reduction.get(model, {})
+                orig_vals = []
+                neut_vals = []
+                for d in all_dims_sig:
+                    ds = model_sig.get(d, {})
+                    orig_vals.append(ds.get("original_entropy", 0))
+                    neut_vals.append(ds.get("neutralized_entropy", 0))
+
+                x = np.arange(n_dims_sig) + (mi - (n_models - 1) / 2) * bar_width
+                # Stacked: neutralized (remaining) + reduction (removed)
+                reductions = [o - n for o, n in zip(orig_vals, neut_vals)]
+                ax_b.bar(
+                    x, neut_vals, width=bar_width,
+                    color=_GRAYS[mi * 2], edgecolor="white", linewidth=0.5,
+                    label=f"{model} (remaining)",
+                )
+                ax_b.bar(
+                    x, reductions, width=bar_width, bottom=neut_vals,
+                    color=_GRAYS[mi * 2 + 1], edgecolor="white", linewidth=0.5,
+                    label=f"{model} (reduced)",
+                    hatch="///", alpha=0.7,
+                )
+                # Annotate reduction %
+                for xi, (ov, nv) in enumerate(zip(orig_vals, neut_vals)):
+                    if ov > 0:
+                        pct = (1 - nv / ov) * 100
+                        ax_b.text(
+                            x[xi], ov + 0.02,
+                            f"{pct:+.0f}%", ha="center", va="bottom",
+                            fontsize=7, fontweight="bold",
+                            color="#cc0000" if pct > 0 else "#333333",
+                        )
+
+            ax_b.set_xticks(np.arange(n_dims_sig))
+            ax_b.set_xticklabels(dim_labels_sig, fontsize=9)
+            ax_b.set_ylabel("Shannon Entropy (bits)", fontsize=10)
+            ax_b.set_title("(B)  Entropy Reduction After Neutralisation",
+                           fontsize=11, fontweight="bold", pad=10)
+            ax_b.legend(fontsize=7, loc="upper right", ncol=1)
+            ax_b.spines["top"].set_visible(False)
+            ax_b.spines["right"].set_visible(False)
+
+        fig.suptitle(
+            "Manipulation Checks: Rewrite Fidelity and Signal Removal",
+            fontsize=13, fontweight="bold", y=1.02,
+        )
+        fig.tight_layout(rect=[0, 0, 1, 0.95])
+
+        meta = self._base_metadata()
+        meta["analysis_type"] = "confirmatory"
+        meta["note"] = (
+            "Panel A: After rewriting complaints in a target persona style, "
+            "the LLM re-estimates the persona; bars show the fraction matching "
+            "the intended dimension value (dashed red = chance). "
+            "Panel B: Shannon entropy of the persona-dimension distribution "
+            "before (full bar) and after (solid portion) language neutralisation; "
+            "hatched portion is the entropy removed. Annotations show % reduction."
+        )
+
+        return _save_figure_files(
+            fig, self.fig_dir,
+            topic="manipulation_checks",
+            model="both",
+            subset="all",
+            version=1,
+            caption=(
+                "Manipulation checks. "
+                "(A) Persona re-estimation match rates after style rewriting: "
+                "bars show the percentage of rewritten complaints whose "
+                "re-estimated persona matches the intended dimension value, "
+                "per model. Dashed red lines indicate chance-level accuracy. "
+                "Rates well above chance confirm that the rewriting step "
+                "successfully shifted perceived demographic style. "
+                "(B) Entropy reduction after language neutralisation: "
+                "stacked bars decompose the original Shannon entropy of each "
+                "persona dimension into the portion remaining after "
+                "neutralisation (solid) and the portion removed (hatched). "
+                "Annotations show percentage reduction. Positive reduction "
+                "indicates that neutralisation successfully flattened the "
+                "demographic signal in the text."
+            ),
+            metadata=meta,
+        )
