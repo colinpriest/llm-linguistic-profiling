@@ -26,6 +26,7 @@ cache/
 output/
 slot_audit_out*/
 audit_out/
+robustness_out/
 
 # IDE
 .vscode/

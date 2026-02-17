@@ -1408,6 +1408,11 @@ class TableGenerator:
                 paths.extend(self._tableB3_bayes_ordinal_tiers(bayes_dir, model, metric))
             paths.extend(self._tableB4_bayes_diagnostics(bayes_dir, model))
 
+        # Slot-preservation robustness subset tables
+        paths.extend(self._tableR1_subset_retention(rob_dir))
+        paths.extend(self._tableR2_effect_stability(rob_dir))
+        paths.extend(self._tableR3_outcome_composition_shift(rob_dir))
+
         return paths
 
     # ------------------------------------------------------------------
@@ -2039,6 +2044,123 @@ class TableGenerator:
             label=f"tab:bayes_diag_{model_clean}",
             col_spec=r">{\raggedright\arraybackslash}X r r r r l",
             use_tabularx=True,
+            font_size="footnotesize",
+        )
+
+    # ==================================================================
+    # SLOT-PRESERVATION ROBUSTNESS SUBSET TABLES
+    # ==================================================================
+
+    def _tableR1_subset_retention(self, out: Path) -> List[Path]:
+        """Table R1: Subset sizes and retention rates (cross-model)."""
+        rob = self.ar.get("robustness_subsets", {})
+        if not rob or rob.get("skipped"):
+            return []
+
+        rob_dir = Path(rob.get("output_dir", ""))
+        manifest_path = rob_dir / "subset_manifest.csv"
+        if not manifest_path.exists():
+            return []
+
+        df = pd.read_csv(manifest_path)
+        aliases = rob.get("aliases", {})
+
+        # Add alias annotation
+        df["Subset"] = df["subset"].apply(
+            lambda s: f"{s} (= {aliases[s]})" if s in aliases else s
+        )
+        display = df[["Subset", "model_name", "n_pairs", "n_complaints",
+                       "pair_retention", "complaint_retention"]].copy()
+        display.columns = ["Subset", "Model", "Pairs", "Complaints",
+                           "Pair Ret.", "Compl. Ret."]
+        display["Pair Ret."] = display["Pair Ret."].apply(lambda v: f"{v:.3f}")
+        display["Compl. Ret."] = display["Compl. Ret."].apply(lambda v: f"{v:.3f}")
+        display["Pairs"] = display["Pairs"].apply(lambda v: f"{int(v):,}")
+        display["Complaints"] = display["Complaints"].apply(lambda v: f"{int(v):,}")
+
+        return _write_three_formats(
+            display, out, "table", "robustness", "slot_subset_retention",
+            "all", "all", 1,
+            caption="Matched-guise robustness subset retention rates.",
+            label="tab:slot_subset_retention",
+            font_size="small",
+        )
+
+    def _tableR2_effect_stability(self, out: Path) -> List[Path]:
+        """Table R2: Effect stability vs FULL (cross-model)."""
+        rob = self.ar.get("robustness_subsets", {})
+        if not rob or rob.get("skipped"):
+            return []
+
+        rob_dir = Path(rob.get("output_dir", ""))
+        comp_path = rob_dir / "robustness_vs_full.csv"
+        if not comp_path.exists():
+            return []
+
+        df = pd.read_csv(comp_path)
+        aliases = rob.get("aliases", {})
+
+        display_rows = []
+        for _, r in df.iterrows():
+            subset = r["subset"]
+            alias_note = f" (= {aliases[subset]})" if subset in aliases else ""
+            display_rows.append({
+                "Subset": f"{subset}{alias_note}",
+                "Model": r["model_name"],
+                "Effect": r["effect"].replace("max_persona_gap_", ""),
+                "Full": f"{r['effect_full']:.4f}",
+                "Subset Val.": f"{r['effect_subset']:.4f}",
+                "Atten.": f"{r['attenuation']:.3f}" if not np.isnan(r.get("attenuation", float("nan"))) else "---",
+                "Direction": r.get("effect_change_class", ""),
+                "CI Overlap": "Yes" if r.get("ci_overlap", True) else "No",
+                "Pass": "Y" if r.get("pass_attenuation", True) and r.get("pass_ci_overlap", True) else "N",
+            })
+
+        display = pd.DataFrame(display_rows)
+        return _write_three_formats(
+            display, out, "table", "robustness", "slot_effect_stability",
+            "all", "all", 1,
+            caption="Matched-guise effect stability across slot-quality subsets.",
+            label="tab:slot_effect_stability",
+            font_size="footnotesize",
+        )
+
+    def _tableR3_outcome_composition_shift(self, out: Path) -> List[Path]:
+        """Table R3: Outcome-composition shift between kept and dropped pairs."""
+        rob = self.ar.get("robustness_subsets", {})
+        if not rob or rob.get("skipped"):
+            return []
+
+        rob_dir = Path(rob.get("output_dir", ""))
+        shift_path = rob_dir / "outcome_composition_shift.csv"
+        if not shift_path.exists():
+            return []
+
+        df = pd.read_csv(shift_path)
+        display_rows = []
+        for _, r in df.iterrows():
+            tp = r.get("tier_ttest_p", float("nan"))
+            zp = r.get("tier2_ztest_p", float("nan"))
+            display_rows.append({
+                "Model": r["model_name"],
+                "N Kept": f"{int(r['n_kept']):,}",
+                "N Dropped": f"{int(r['n_dropped']):,}",
+                "Mean Tier (K)": f"{r['mean_tier_kept']:.3f}",
+                "Mean Tier (D)": f"{r['mean_tier_dropped']:.3f}" if not np.isnan(r.get("mean_tier_dropped", float("nan"))) else "---",
+                "Diff": f"{r['tier_diff']:.3f}",
+                "p (tier)": _fmt_pval_latex(tp) if not np.isnan(tp) else "---",
+                "Tier2 (K)": f"{r['p_tier2_kept']:.3f}",
+                "Tier2 (D)": f"{r['p_tier2_dropped']:.3f}" if not np.isnan(r.get("p_tier2_dropped", float("nan"))) else "---",
+                "p (tier2)": _fmt_pval_latex(zp) if not np.isnan(zp) else "---",
+                "Bias Dir.": r.get("bias_direction", ""),
+            })
+
+        display = pd.DataFrame(display_rows)
+        return _write_three_formats(
+            display, out, "table", "robustness", "slot_composition_shift",
+            "all", "all", 1,
+            caption="Outcome-composition shift: kept vs dropped pairs under high-fidelity filtering.",
+            label="tab:slot_composition_shift",
             font_size="footnotesize",
         )
 

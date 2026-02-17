@@ -313,11 +313,19 @@ class Experiment:
             getattr(self, f"_step_{step}")()
             logger.info("Step %d complete", step)
 
+        # Slot-preservation audit on matched-guise pairs
+        if self.persona_rewrites:
+            self._run_slot_audit()
+
         # Build analysis
         self._run_analyses()
 
         # Save artifacts
         self._save_artifacts()
+
+        # Robustness subset analysis (needs saved persona_decisions CSV + slot audit CSV)
+        if self.persona_rewrites and self.persona_decisions_df is not None:
+            self._run_robustness_subsets()
 
         # NOTE: paper bundle is generated externally (llm_fairness_experiment.py)
         # AFTER the reporter and worked-examples have written their files,
@@ -1408,6 +1416,158 @@ class Experiment:
                         )
                         parts_str = [f"{k}={v:.3f}" for k, v in sorted(dim_rates.items())]
                         logger.info("    Info rate by %s: %s", dim, ", ".join(parts_str))
+
+    # ------------------------------------------------------------------
+    # Slot-preservation audit (runs after Step 5)
+    # ------------------------------------------------------------------
+
+    def _run_slot_audit(self) -> None:
+        """Run slot-preservation audit on matched-guise pairs.
+
+        Builds the source→rewrite pairs DataFrame directly from in-memory
+        ``self.persona_rewrites``, then runs the four-family slot audit
+        (numeric, temporal, polarity, anchor) and writes results to a
+        ``slot_audit/`` subdirectory under the experiment output.
+        """
+        from slot_audit.extract_anchors import load_anchor_config
+        from slot_audit.extract_polarity import load_event_config
+        from slot_audit.aggregate_report import (
+            write_complaint_csv,
+            write_high_fidelity_csvs,
+            write_json_metrics,
+            write_markdown_report,
+            write_pair_csv,
+            write_preserved_csv,
+        )
+        from slot_audit.slot_audit import run_audit
+
+        logger.info("=" * 60)
+        logger.info("Slot-Preservation Audit (matched-guise pairs)")
+        logger.info("=" * 60)
+
+        # Build pairs DataFrame from in-memory rewrites
+        rows = []
+        for rw in self.persona_rewrites:
+            rows.append({
+                "complaint_id": str(rw.case_id),
+                "rewrite_id": f"{rw.case_id}__{rw.model}__{rw.persona_label}",
+                "model_name": rw.model,
+                "persona_label": rw.persona_label,
+                "source_text": rw.original_narrative,
+                "rewrite_text": rw.rewritten_narrative,
+            })
+        pairs_df = pd.DataFrame(rows)
+        logger.info("Built %d source→rewrite pairs from %d complaints",
+                     len(pairs_df), pairs_df["complaint_id"].nunique())
+
+        # Load configs (use defaults bundled with slot_audit package)
+        anchor_config = load_anchor_config(None)
+        event_config = load_event_config(None)
+
+        # Run audit with model + persona subgroup reporting
+        pair_df, complaint_df, preserved_df, metrics = run_audit(
+            pairs_df,
+            anchor_config=anchor_config,
+            event_config=event_config,
+            group_cols=["model_name", "persona_label"],
+        )
+
+        # Write outputs to slot_audit/ subdirectory
+        audit_dir = self.output_dir / "slot_audit"
+        audit_dir.mkdir(parents=True, exist_ok=True)
+
+        write_pair_csv(pair_df, audit_dir / "pair_slot_audit.csv")
+        write_complaint_csv(complaint_df, audit_dir / "complaint_slot_summary.csv")
+        write_preserved_csv(complaint_df, audit_dir / "preserved_complaints.csv", 1.0)
+        write_high_fidelity_csvs(pair_df, complaint_df, audit_dir)
+        write_json_metrics(metrics, audit_dir / "slot_preservation_metrics.json")
+        write_markdown_report(metrics, pair_df, audit_dir / "slot_preservation_report.md")
+
+        # Store in analysis results
+        self.analysis_results["slot_audit"] = {
+            "output_dir": str(audit_dir),
+            "metrics": metrics,
+        }
+
+        # Console summary
+        g = metrics["global"]
+        hf = g["high_fidelity"]
+        vg = g["viability_gate"]
+        gate = "PASS" if vg["pass"] else "FAIL"
+        logger.info("Slot audit complete:")
+        logger.info("  Pairs:                  %d", g["n_pairs"])
+        logger.info("  Complaints:             %d", g["n_complaints"])
+        logger.info("  Viability gate:         %s", gate)
+        logger.info("  Strict pair pass rate:  %.4f", g["strict_pair_pass_rate"])
+        logger.info("  High-fidelity pairs:    %d / %d (%.4f)",
+                     hf["n_pairs"], g["n_pairs"], hf["pair_rate"])
+        logger.info("  High-fidelity complaints: %d / %d (%.4f)",
+                     hf["n_complaints"], g["n_complaints"], hf["complaint_rate"])
+        logger.info("  Contradiction rate:     %.4f", g["polarity_contradiction_rate"])
+        logger.info("  Output: %s", audit_dir)
+
+        # Per-model summary if subgroups available
+        if "subgroups" in metrics and "model_name" in metrics["subgroups"]:
+            logger.info("  Per-model breakdown:")
+            for model, gm in metrics["subgroups"]["model_name"].items():
+                logger.info("    %s: strict=%.4f  hi-fi=%.4f  contradiction=%.4f",
+                            model, gm["strict_pair_pass_rate"],
+                            gm["high_fidelity_pair_rate"],
+                            gm["contradiction_rate"])
+
+    # ------------------------------------------------------------------
+    # Robustness subset analysis (runs after save_artifacts)
+    # ------------------------------------------------------------------
+
+    def _run_robustness_subsets(self) -> None:
+        """Run matched-guise robustness subset analysis.
+
+        Requires both the persona_decisions DataFrame and the slot audit
+        pair CSV to already exist.  Uses the programmatic API from
+        ``matched_guise_robustness_subsets`` to avoid re-parsing CSVs.
+        """
+        from matched_guise_robustness_subsets import run_robustness_analysis
+
+        logger.info("=" * 60)
+        logger.info("Robustness Subset Analysis (matched-guise)")
+        logger.info("=" * 60)
+
+        audit_csv = self.output_dir / "slot_audit" / "pair_slot_audit.csv"
+        if not audit_csv.exists():
+            logger.warning("Slot audit pair CSV not found at %s; skipping robustness analysis", audit_csv)
+            return
+
+        audit_df = pd.read_csv(audit_csv)
+
+        # Build severity map from in-memory complaints
+        severity_map = {}
+        for c in self.complaints:
+            severity_map[str(c.case_id)] = {
+                "monetary_severity": getattr(c, "monetary_severity", "unknown"),
+                "issue_severity": getattr(c, "issue_severity", "medium"),
+            }
+
+        rob_dir = self.output_dir / "robustness_subsets"
+        result = run_robustness_analysis(
+            decisions_df=self.persona_decisions_df,
+            audit_df=audit_df,
+            output_dir=rob_dir,
+            run_id=self.timestamp,
+            severity_map=severity_map,
+            bootstrap_reps=200,
+            seed=self.seed,
+        )
+
+        self.analysis_results["robustness_subsets"] = result
+
+        overall = result.get("overall_verdict", "N/A")
+        logger.info("Robustness subset analysis complete: %s", overall)
+        if "verdicts" in result:
+            for subset, model_verdicts in result["verdicts"].items():
+                alias_note = f" (= {result['aliases'][subset]})" if subset in result.get("aliases", {}) else ""
+                for model, vd in model_verdicts.items():
+                    logger.info("  %s%s | %s | %s", subset, alias_note, model, vd["verdict"])
+        logger.info("  Output: %s", rob_dir)
 
     # ------------------------------------------------------------------
     # Step 6: Language Neutralization
