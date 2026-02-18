@@ -11,6 +11,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -180,6 +181,7 @@ def main() -> None:
     setup_logging(args.output_dir, args.verbose, run_timestamp)
     logger = logging.getLogger(__name__)
 
+    t_start = time.monotonic()
     logger.info("LLM Fairness Experiment v1.2")
     logger.info("Configuration:")
     logger.info("  Data path:    %s", args.data_path)
@@ -310,6 +312,15 @@ def main() -> None:
     if bundle_info and not bundle_info.get("error"):
         logger.info("Paper bundle: %s", bundle_info.get("output_root", ""))
     _log_token_usage(experiment.llm, logger)
+    elapsed = time.monotonic() - t_start
+    hours, remainder = divmod(int(elapsed), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        logger.info("Total time: %dh %dm %ds", hours, minutes, seconds)
+    elif minutes:
+        logger.info("Total time: %dm %ds", minutes, seconds)
+    else:
+        logger.info("Total time: %.1fs", elapsed)
     logger.info("=" * 60)
 
 

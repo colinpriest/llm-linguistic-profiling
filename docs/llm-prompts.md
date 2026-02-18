@@ -6,7 +6,7 @@ This project uses 9 distinct LLM prompts across 3 categories:
 
 1. **Core experiment prompts** (6) — defined in `src/prompts.py`, versioned, cached by `(model, task, narrative, prompt_version)`
 2. **Statistical commentary prompts** (2) — defined inline in `src/experiment.py`, sent to GPT-5.2
-3. **Executive summary prompts** (1 template × 7 sections) — defined inline in `src/experiment.py`, using one-shot examples from `one-shot-examples/`
+3. **Executive summary prompts** (1 template × 8 sections) — defined inline in `src/experiment.py`, using one-shot examples from `one-shot-examples/`
 
 All prompts return structured JSON parsed into Pydantic models via the Instructor library. The primary experiment models are `gpt-4o-mini` and `gpt-5-mini` at `temperature=0.0`. Commentary and executive summary generation uses `gpt-5.2`.
 
@@ -359,7 +359,7 @@ Provides model-specific analysis results and instructs: "Write your two findings
 **Task name:** `executive_summary`
 **Schema:** `CommentaryResponse`
 **Model:** `gpt-5.2`
-**Used in:** Report generation — produces 7 sections of the business executive summary
+**Used in:** Report generation — produces 8 sections of the business executive summary
 **One-shot examples:** loaded from `one-shot-examples/` directory
 
 ### System prompt template
@@ -412,7 +412,8 @@ Here is the data for this section. Write the executive summary section now.
 | 4. Severity Stakes | `one-shot-example-severity-stakes.md` | Whether AI bias in complaint resolution varies by dollar amount and issue severity |
 | 5. Language Neutralisation | `one-shot-example-language-neutralisation.md` | Whether ChatGPT can anonymise stakeholders by neutralising persona-specific language |
 | 6. Bias Mitigation | `one-shot-example-bias-mitigation.md` | Whether using a common linguistic style removes bias in remedy decisions |
-| 7. Conclusion | `one-shot-examples-conclusion.md` | Half-page synthesis of findings from sections 1–6 with 3–5 key findings and recommendations |
+| 7. Robustness & Data Quality | `one-shot-example-robustness-quality.md` | Quality of matched-guise rewrites and robustness of causal findings to data quality filtering |
+| 8. Conclusion | `one-shot-examples-conclusion.md` | Half-page synthesis of findings from sections 1–7 with 3–5 key findings and recommendations |
 
 ### One-shot example format
 
@@ -426,7 +427,7 @@ output:
 {example executive summary text}
 ```
 
-The generator parses these sections and injects them into the system prompt as a worked example. Section 7 (Conclusion) receives the concatenated output of sections 1–6 as its input data rather than raw statistics.
+The generator parses these sections and injects them into the system prompt as a worked example. Section 8 (Conclusion) receives the concatenated output of sections 1–7 as its input data rather than raw statistics.
 
 ---
 

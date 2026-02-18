@@ -1303,6 +1303,10 @@ def run_robustness_analysis(
         composition_shift=comp_shift,
     )
 
+    # Build comparison and composition shift as list-of-dicts for easy consumption
+    comparison_records = comparison_df.to_dict("records") if not comparison_df.empty else []
+    comp_shift_records = comp_shift.to_dict("records") if not comp_shift.empty else []
+
     return {
         "output_dir": str(output_dir),
         "verdicts": verdicts,
@@ -1314,6 +1318,9 @@ def run_robustness_analysis(
             v["verdict"] == "FAIL"
             for sv in verdicts.values() for v in sv.values()
         ) else "PASS_WITH_CAUTION",
+        "comparison": comparison_records,
+        "composition_shift": comp_shift_records,
+        "flags": verdicts,
     }
 
 

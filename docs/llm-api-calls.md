@@ -17,18 +17,43 @@ Defined in `src/schemas.py` → `LLMConfig`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `temperature` | `0.0` | Deterministic output. Only sent to non-reasoning models. |
+| `temperature` | `0.0` | Deterministic output. **Not sent to reasoning models** (see below). |
 | `max_tokens` | `1000` | Maximum completion tokens. Overridden to `32,000` for reasoning models. |
 | `timeout` | `60` seconds | Per-request HTTP timeout. |
 | `max_retries` | `3` | Maximum attempts per request before failure. |
 | `retry_delay` | `1.0` second | Base delay between retries (exponential backoff: `delay × 2^(attempt-1)`). |
 
-### Reasoning model detection
+### Temperature: when it is and isn't used
 
-Models with names starting with `gpt-5`, `o1`, `o3`, or `o4` are treated as **reasoning models**. For these:
-- `temperature` is **not sent** (API rejects it)
-- `max_tokens` is replaced with `max_completion_tokens = max(config.max_tokens, 32_000)` to leave room for internal reasoning tokens
-- `max_tokens` parameter is **not sent** (API rejects it)
+The `temperature` parameter controls randomness in model output. At `0.0`, the model produces deterministic (most-probable) completions. However, **not all models accept this parameter**.
+
+**Reasoning models** (identified by name prefix: `gpt-5`, `o1`, `o3`, `o4`) perform internal chain-of-thought reasoning before producing output. The OpenAI API **rejects** the `temperature` parameter for these models — they always use their own internal sampling strategy. Sending `temperature` to a reasoning model returns an HTTP 400 error.
+
+**Non-reasoning models** (e.g. `gpt-4o-mini`) accept and use `temperature=0.0` for deterministic output.
+
+The code in `src/llm_client.py` handles this automatically:
+
+```python
+is_reasoning = request.model.startswith(("gpt-5", "o1", "o3", "o4"))
+if is_reasoning:
+    kwargs["max_completion_tokens"] = max(config.max_tokens, 32_000)
+    # temperature and max_tokens are NOT sent
+else:
+    kwargs["max_tokens"] = config.max_tokens
+    kwargs["temperature"] = config.temperature  # 0.0
+```
+
+**Which calls use temperature in practice:**
+
+| Call | Model | Temperature | Why |
+|------|-------|-------------|-----|
+| Dollar extraction | `gpt-4o-mini` | `0.0` (sent) | Non-reasoning model; deterministic extraction desired |
+| Steps 1–7 with `gpt-4o-mini` | `gpt-4o-mini` | `0.0` (sent) | Non-reasoning model; reproducible experiment results |
+| Steps 1–7 with `gpt-5-mini` | `gpt-5-mini` | Omitted | Reasoning model; API rejects the parameter |
+| Commentary | `gpt-5.2` | Omitted | Reasoning model |
+| Executive summary | `gpt-5.2` | Omitted | Reasoning model |
+
+For reasoning models, `max_tokens` is also replaced with `max_completion_tokens = max(config.max_tokens, 32,000)` to leave room for internal reasoning tokens. The `max_tokens` parameter is likewise rejected by the reasoning model API.
 
 ### HTTP transport configuration
 
@@ -334,7 +359,7 @@ Cache hits return `attempt_number=0` in the `LLMResponse`. Invalid cache entries
 
 ---
 
-### 8. Executive Summary Sections (×7)
+### 8. Executive Summary Sections (×8)
 
 | Property | Value |
 |----------|-------|
@@ -354,7 +379,7 @@ Cache hits return `attempt_number=0` in the `LLMResponse`. Invalid cache entries
 | **Failure handling** | **Warning only** — logged at WARNING level, returns `None` |
 | **One-shot examples** | Loaded from `one-shot-examples/` directory |
 
-The 7 sections and their variants:
+The 8 sections and their variants:
 
 | # | Section | Variant |
 |---|---------|---------|
@@ -364,9 +389,10 @@ The 7 sections and their variants:
 | 4 | Severity Stakes | `exec_severity_stakes` |
 | 5 | Language Neutralisation | `exec_language_neutralisation` |
 | 6 | Bias Mitigation | `exec_bias_mitigation` |
-| 7 | Conclusion | `exec_conclusion` |
+| 7 | Robustness & Data Quality | `exec_robustness_quality` |
+| 8 | Conclusion | `exec_conclusion` |
 
-Section 7 (Conclusion) receives the concatenated output of sections 1–6 as input rather than raw statistics.
+Section 8 (Conclusion) receives the concatenated output of sections 1–7 as input rather than raw statistics.
 
 **Output JSON structure:**
 ```json
@@ -454,6 +480,6 @@ call_with_cache(request, narrative)
 | `gpt-4o-mini` | Primary experiment model (Steps 1–7) | Batch |
 | `gpt-5-mini` | Primary experiment model (Steps 1–7) | Batch |
 | `gpt-5.2` | Commentary generation (Steps 3, per-model) | Single cached |
-| `gpt-5.2` | Executive summary generation (7 sections) | Single cached |
+| `gpt-5.2` | Executive summary generation (8 sections) | Single cached |
 
 The experiment models are configurable via `LLMConfig.models`. Dollar extraction always uses `gpt-4o-mini`. Commentary and executive summaries always use `gpt-5.2`.

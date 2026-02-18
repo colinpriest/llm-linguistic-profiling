@@ -48,6 +48,7 @@ _ANALYSIS_VERSIONS: Dict[str, str] = {
     "bayes_robustness": "3.3",  # v3.3: ordinal imbalance check, B2 MCMC skip
     "repeated_measures": "1.0",  # v1.0: includes model diagnostics
     "correlation_analysis": "1.0",  # v1.0: includes model diagnostics
+    "robustness_subsets": "1.0",  # v1.0: matched-guise robustness subset analysis
 }
 
 # Columns that are relevant for each analysis type (used for content-based hashing)
@@ -67,6 +68,10 @@ _ANALYSIS_RELEVANT_COLUMNS: Dict[str, List[str]] = {
     "correlation_analysis": [
         "case_id", "model", "tier", "persona_label", "age", "geographic",
         "education", "socioeconomic", "gender", "esl",
+    ],
+    "robustness_subsets": [
+        "case_id", "model", "tier", "confidence", "variant", "persona_label",
+        "high_fidelity_pass", "has_contradiction", "numeric_status",
     ],
 }
 
@@ -119,7 +124,8 @@ def _hash_dataframe(
     # Hash value distributions for categorical columns
     categorical_cols = ["model", "tier", "confidence", "monetary_severity", "issue_severity",
                         "age", "geographic", "education", "socioeconomic", "gender", "esl",
-                        "persona_label", "variant", "product_category", "issue_category"]
+                        "persona_label", "variant", "product_category", "issue_category",
+                        "high_fidelity_pass", "has_contradiction", "numeric_status"]
     for col in categorical_cols:
         if col in cols_to_hash and col in df.columns:
             value_counts = df[col].value_counts().sort_index().to_dict()
@@ -186,7 +192,7 @@ def _compute_cache_key(
 class AnalysisCache:
     """Cache for expensive analysis results (severity, Bayesian, etc.)."""
 
-    ANALYSIS_TYPES = ["severity_analysis", "bayes_robustness", "repeated_measures", "correlation_analysis"]
+    ANALYSIS_TYPES = ["severity_analysis", "bayes_robustness", "repeated_measures", "correlation_analysis", "robustness_subsets"]
 
     def __init__(self, cache_dir: str = "./cache") -> None:
         self.cache_dir = Path(cache_dir) / "analysis"

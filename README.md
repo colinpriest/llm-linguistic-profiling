@@ -38,11 +38,13 @@ python llm_fairness_experiment.py
 
 After the 7 steps, additional analyses run automatically:
 
+- **Slot-preservation audit** — Verifies that persona rewrites preserve factual content (dollar amounts, dates, entities, polarity) across four slot families
+- **Robustness subset analysis** — Re-runs persona-dispersion analysis on quality-filtered subsets (HF, NO_POL, NO_NUM) to confirm findings are not driven by rewrite artefacts
 - **Severity amplification** — Does bias increase with complaint severity (dollar amounts, issue category)?
 - **Process discrimination** — Do certain personas face higher procedural burdens (information requests)?
 - **Repeated-measures causal inference** — CLMM, conditional logit, GEE models for within-complaint effects
 - **Bayesian robustness** — Stan-based hierarchical models as robustness checks
-- **Executive summary** — GPT-generated 7-section business-audience commentary
+- **Executive summary** — GPT-generated 8-section business-audience commentary
 
 ## CLI Options
 
@@ -162,8 +164,19 @@ Download the CFPB Consumer Complaint Database CSV from https://www.consumerfinan
 ```
 .
 ├── llm_fairness_experiment.py          # Main entry point — runs the full experiment
+├── matched_guise_robustness_subsets.py # Robustness subset analysis (FULL, HF, NO_POL, NO_NUM)
 ├── requirements.txt
 ├── .env                                # API keys (not in version control)
+│
+├── slot_audit/                         # Matched-guise slot-preservation audit package
+│   ├── slot_audit.py                  # Main audit pipeline + CLI
+│   ├── extract_numeric.py             # Dollar/percent/count extraction
+│   ├── extract_temporal.py            # Duration/frequency/year extraction
+│   ├── extract_polarity.py            # Complaint polarity extraction
+│   ├── extract_anchors.py             # Named entity extraction
+│   ├── compare_slots.py               # Family-level comparison logic
+│   ├── aggregate_report.py            # Metrics aggregation + viability gate
+│   └── tests/                         # Unit tests for all extractors
 │
 ├── src/
 │   ├── experiment.py                   # 7-step orchestration + executive summary
@@ -206,6 +219,10 @@ Download the CFPB Consumer Complaint Database CSV from https://www.consumerfinan
 - [LLM Prompts](docs/llm-prompts.md) — Prompt templates and versioning
 - [Tiers and Severities](docs/tiers-and-severities.md) — Remedy tiers and severity scoring
 - [CFPB Data](docs/cfpb-data.md) — Data source, category mappings, exclusions
+- [Slot-Preservation Audit](docs/matched-guise-slot-preservation-audit.md) — Rewrite quality verification (4 slot families, viability gate)
+- [Robustness Subset Analysis](docs/matched-guise-robustness-subsets.md) — Effect stability under quality filtering
+- [Severity Amplification](docs/step-08-severity-amplification.md) — Severity x persona interaction analysis
+- [Bayesian Robustness](docs/bayesian-analysis.md) — Stan-based hierarchical model robustness checks
 - [Experiment Spec v1.2](specs/llm_fairness_experiment_specification_v1.2.md) — Full methodology
 - [Severity Amplification Spec](specs/severity-amplification-specification.md) — Severity analysis design
 - [Advanced Statistics Spec](specs/advanced-statistical-specifications.md) — Repeated measures and Bayesian methods

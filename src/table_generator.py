@@ -89,6 +89,13 @@ def _fmt_pct(v: Any, decimals: int = 1) -> str:
     return f"{float(v):.{decimals}f}%"
 
 
+def _fmt_pct_tex(v: Any, decimals: int = 1) -> str:
+    """Format a percentage with escaped ``%`` for LaTeX."""
+    if not is_estimable(v):
+        return "---"
+    return f"{float(v):.{decimals}f}\\%"
+
+
 def _resolve_variance_change(block: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize variance change payload across mitigation result objects."""
     vc = dict(block.get("variance_change", {}) or {})
@@ -657,8 +664,10 @@ class TableGenerator:
 
             # Coverage for monetary
             coverage = ""
+            coverage_tex = ""
             if metric == "monetary_severity" and miss_diag:
                 coverage = _fmt_pct(100 * (1 - miss_diag.get("pct_missing", 0)))
+                coverage_tex = _fmt_pct_tex(100 * (1 - miss_diag.get("pct_missing", 0)))
 
             p_plain = _fmt_pval(int_p)
             p_latex = _fmt_pval_latex(int_p)
@@ -670,7 +679,7 @@ class TableGenerator:
             row_tex = [dim.capitalize(), p_latex, _fmt_effect(A), _fmt_effect(R), ci_str]
             if metric == "monetary_severity":
                 row_plain.append(coverage)
-                row_tex.append(coverage)
+                row_tex.append(coverage_tex)
             rows.append(tuple(row_plain))
             tex_rows.append(tuple(row_tex))
 
@@ -930,6 +939,8 @@ class TableGenerator:
                 caus_rate = causal_dim.get(value)
                 corr_str = _fmt_pct(corr_rate * 100, 1) if corr_rate is not None else "---"
                 caus_str = _fmt_pct(caus_rate * 100, 1) if caus_rate is not None else "---"
+                corr_tex = _fmt_pct_tex(corr_rate * 100, 1) if corr_rate is not None else "---"
+                caus_tex = _fmt_pct_tex(caus_rate * 100, 1) if caus_rate is not None else "---"
 
                 rows.append((dim.capitalize(), value, corr_str, caus_str))
 
@@ -939,7 +950,7 @@ class TableGenerator:
                     dim_label = dim_label + r"$^{\dagger}$"
                     dagger_dims_seen.add(dim)
                     has_estimation_only = True
-                tex_rows.append((dim_label, value, corr_str, caus_str))
+                tex_rows.append((dim_label, value, corr_tex, caus_tex))
 
         if not rows:
             return []
@@ -1407,6 +1418,11 @@ class TableGenerator:
                 paths.extend(self._tableB2_bayes_amplification(bayes_dir, model, metric))
                 paths.extend(self._tableB3_bayes_ordinal_tiers(bayes_dir, model, metric))
             paths.extend(self._tableB4_bayes_diagnostics(bayes_dir, model))
+
+        # Slot-preservation audit tables
+        paths.extend(self._tableS1_slot_audit_summary(rob_dir))
+        paths.extend(self._tableS2_slot_family_breakdown(rob_dir))
+        paths.extend(self._tableS3_slot_model_comparison(rob_dir))
 
         # Slot-preservation robustness subset tables
         paths.extend(self._tableR1_subset_retention(rob_dir))
@@ -2045,6 +2061,148 @@ class TableGenerator:
             col_spec=r">{\raggedright\arraybackslash}X r r r r l",
             use_tabularx=True,
             font_size="footnotesize",
+        )
+
+    # ==================================================================
+    # SLOT-PRESERVATION AUDIT TABLES
+    # ==================================================================
+
+    def _tableS1_slot_audit_summary(self, out: Path) -> List[Path]:
+        """Table S1: Slot-preservation audit global summary and viability gate."""
+        sa = self.ar.get("slot_audit", {})
+        if not sa:
+            return []
+
+        metrics = sa.get("metrics", {})
+        g = metrics.get("global", {})
+        if not g:
+            return []
+
+        hf = g.get("high_fidelity", {})
+        vg = g.get("viability_gate", {})
+        checks = vg.get("checks", {})
+
+        rows = [
+            ("Total pairs", _fmt_int(g.get("n_pairs", 0)), "---", "---"),
+            ("Total complaints", _fmt_int(g.get("n_complaints", 0)), "---", "---"),
+            (
+                "Strict pair pass rate",
+                _fmt_prop(g.get("strict_pair_pass_rate")),
+                f"[{g['strict_pair_pass_ci'][0]:.4f}, {g['strict_pair_pass_ci'][1]:.4f}]"
+                if "strict_pair_pass_ci" in g else "---",
+                "---",
+            ),
+            (
+                "High-fidelity pair rate",
+                _fmt_prop(hf.get("pair_rate")),
+                f"[{hf['pair_rate_ci'][0]:.4f}, {hf['pair_rate_ci'][1]:.4f}]"
+                if "pair_rate_ci" in hf else "---",
+                checks.get("high_fidelity_pair_rate", {}).get("threshold", "---"),
+            ),
+            (
+                "High-fidelity complaint rate",
+                _fmt_prop(hf.get("complaint_rate")),
+                "---",
+                checks.get("high_fidelity_complaint_rate", {}).get("threshold", "---"),
+            ),
+            (
+                "Polarity contradiction rate",
+                _fmt_prop(g.get("polarity_contradiction_rate")),
+                "---",
+                checks.get("polarity_contradiction_rate", {}).get("threshold", "---"),
+            ),
+            (
+                "Numeric mutation rate",
+                _fmt_prop(g.get("numeric_mutation_rate")),
+                "---",
+                checks.get("numeric_mutation_rate", {}).get("threshold", "---"),
+            ),
+        ]
+
+        gate_label = "PASS" if vg.get("pass") else "FAIL"
+        rows.append(("Viability gate", gate_label, "---", "---"))
+
+        df = pd.DataFrame(rows, columns=["Metric", "Value", "95% CI", "Threshold"])
+        return _write_three_formats(
+            df, out, "table", "robustness", "slot_audit_summary",
+            "all", "all", 1,
+            caption=f"Matched-guise slot-preservation audit summary (viability gate: {gate_label}).",
+            label="tab:slot_audit_summary",
+        )
+
+    def _tableS2_slot_family_breakdown(self, out: Path) -> List[Path]:
+        """Table S2: Per-family slot preservation rates."""
+        sa = self.ar.get("slot_audit", {})
+        if not sa:
+            return []
+
+        metrics = sa.get("metrics", {})
+        per_family = metrics.get("per_family", {})
+        if not per_family:
+            return []
+
+        rows = []
+        for fam in ["numeric", "temporal", "polarity", "anchor"]:
+            fm = per_family.get(fam, {})
+            if not fm:
+                continue
+
+            pres_rate = fm.get("presence_preservation_rate")
+            pres_ci = fm.get("presence_preservation_ci")
+            pres_str = _fmt_prop(pres_rate) if pres_rate is not None else "---"
+            ci_str = (f"[{pres_ci[0]:.4f}, {pres_ci[1]:.4f}]"
+                      if pres_ci else "---")
+
+            row = {
+                "Family": fam.title(),
+                "Pres. Rate": pres_str,
+                "Pres. 95% CI": ci_str,
+                "Omission": _fmt_prop(fm.get("omission_rate")),
+                "Addition": _fmt_prop(fm.get("addition_rate")),
+                "Mutation": _fmt_prop(fm.get("mutation_rate")),
+            }
+            if fam == "polarity":
+                row["Contradiction"] = _fmt_prop(fm.get("contradiction_rate"))
+            else:
+                row["Contradiction"] = "---"
+            rows.append(row)
+
+        df = pd.DataFrame(rows)
+        return _write_three_formats(
+            df, out, "table", "robustness", "slot_family_breakdown",
+            "all", "all", 1,
+            caption="Slot-preservation rates by family (presence preservation = source slot present and correctly reproduced).",
+            label="tab:slot_family_breakdown",
+        )
+
+    def _tableS3_slot_model_comparison(self, out: Path) -> List[Path]:
+        """Table S3: Per-model slot audit comparison."""
+        sa = self.ar.get("slot_audit", {})
+        if not sa:
+            return []
+
+        metrics = sa.get("metrics", {})
+        subgroups = metrics.get("subgroups", {})
+        model_data = subgroups.get("model_name", {})
+        if not model_data:
+            return []
+
+        rows = []
+        for model_name, md in sorted(model_data.items()):
+            rows.append({
+                "Model": model_name,
+                "Pairs": _fmt_int(md.get("n_pairs", 0)),
+                "Strict Pass": _fmt_prop(md.get("strict_pair_pass_rate")),
+                "Hi-Fi Rate": _fmt_prop(md.get("high_fidelity_pair_rate")),
+                "Contradiction": _fmt_prop(md.get("contradiction_rate")),
+            })
+
+        df = pd.DataFrame(rows)
+        return _write_three_formats(
+            df, out, "table", "robustness", "slot_model_comparison",
+            "all", "all", 1,
+            caption="Slot-preservation audit results by model.",
+            label="tab:slot_model_comparison",
         )
 
     # ==================================================================

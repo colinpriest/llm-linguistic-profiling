@@ -1495,14 +1495,12 @@ class FigureGenerator:
                 for ri, f in enumerate(cross_fields):
                     cross_matrix[ri, ci] = float(row_data[f]) * 100.0
 
-        # ----- colour map: green → yellow → red -----
+        # ----- colour map: dark grey (low) → white (high) -----
         cmap = mcolors.LinearSegmentedColormap.from_list(
             "consistency",
-            [(0.0, "#c0392c"),      # red   (~0%)
-             (0.35, "#e67e22"),     # orange (~35%)
-             (0.55, "#f1c40f"),     # yellow (~55%)
-             (0.75, "#27ae60"),     # green  (~75%)
-             (1.0, "#1a7a3a")],    # dark green (~100%)
+            [(0.0, "#333333"),     # dark grey  (~0%)
+             (0.5, "#999999"),     # mid grey   (~50%)
+             (1.0, "#f0f0f0")],   # near-white (~100%)
         )
 
         # Global vmin/vmax across all panels for a shared colour scale
@@ -1545,8 +1543,8 @@ class FigureGenerator:
                     val = matrix[ri, ci]
                     if not np.isfinite(val):
                         continue
-                    # Dark text on light cells, white on dark
-                    text_color = "white" if val < 45 else "black"
+                    # White text on dark cells (low %), black on light (high %)
+                    text_color = "white" if val < 55 else "black"
                     ax.text(
                         ci, ri, f"{val:.0f}%",
                         ha="center", va="center",
@@ -1781,7 +1779,7 @@ class FigureGenerator:
             "Manipulation Checks: Rewrite Fidelity and Signal Removal",
             fontsize=13, fontweight="bold", y=1.02,
         )
-        fig.tight_layout(rect=[0, 0, 1, 0.95])
+        gs.tight_layout(fig, rect=[0, 0, 1, 0.95])
 
         meta = self._base_metadata()
         meta["analysis_type"] = "confirmatory"

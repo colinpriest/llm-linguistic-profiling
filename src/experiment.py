@@ -327,6 +327,9 @@ class Experiment:
         if self.persona_rewrites and self.persona_decisions_df is not None:
             self._run_robustness_subsets()
 
+        # Executive summary (runs after robustness so all data is available)
+        self._generate_executive_summary()
+
         # NOTE: paper bundle is generated externally (llm_fairness_experiment.py)
         # AFTER the reporter and worked-examples have written their files,
         # so that _populate_evidence() can find them.
@@ -1525,6 +1528,7 @@ class Experiment:
         Requires both the persona_decisions DataFrame and the slot audit
         pair CSV to already exist.  Uses the programmatic API from
         ``matched_guise_robustness_subsets`` to avoid re-parsing CSVs.
+        Results are cached via AnalysisCache to skip bootstrap/GEE on re-runs.
         """
         from matched_guise_robustness_subsets import run_robustness_analysis
 
@@ -1547,6 +1551,21 @@ class Experiment:
                 "issue_severity": getattr(c, "issue_severity", "medium"),
             }
 
+        # Check cache
+        from src.analysis_cache import get_analysis_cache
+        cache = get_analysis_cache(self.cache_dir)
+        cache_dataframes = {
+            "decisions_df": self.persona_decisions_df,
+            "audit_df": audit_df,
+        }
+        cache_params = {"bootstrap_reps": 200, "seed": self.seed}
+        cached_result = cache.get("robustness_subsets", cache_dataframes, cache_params)
+        if cached_result is not None:
+            self.analysis_results["robustness_subsets"] = cached_result
+            overall = cached_result.get("overall_verdict", "N/A")
+            logger.info("Robustness subset analysis (cached): %s", overall)
+            return
+
         rob_dir = self.output_dir / "robustness_subsets"
         result = run_robustness_analysis(
             decisions_df=self.persona_decisions_df,
@@ -1557,6 +1576,9 @@ class Experiment:
             bootstrap_reps=200,
             seed=self.seed,
         )
+
+        # Cache the result
+        cache.put("robustness_subsets", cache_dataframes, cache_params, result)
 
         self.analysis_results["robustness_subsets"] = result
 
@@ -3245,37 +3267,8 @@ class Experiment:
             else:
                 logger.info("  (commentary unavailable)")
 
-        # --- Business Executive Summary (6 sections) ---
-        exec_sections = self._generate_all_exec_sections()
-        if exec_sections:
-            self.analysis_results["exec_sections"] = exec_sections
-            # Also store the combined text for backwards compatibility
-            combined = "\n\n".join(exec_sections.values())
-            self.analysis_results["business_executive_summary"] = combined
-
-            # Print all sections concatenated
-            logger.info("=" * 60)
-            logger.info("BUSINESS EXECUTIVE SUMMARY (7 SECTIONS)")
-            logger.info("=" * 60)
-            section_titles = {
-                "linguistic_differences": "SECTION 1: LINGUISTIC DIFFERENCES",
-                "ai_decision_making": "SECTION 2: AI DECISION-MAKING",
-                "correlation_vs_cause": "SECTION 3: CORRELATION VS. CAUSE",
-                "severity_stakes": "SECTION 4: SEVERITY STAKES",
-                "language_neutralisation": "SECTION 5: LANGUAGE NEUTRALISATION",
-                "bias_mitigation": "SECTION 6: BIAS MITIGATION",
-                "conclusion": "SECTION 7: CONCLUSION",
-            }
-            for key, title in section_titles.items():
-                text = exec_sections.get(key)
-                if text:
-                    logger.info("─" * 50)
-                    logger.info(title)
-                    logger.info("─" * 50)
-                    logger.info("%s", text)
-                    logger.info("")
-        else:
-            logger.info("  (business executive summary unavailable)")
+        # NOTE: Executive summary generation is deferred to _generate_executive_summary()
+        # which runs after _run_robustness_subsets() so that robustness data is available.
 
         logger.info("=" * 60)
 
@@ -4129,6 +4122,120 @@ class Experiment:
 
         return "\n".join(lines)
 
+    def _capture_robustness_data(self) -> str:
+        """Capture slot-preservation audit + robustness subset results for exec summary."""
+        lines: List[str] = []
+
+        # --- Slot-preservation audit ---
+        sa = self.analysis_results.get("slot_audit", {})
+        metrics = sa.get("metrics", {}) if sa else {}
+        g = metrics.get("global", {})
+
+        if g:
+            hf = g.get("high_fidelity", {})
+            vg = g.get("viability_gate", {})
+            gate = "PASS" if vg.get("pass") else "FAIL"
+
+            lines.append("── Slot-Preservation Audit ──")
+            lines.append(f"Total matched-guise pairs: {g.get('n_pairs', 0):,}")
+            lines.append(f"Total complaints: {g.get('n_complaints', 0):,}")
+            lines.append("")
+            lines.append(f"Viability Gate: {gate}")
+
+            checks = vg.get("checks", {})
+            check_labels = {
+                "high_fidelity_pair_rate": "High-fidelity pair rate",
+                "high_fidelity_complaint_rate": "High-fidelity complaint rate",
+                "polarity_contradiction_rate": "Polarity contradiction rate",
+                "numeric_mutation_rate": "Numeric mutation rate",
+                "temporal_presence_preservation": "Temporal presence preservation",
+                "anchor_presence_preservation": "Anchor presence preservation",
+            }
+            for key, label in check_labels.items():
+                ck = checks.get(key, {})
+                actual = ck.get("actual")
+                threshold = ck.get("threshold", "")
+                passed = "PASS" if ck.get("pass") else "FAIL"
+                actual_str = f"{actual:.3f}" if actual is not None else "N/A"
+                lines.append(f"  {label}: {actual_str} (threshold: {threshold})  {passed}")
+
+            # Per-family preservation rates
+            per_family = metrics.get("per_family", {})
+            if per_family:
+                lines.append("")
+                lines.append("Per-family preservation rates (presence preservation):")
+                for fam in ["numeric", "temporal", "polarity", "anchor"]:
+                    fm = per_family.get(fam, {})
+                    rate = fm.get("presence_preservation_rate")
+                    ci = fm.get("presence_preservation_ci")
+                    if rate is not None:
+                        ci_str = f" [{ci[0]:.3f}, {ci[1]:.3f}]" if ci else ""
+                        lines.append(f"  {fam.title()}: {rate:.3f}{ci_str}")
+
+            # Per-model comparison
+            subgroups = metrics.get("subgroups", {})
+            model_data = subgroups.get("model_name", {})
+            if model_data:
+                lines.append("")
+                lines.append("Per-model comparison:")
+                for model_name, md in sorted(model_data.items()):
+                    lines.append(
+                        f"  {model_name}: {md.get('n_pairs', 0):,} pairs, "
+                        f"strict pass={md.get('strict_pair_pass_rate', 0):.3f}, "
+                        f"hi-fi={md.get('high_fidelity_pair_rate', 0):.3f}, "
+                        f"contradiction={md.get('contradiction_rate', 0):.3f}"
+                    )
+
+        # --- Robustness subset analysis ---
+        rob = self.analysis_results.get("robustness_subsets", {})
+        if rob and not rob.get("skipped"):
+            lines.append("")
+            lines.append("── Robustness Subset Analysis ──")
+
+            aliases = rob.get("aliases", {})
+            overall = rob.get("overall_verdict", "N/A")
+            lines.append(f"Overall verdict: {overall}")
+
+            if aliases:
+                alias_str = ", ".join(f"{k} = {v}" for k, v in aliases.items())
+                lines.append(f"Subset aliases: {alias_str}")
+
+            # Effect stability from comparison data
+            comparison = rob.get("comparison", [])
+            if comparison:
+                lines.append("")
+                lines.append("Effect stability (vs FULL baseline):")
+                for row in comparison:
+                    subset = row.get("subset", "")
+                    model = row.get("model_name", "")
+                    effect = row.get("effect", "").replace("max_persona_gap_", "")
+                    att = row.get("attenuation", 0)
+                    direction = row.get("effect_change_class", "")
+                    ci_ok = "Yes" if row.get("ci_overlap", True) else "No"
+                    lines.append(
+                        f"  {subset} [{model}] {effect}: "
+                        f"attenuation={att:.3f}, direction={direction}, CI overlap={ci_ok}"
+                    )
+
+            # Outcome composition shift
+            composition = rob.get("composition_shift", [])
+            if composition:
+                lines.append("")
+                lines.append("Outcome composition shift (dropped vs kept pairs):")
+                for row in composition:
+                    model = row.get("model_name", "")
+                    kept_tier = row.get("mean_tier_kept", 0)
+                    dropped_tier = row.get("mean_tier_dropped", 0)
+                    bias_dir = row.get("bias_direction", "")
+                    lines.append(
+                        f"  {model}: kept mean tier={kept_tier:.3f}, "
+                        f"dropped mean tier={dropped_tier:.3f} — {bias_dir}"
+                    )
+
+        if not lines:
+            return ""
+        return "\n".join(lines)
+
     # ------------------------------------------------------------------
     # Executive Summary section generator
     # ------------------------------------------------------------------
@@ -4235,6 +4342,72 @@ class Experiment:
         except Exception as e:
             logger.warning("Exec section '%s' request failed: %s", section_name, e)
         return None
+
+    def _generate_executive_summary(self) -> None:
+        """Generate the business executive summary (all sections).
+
+        Called from ``run()`` after ``_run_robustness_subsets()`` so that
+        robustness and slot-audit data are available for the summary.
+        """
+        exec_sections = self._generate_all_exec_sections()
+        if exec_sections:
+            self.analysis_results["exec_sections"] = exec_sections
+            # Also store the combined text for backwards compatibility
+            combined = "\n\n".join(exec_sections.values())
+            self.analysis_results["business_executive_summary"] = combined
+
+            # Print all sections concatenated
+            logger.info("=" * 60)
+            logger.info("BUSINESS EXECUTIVE SUMMARY (8 SECTIONS)")
+            logger.info("=" * 60)
+            section_titles = {
+                "linguistic_differences": "SECTION 1: LINGUISTIC DIFFERENCES",
+                "ai_decision_making": "SECTION 2: AI DECISION-MAKING",
+                "correlation_vs_cause": "SECTION 3: CORRELATION VS. CAUSE",
+                "severity_stakes": "SECTION 4: SEVERITY STAKES",
+                "language_neutralisation": "SECTION 5: LANGUAGE NEUTRALISATION",
+                "bias_mitigation": "SECTION 6: BIAS MITIGATION",
+                "robustness_quality": "SECTION 7: ROBUSTNESS & DATA QUALITY",
+                "conclusion": "SECTION 8: CONCLUSION",
+            }
+            for key, title in section_titles.items():
+                text = exec_sections.get(key)
+                if text:
+                    logger.info("─" * 50)
+                    logger.info(title)
+                    logger.info("─" * 50)
+                    logger.info("%s", text)
+                    logger.info("")
+            # Write executive summary text file
+            lines: List[str] = []
+            lines.append("=" * 60)
+            lines.append("BUSINESS EXECUTIVE SUMMARY (8 SECTIONS)")
+            lines.append("=" * 60)
+            for key, title in section_titles.items():
+                text = exec_sections.get(key)
+                if text:
+                    lines.append("")
+                    lines.append("\u2500" * 50)
+                    lines.append(title)
+                    lines.append("\u2500" * 50)
+                    lines.append(text)
+            lines.append("")
+            lines.append("=" * 60)
+            summary_path = self.output_dir / f"executive_summary_{self.timestamp}.txt"
+            summary_path.write_text("\n".join(lines), encoding="utf-8")
+            logger.info("Executive summary written to %s", summary_path)
+
+            # Re-write analysis_results JSON with exec_sections included
+            json_path = self.output_dir / f"analysis_results_{self.timestamp}.json"
+            json_path.write_text(
+                json.dumps(self.analysis_results, indent=2, default=str),
+                encoding="utf-8",
+            )
+            logger.info("Analysis results JSON updated with exec_sections")
+        else:
+            logger.info("  (business executive summary unavailable)")
+
+        logger.info("=" * 60)
 
     def _generate_all_exec_sections(self) -> Dict[str, str]:
         """Generate all 6 executive summary sections sequentially, returning {name: text}."""
@@ -4381,8 +4554,30 @@ class Experiment:
             else:
                 logger.warning("  Section 7 generation failed")
 
-        # Section 8: Conclusion (uses all prior sections)
-        logger.info("── Generating Exec Section 8: Conclusion ──")
+        # Section 8: Robustness & Data Quality (slot audit + subset analysis)
+        logger.info("── Generating Exec Section 8: Robustness & Data Quality ──")
+        data = self._capture_robustness_data()
+        if data:
+            text = self._generate_exec_section(
+                "robustness_quality",
+                "one-shot-example-robustness-quality.md",
+                data,
+                "This section reports on the quality of the matched-guise experimental data "
+                "and whether the causal findings are robust to filtering on data quality. "
+                "The slot-preservation audit checks that persona-rewritten complaints preserved "
+                "the factual content (amounts, dates, claim polarity, named entities) of the "
+                "original. The robustness subset analysis tests whether restricting to "
+                "high-fidelity pairs attenuates or amplifies the observed persona effects. "
+                "Focus on whether the findings can be trusted and what the quality checks imply.",
+            )
+            if text:
+                sections["robustness_quality"] = text
+                logger.info("  Section 8 generated (%d chars)", len(text))
+            else:
+                logger.warning("  Section 8 generation failed")
+
+        # Section 9: Conclusion (uses all prior sections)
+        logger.info("── Generating Exec Section 9: Conclusion ──")
         if sections:
             combined_sections = "\n\n".join(sections.values())
             text = self._generate_exec_section(
@@ -4399,9 +4594,9 @@ class Experiment:
             )
             if text:
                 sections["conclusion"] = text
-                logger.info("  Section 8 generated (%d chars)", len(text))
+                logger.info("  Section 9 generated (%d chars)", len(text))
             else:
-                logger.warning("  Section 8 generation failed")
+                logger.warning("  Section 9 generation failed")
 
         return sections
 
@@ -4466,35 +4661,8 @@ class Experiment:
             )
             logger.info("Analysis results JSON written: %s", json_path)
 
-        # Executive summary text file
-        exec_sections = self.analysis_results.get("exec_sections", {})
-        if exec_sections:
-            section_titles = {
-                "linguistic_differences": "SECTION 1: LINGUISTIC DIFFERENCES",
-                "ai_decision_making": "SECTION 2: AI DECISION-MAKING",
-                "correlation_vs_cause": "SECTION 3: CORRELATION VS. CAUSE",
-                "severity_stakes": "SECTION 4: SEVERITY STAKES",
-                "language_neutralisation": "SECTION 5: LANGUAGE NEUTRALISATION",
-                "bias_mitigation": "SECTION 6: BIAS MITIGATION",
-                "conclusion": "SECTION 7: CONCLUSION",
-            }
-            lines: List[str] = []
-            lines.append("=" * 60)
-            lines.append("BUSINESS EXECUTIVE SUMMARY (7 SECTIONS)")
-            lines.append("=" * 60)
-            for key, title in section_titles.items():
-                text = exec_sections.get(key)
-                if text:
-                    lines.append("")
-                    lines.append("\u2500" * 50)
-                    lines.append(title)
-                    lines.append("\u2500" * 50)
-                    lines.append(text)
-            lines.append("")
-            lines.append("=" * 60)
-            summary_path = self.output_dir / f"executive_summary_{self.timestamp}.txt"
-            summary_path.write_text("\n".join(lines), encoding="utf-8")
-            logger.info("Executive summary written to %s", summary_path)
+        # NOTE: Executive summary text file is written by _generate_executive_summary()
+        # which runs after _run_robustness_subsets() to include robustness data.
 
         # Debiased consistency Excel workbook
         debiased = self.analysis_results.get("debiased_consistency")

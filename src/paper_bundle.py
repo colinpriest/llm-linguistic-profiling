@@ -614,11 +614,12 @@ class PaperBundleGenerator:
                 "severity_stakes": "SECTION 4: SEVERITY STAKES",
                 "language_neutralisation": "SECTION 5: LANGUAGE NEUTRALISATION",
                 "bias_mitigation": "SECTION 6: BIAS MITIGATION",
-                "conclusion": "SECTION 7: CONCLUSION",
+                "robustness_quality": "SECTION 7: ROBUSTNESS & DATA QUALITY",
+                "conclusion": "SECTION 8: CONCLUSION",
             }
             lines: List[str] = []
             lines.append("=" * 60)
-            lines.append("BUSINESS EXECUTIVE SUMMARY (7 SECTIONS)")
+            lines.append("BUSINESS EXECUTIVE SUMMARY (8 SECTIONS)")
             lines.append("=" * 60)
             for key, title in section_titles.items():
                 text = exec_sections.get(key)
@@ -658,6 +659,20 @@ class PaperBundleGenerator:
             copied += 1
         else:
             logger.warning("Evidence: rm_model_diagnostics__all__v1.json not yet written")
+
+        # 6. Slot-preservation audit outputs — metrics JSON + markdown report
+        sa = self.ar.get("slot_audit", {})
+        sa_output = sa.get("output_dir", "") if sa else ""
+        sa_dir = Path(sa_output) if sa_output else None
+        if sa_dir and sa_dir.exists():
+            for name in [
+                "slot_preservation_metrics.json",
+                "slot_preservation_report.md",
+            ]:
+                src_file = sa_dir / name
+                if src_file.exists():
+                    shutil.copy2(src_file, ev_dir / f"{src_file.stem}_{ts}{src_file.suffix}")
+                    copied += 1
 
         logger.info("Evidence folder populated (%d files)", copied)
 
