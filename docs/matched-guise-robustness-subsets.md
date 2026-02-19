@@ -97,14 +97,17 @@ The persona-gap and SD metrics are the key indicators of persona-based dispersio
 
 ### 6. Bootstrap Confidence Intervals
 
-Complaint-level resampling (default: 1,000 iterations):
+Cluster bootstrap BCa 95% CI (complaint-level resampling; jackknife acceleration):
 
-1. Sample complaint IDs with replacement
+1. Sample complaint IDs with replacement (default: 1,000 iterations)
 2. Take all rows for each sampled complaint
 3. Recompute the four key metrics: `mean_tier`, `p_tier2`, `max_persona_gap_p_tier2`, `max_persona_gap_mean_tier`
-4. Take the 2.5th and 97.5th percentiles as the 95% CI
+4. Compute bias-corrected and accelerated (BCa) confidence intervals:
+   - **Bias correction (z₀):** proportion of bootstrap replicates below the full-sample point estimate, transformed to the normal scale
+   - **Acceleration (a):** estimated from a leave-one-complaint-out jackknife using pre-aggregated per-complaint sums for efficiency
+   - **Adjusted percentiles:** the standard ±1.96 quantiles are shifted by z₀ and a to correct for bias and skewness in the bootstrap distribution
 
-Complaint-level (rather than pair-level) resampling respects the clustering structure — all persona rewrites of the same complaint are included together.
+Complaint-level (rather than pair-level) resampling respects the clustering structure — all persona rewrites of the same complaint are included together. BCa intervals are used because the max-min gap statistic is positively biased under resampling — standard percentile intervals can exclude the full-sample point estimate.
 
 ### 7. GEE Omnibus Tests
 
@@ -131,7 +134,7 @@ For each non-FULL subset x model x primary effect:
   - `"amplified"` if attenuation < -0.05 (effect is larger in subset)
   - `"attenuated"` if attenuation > +0.05 (effect is smaller in subset)
 
-**CI overlap check:** Do the bootstrap CIs for FULL and the subset overlap? Non-overlapping CIs indicate a statistically meaningful change.
+**CI overlap check:** Do the BCa bootstrap CIs for FULL and the subset overlap? Non-overlapping CIs indicate a statistically meaningful change.
 
 **Omnibus significance class:** Did the GEE p-value change class (significant ↔ non-significant) between FULL and the subset?
 
@@ -208,7 +211,7 @@ The analysis produces the following in its output directory:
 | File | Description |
 |------|-------------|
 | `subset_manifest.csv` | Per-subset x model: pair counts, complaint counts, retention rates |
-| `endpoint_summary.csv` | Per-subset x model: metrics + bootstrap CIs |
+| `endpoint_summary.csv` | Per-subset x model: metrics + BCa bootstrap CIs |
 | `omnibus_tests.csv` | GEE results per subset x model x endpoint |
 | `robustness_vs_full.csv` | Attenuation, CI overlap, significance class comparison |
 | `robustness_flags.json` | Hierarchical verdicts (per subset x model, overall) |
@@ -233,7 +236,7 @@ The best-case result for the experiment's validity is:
 ### Warning Signs
 
 - **Attenuation > 40%** — the effect shrinks substantially when quality filtering is applied
-- **CI non-overlap** — the bootstrap CI for a filtered subset does not overlap with FULL
+- **CI non-overlap** — the BCa bootstrap CI for a filtered subset does not overlap with FULL
 - **Significance class changes** — a formerly significant effect becomes non-significant (or vice versa) in a filtered subset
 - **Pair retention < 40%** — the filter removed too many pairs for reliable comparison
 - **Differential persona balance** — high-fidelity filtering disproportionately excludes specific persona styles

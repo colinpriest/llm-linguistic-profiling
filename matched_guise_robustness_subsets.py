@@ -23,6 +23,8 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+from src.statistics import bca_interval
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -319,6 +321,46 @@ def _compute_boot_metrics(sub: pd.DataFrame) -> Dict[str, float]:
     return {m: rec.get(m, float("nan")) for m in BOOTSTRAP_METRICS}
 
 
+def _compute_boot_metrics_vec(
+    tier: np.ndarray,
+    tier2: np.ndarray,
+    persona_codes: np.ndarray,
+    n_personas: int,
+) -> Tuple[float, float, float, float]:
+    """Vectorised bootstrap metrics on pre-extracted numpy arrays.
+
+    Returns (mean_tier, p_tier2, max_persona_gap_p_tier2,
+             max_persona_gap_mean_tier).
+    """
+    n = len(tier)
+    if n == 0:
+        return (np.nan, np.nan, np.nan, np.nan)
+
+    mean_tier = tier.mean()
+    p_tier2 = tier2.mean()
+
+    if n_personas < 2:
+        return (mean_tier, p_tier2, np.nan, np.nan)
+
+    # Per-persona sums and counts via np.bincount
+    counts = np.bincount(persona_codes, minlength=n_personas)
+    tier_sums = np.bincount(persona_codes, weights=tier, minlength=n_personas)
+    tier2_sums = np.bincount(persona_codes, weights=tier2, minlength=n_personas)
+
+    # Mask out personas with zero observations in this bootstrap sample
+    valid = counts > 0
+    if valid.sum() < 2:
+        return (mean_tier, p_tier2, np.nan, np.nan)
+
+    persona_mean_tier = tier_sums[valid] / counts[valid]
+    persona_p_tier2 = tier2_sums[valid] / counts[valid]
+
+    gap_mt = float(persona_mean_tier.max() - persona_mean_tier.min())
+    gap_t2 = float(persona_p_tier2.max() - persona_p_tier2.min())
+
+    return (float(mean_tier), float(p_tier2), gap_t2, gap_mt)
+
+
 def bootstrap_subset_metrics(
     df: pd.DataFrame,
     masks: Dict[str, pd.Series],
@@ -327,9 +369,14 @@ def bootstrap_subset_metrics(
     alpha: float = 0.05,
     seed: int = 42,
 ) -> pd.DataFrame:
-    """Bootstrap CIs via complaint-level resampling. Returns CI DataFrame."""
+    """Bootstrap CIs via complaint-level resampling (vectorised).
+
+    Pre-extracts numpy arrays and builds a complaint→row-index lookup so
+    that each bootstrap replicate uses ``np.concatenate`` on integer
+    indices instead of ``pd.concat`` on DataFrames.
+    """
     rng = np.random.default_rng(seed)
-    ci_rows = []
+    ci_rows: List[Dict[str, Any]] = []
     total_jobs = sum(1 for _ in masks for _ in models)
 
     with tqdm(total=total_jobs, desc="Bootstrap CIs") as pbar:
@@ -352,36 +399,142 @@ def bootstrap_subset_metrics(
                     pbar.update(1)
                     continue
 
-                # Point estimates
+                # Point estimates (use DataFrame version for accuracy)
                 point = _compute_boot_metrics(sub)
 
-                # Bootstrap
-                boot_results = {m: [] for m in BOOTSTRAP_METRICS}
-                complaint_to_rows = sub.groupby("complaint_id")
+                # --- Vectorised bootstrap setup ---
+                # Extract numpy arrays once
+                tier_arr = sub["tier"].values.astype(np.float64)
+                tier2_arr = sub["tier2"].values.astype(np.float64)
 
-                for _ in range(n_boot):
-                    sampled_ids = rng.choice(complaints, size=n_complaints, replace=True)
-                    frames = [complaint_to_rows.get_group(cid) for cid in sampled_ids]
-                    boot_sub = pd.concat(frames, ignore_index=True)
-                    bm = _compute_boot_metrics(boot_sub)
-                    for m in BOOTSTRAP_METRICS:
-                        boot_results[m].append(bm[m])
+                # Encode persona_label as integer codes
+                persona_labels = sub["persona_label"].values
+                unique_personas = np.unique(persona_labels)
+                n_personas = len(unique_personas)
+                persona_to_code = {p: i for i, p in enumerate(unique_personas)}
+                persona_codes = np.array(
+                    [persona_to_code[p] for p in persona_labels], dtype=np.intp
+                )
 
+                # Build complaint → row-index lookup (list of arrays)
+                complaint_ids = sub["complaint_id"].values
+                complaint_to_idx: Dict[Any, np.ndarray] = {}
+                for idx, cid in enumerate(complaint_ids):
+                    if cid not in complaint_to_idx:
+                        complaint_to_idx[cid] = []
+                    complaint_to_idx[cid].append(idx)
+                # Convert lists to arrays once
+                for cid in complaint_to_idx:
+                    complaint_to_idx[cid] = np.array(
+                        complaint_to_idx[cid], dtype=np.intp
+                    )
+
+                # Pre-allocate result arrays
+                boot_mean_tier = np.empty(n_boot, dtype=np.float64)
+                boot_p_tier2 = np.empty(n_boot, dtype=np.float64)
+                boot_gap_t2 = np.empty(n_boot, dtype=np.float64)
+                boot_gap_mt = np.empty(n_boot, dtype=np.float64)
+
+                # Complaint ID array for sampling
+                complaint_arr = np.array(list(complaint_to_idx.keys()))
+
+                for b in range(n_boot):
+                    sampled_ids = rng.choice(
+                        complaint_arr, size=n_complaints, replace=True
+                    )
+                    # Gather row indices for all sampled complaints
+                    row_idx = np.concatenate(
+                        [complaint_to_idx[cid] for cid in sampled_ids]
+                    )
+                    mt, pt, gt2, gmt = _compute_boot_metrics_vec(
+                        tier_arr[row_idx],
+                        tier2_arr[row_idx],
+                        persona_codes[row_idx],
+                        n_personas,
+                    )
+                    boot_mean_tier[b] = mt
+                    boot_p_tier2[b] = pt
+                    boot_gap_t2[b] = gt2
+                    boot_gap_mt[b] = gmt
+
+                # --- Jackknife (leave-one-complaint-out) via pre-aggregated sums ---
+                # Per-complaint contributions to persona-level bincounts
+                complaint_tier_c = np.zeros((n_complaints, n_personas))
+                complaint_tier2_c = np.zeros((n_complaints, n_personas))
+                complaint_count_c = np.zeros((n_complaints, n_personas))
+                cid_to_cidx = {cid: i for i, cid in enumerate(complaint_arr)}
+                for row_i, cid in enumerate(complaint_ids):
+                    ci = cid_to_cidx[cid]
+                    p = persona_codes[row_i]
+                    complaint_tier_c[ci, p] += tier_arr[row_i]
+                    complaint_tier2_c[ci, p] += tier2_arr[row_i]
+                    complaint_count_c[ci, p] += 1.0
+
+                full_counts = complaint_count_c.sum(axis=0)   # (P,)
+                full_tier_s = complaint_tier_c.sum(axis=0)     # (P,)
+                full_tier2_s = complaint_tier2_c.sum(axis=0)   # (P,)
+
+                # Vectorised leave-one-out: (n_complaints, n_personas)
+                jk_counts = full_counts[np.newaxis, :] - complaint_count_c
+                jk_tier_s = full_tier_s[np.newaxis, :] - complaint_tier_c
+                jk_tier2_s = full_tier2_s[np.newaxis, :] - complaint_tier2_c
+                safe_c = np.where(jk_counts > 0, jk_counts, np.nan)
+                jk_mean_tier = jk_tier_s / safe_c
+                jk_p_tier2 = jk_tier2_s / safe_c
+
+                jack_gap_mt = np.nanmax(jk_mean_tier, axis=1) - np.nanmin(jk_mean_tier, axis=1)
+                jack_gap_t2 = np.nanmax(jk_p_tier2, axis=1) - np.nanmin(jk_p_tier2, axis=1)
+                # For mean/proportion metrics: leave-one-complaint-out is trivial
+                # (all obs contribute equally to the grand mean)
+                n_total = float(len(tier_arr))
+                tier_total = float(tier_arr.sum())
+                tier2_total = float(tier2_arr.sum())
+                # Per-complaint row counts
+                c_row_counts = np.array(
+                    [len(complaint_to_idx[cid]) for cid in complaint_arr],
+                    dtype=np.float64,
+                )
+                c_tier_sums = complaint_tier_c.sum(axis=1)    # per-complaint tier sum
+                c_tier2_sums = complaint_tier2_c.sum(axis=1)  # per-complaint tier2 sum
+                jack_denom = n_total - c_row_counts
+                safe_denom = np.where(jack_denom > 0, jack_denom, np.nan)
+                jack_mean_tier = (tier_total - c_tier_sums) / safe_denom
+                jack_p_tier2 = (tier2_total - c_tier2_sums) / safe_denom
+
+                jack_arrays = {
+                    "mean_tier": jack_mean_tier,
+                    "p_tier2": jack_p_tier2,
+                    "max_persona_gap_p_tier2": jack_gap_t2,
+                    "max_persona_gap_mean_tier": jack_gap_mt,
+                }
+
+                # --- BCa CIs for gap metrics, percentile for location metrics ---
                 lo_pct = (alpha / 2) * 100
                 hi_pct = (1 - alpha / 2) * 100
+                boot_arrays = {
+                    "mean_tier": boot_mean_tier,
+                    "p_tier2": boot_p_tier2,
+                    "max_persona_gap_p_tier2": boot_gap_t2,
+                    "max_persona_gap_mean_tier": boot_gap_mt,
+                }
                 for metric in BOOTSTRAP_METRICS:
-                    arr = np.array(boot_results[metric])
-                    arr = arr[np.isfinite(arr)]
-                    if len(arr) > 0:
-                        ci_lo = float(np.percentile(arr, lo_pct))
-                        ci_hi = float(np.percentile(arr, hi_pct))
+                    arr = boot_arrays[metric]
+                    finite = arr[np.isfinite(arr)]
+                    if len(finite) > 0:
+                        theta_hat = point[metric]
+                        jack = jack_arrays[metric]
+                        ci_lo, ci_hi = bca_interval(
+                            theta_hat, finite, jack, alpha=alpha,
+                        )
+                        b_med = float(np.median(finite))
                     else:
-                        ci_lo = ci_hi = float("nan")
+                        ci_lo = ci_hi = b_med = float("nan")
                     ci_rows.append({
                         "subset": subset_name,
                         "model_name": model,
                         "metric": metric,
                         "estimate": round(point[metric], 6),
+                        "boot_median": round(b_med, 6),
                         "ci_lower": round(ci_lo, 6),
                         "ci_upper": round(ci_hi, 6),
                     })
@@ -438,9 +591,23 @@ def _run_gee(
                 contrast[i, idx] = 1.0
             wald = result.wald_test(contrast, scalar=True)
             p_val = float(wald.pvalue)
+            chi2_stat = float(wald.statistic)
+            wald_df = len(indices)
+
+            # Compute log p-value in log-space to avoid underflow
+            if p_val == 0.0:
+                from scipy.stats import chi2 as chi2_dist
+                log_p = float(chi2_dist.logsf(chi2_stat, wald_df))
+            elif p_val > 0:
+                log_p = float(np.log(p_val))
+            else:
+                log_p = float("-inf")
 
             return {
                 "p_value": round(p_val, 6),
+                "log_p_value": round(log_p, 4),
+                "chi2_stat": round(chi2_stat, 4),
+                "wald_df": wald_df,
                 "converged": True,
                 "cov_struct": cov_name,
                 "n_obs": len(sub),
@@ -453,6 +620,9 @@ def _run_gee(
 
     return {
         "p_value": float("nan"),
+        "log_p_value": float("nan"),
+        "chi2_stat": float("nan"),
+        "wald_df": 0,
         "converged": False,
         "cov_struct": "none",
         "status": "convergence_failed",
@@ -486,6 +656,9 @@ def run_omnibus_tests(
                         "endpoint": endpoint,
                         "family": family,
                         "p_value": float("nan"),
+                        "log_p_value": float("nan"),
+                        "chi2_stat": float("nan"),
+                        "wald_df": 0,
                         "converged": False,
                         "cov_struct": "skipped",
                         "n_obs": len(sub),
@@ -843,8 +1016,10 @@ def outcome_composition_shift(
                 "p_tier2_dropped": float("nan"),
                 "tier_diff": float("nan"),
                 "tier_ttest_p": float("nan"),
+                "log_tier_ttest_p": float("nan"),
                 "tier2_diff": float("nan"),
                 "tier2_ztest_p": float("nan"),
+                "log_tier2_ztest_p": float("nan"),
                 "bias_direction": "no_dropped_pairs",
             })
             continue
@@ -854,20 +1029,42 @@ def outcome_composition_shift(
         pt2_kept = float(kept["tier2"].mean())
         pt2_dropped = float(dropped["tier2"].mean())
 
-        # t-test on tier
+        # t-test on tier (log-space for underflow protection)
         try:
-            _, p_tier = ttest_ind(kept["tier"].values, dropped["tier"].values, equal_var=False)
+            from scipy.stats import t as t_dist
+            t_stat, p_tier = ttest_ind(kept["tier"].values, dropped["tier"].values, equal_var=False)
+            if p_tier == 0.0 and np.isfinite(t_stat):
+                # Welch-Satterthwaite df approximation
+                v1 = kept["tier"].var(ddof=1)
+                v2 = dropped["tier"].var(ddof=1)
+                n1, n2 = float(n_kept), float(n_dropped)
+                s1, s2 = v1 / n1, v2 / n2
+                df_ws = (s1 + s2) ** 2 / (s1 ** 2 / (n1 - 1) + s2 ** 2 / (n2 - 1))
+                log_p_tier = float(t_dist.logsf(abs(t_stat), df_ws)) + np.log(2)
+            elif p_tier > 0:
+                log_p_tier = float(np.log(p_tier))
+            else:
+                log_p_tier = float("-inf")
         except Exception:
             p_tier = float("nan")
+            log_p_tier = float("nan")
 
-        # Proportion z-test on tier2
+        # Proportion z-test on tier2 (log-space for underflow protection)
         try:
             from statsmodels.stats.proportion import proportions_ztest
+            from scipy.stats import norm
             count = np.array([kept["tier2"].sum(), dropped["tier2"].sum()])
             nobs = np.array([n_kept, n_dropped])
-            _, p_tier2 = proportions_ztest(count, nobs)
+            z_stat, p_tier2 = proportions_ztest(count, nobs)
+            if p_tier2 == 0.0 and np.isfinite(z_stat):
+                log_p_tier2 = float(norm.logsf(abs(z_stat))) + np.log(2)
+            elif p_tier2 > 0:
+                log_p_tier2 = float(np.log(p_tier2))
+            else:
+                log_p_tier2 = float("-inf")
         except Exception:
             p_tier2 = float("nan")
+            log_p_tier2 = float("nan")
 
         tier_diff = mt_kept - mt_dropped
         tier2_diff = pt2_kept - pt2_dropped
@@ -889,8 +1086,10 @@ def outcome_composition_shift(
             "p_tier2_dropped": round(pt2_dropped, 4),
             "tier_diff": round(tier_diff, 4),
             "tier_ttest_p": round(float(p_tier), 6) if not np.isnan(p_tier) else float("nan"),
+            "log_tier_ttest_p": round(float(log_p_tier), 4) if not np.isnan(log_p_tier) else float("nan"),
             "tier2_diff": round(tier2_diff, 4),
             "tier2_ztest_p": round(float(p_tier2), 6) if not np.isnan(p_tier2) else float("nan"),
+            "log_tier2_ztest_p": round(float(log_p_tier2), 4) if not np.isnan(log_p_tier2) else float("nan"),
             "bias_direction": bias_dir,
         })
 
@@ -921,7 +1120,7 @@ def write_endpoint_summary(
     ci_wide = ci_df.pivot_table(
         index=["subset", "model_name"],
         columns="metric",
-        values=["ci_lower", "ci_upper"],
+        values=["ci_lower", "ci_upper", "boot_median"],
     )
     ci_wide.columns = [f"{val}_{met}" for val, met in ci_wide.columns]
     ci_wide = ci_wide.reset_index()

@@ -48,7 +48,12 @@
       "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" diff)",
       "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" add src/cache.py test_debiased.py)",
       "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" commit -m \"$\\(cat <<''EOF''\nImprove debiased test harness: worked example, progress bar, Windows cache fix\n\n- Add WORKED EXAMPLE section: finds complaint with cross-model + within-model\n  persona disagreement, shows original + 36 rewrite texts with both models''\n  extracted TIER/ENTITY/NEXUS/CONDUCT/HARM values\n- Add ANALYSIS 4 \\(consistency by persona dimension\\) and ANALYSIS 5\n  \\(cross-model agreement by persona dimension\\)\n- Add tqdm progress bar for Step 2 cache loading \\(18k entries\\)\n- Fix pool-size default from 5000 to 20000 to match experiment run\n- Gate per-complaint verbose rows on --num <= 20\n- Fix Windows PermissionError on concurrent cache writes with retry backoff\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" push origin main)"
+      "Bash(git -C \"d:\\\\dev\\\\LLM-linguistic-profiling\" push origin main)",
+      "Bash(\"d:/dev/LLM-linguistic-profiling/.conda/python.exe\":*)",
+      "WebFetch(domain:mc-stan.org)",
+      "WebFetch(domain:cmdstanpy.readthedocs.io)",
+      "Bash(conda run:*)",
+      "Bash(d:/dev/LLM-linguistic-profiling/.conda/python.exe:*)"
     ]
   }
 }

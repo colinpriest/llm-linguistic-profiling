@@ -21,6 +21,7 @@ import matplotlib
 if matplotlib.get_backend() != "Agg":
     matplotlib.use("Agg")
 import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,7 @@ class FigureGenerator:
             self._fig_cross_model_agreement,
             self._fig_debiased_extraction_consistency,
             self._fig_manipulation_checks,
+            self._fig_robustness_ladder_visibility,
         ]
         for method in fig_methods:
             try:
@@ -1813,6 +1815,158 @@ class FigureGenerator:
                 "Annotations show percentage reduction. Positive reduction "
                 "indicates that neutralisation successfully flattened the "
                 "demographic signal in the text."
+            ),
+            metadata=meta,
+        )
+
+    # ==================================================================
+    # Robustness ladder effect-visibility
+    # ==================================================================
+
+    def _fig_robustness_ladder_visibility(self) -> Optional[Tuple[Path, Path]]:
+        """Robustness ladder: effect sizes across data subsets with BCa CIs."""
+        import matplotlib.pyplot as plt
+
+        rob = self.ar.get("robustness_subsets", {})
+        if not rob or rob.get("skipped"):
+            return None
+
+        rob_dir = Path(rob.get("output_dir", ""))
+        ep_path = rob_dir / "endpoint_summary.csv"
+        if not ep_path.exists():
+            return None
+
+        ep_df = pd.read_csv(ep_path)
+        n_models = len(self.models)
+        if n_models == 0:
+            return None
+
+        # Subset order: increasing restriction
+        subset_order = ["FULL", "NO_NUM", "NO_POL", "HF"]
+        subset_labels = ["FULL", "NO_NUM", "NO_POL", "HF"]
+
+        fig, axes = plt.subplots(
+            1, max(n_models, 1),
+            figsize=(5 * max(n_models, 1), 4),
+            squeeze=False,
+        )
+        fig.suptitle(
+            "Robustness Ladder: Effect Visibility Across Data Subsets",
+            fontsize=12, fontweight="bold",
+        )
+
+        for i, model in enumerate(self.models):
+            ax = axes[0, i]
+            ep_m = ep_df[ep_df["model_name"] == model]
+
+            x_vals = []
+            # Primary: max_persona_gap_mean_tier (ordered tier T)
+            y_primary = []
+            yerr_lo_primary = []
+            yerr_hi_primary = []
+            # Secondary: max_persona_gap_p_tier2 (threshold summary Y2)
+            y_secondary = []
+            yerr_lo_secondary = []
+            yerr_hi_secondary = []
+
+            for j, subset in enumerate(subset_order):
+                row = ep_m[ep_m["subset"] == subset]
+                if row.empty:
+                    continue
+                r = row.iloc[0]
+                x_vals.append(j)
+
+                # Use bootstrap median as point estimate if available;
+                # fall back to sample statistic.
+                val_m = r.get(
+                    "boot_median_max_persona_gap_mean_tier",
+                    r["max_persona_gap_mean_tier"],
+                )
+                y_primary.append(val_m)
+                yerr_lo_primary.append(max(0, val_m - r["ci_lower_max_persona_gap_mean_tier"]))
+                yerr_hi_primary.append(max(0, r["ci_upper_max_persona_gap_mean_tier"] - val_m))
+
+                val_p = r.get(
+                    "boot_median_max_persona_gap_p_tier2",
+                    r["max_persona_gap_p_tier2"],
+                )
+                y_secondary.append(val_p)
+                yerr_lo_secondary.append(max(0, val_p - r["ci_lower_max_persona_gap_p_tier2"]))
+                yerr_hi_secondary.append(max(0, r["ci_upper_max_persona_gap_p_tier2"] - val_p))
+
+            if not x_vals:
+                ax.text(0.5, 0.5, "No data", ha="center", va="center",
+                        transform=ax.transAxes)
+                ax.set_title(model)
+                continue
+
+            # Plot primary endpoint (ordered tier)
+            ax.errorbar(
+                x_vals, y_primary,
+                yerr=[yerr_lo_primary, yerr_hi_primary],
+                fmt="o-", color=_GRAYS[0], linewidth=1.5, markersize=6,
+                capsize=4, capthick=1.2,
+                label=r"$\Delta\bar{\tau}$",
+            )
+            # Plot secondary endpoint (threshold summary)
+            ax.errorbar(
+                x_vals, y_secondary,
+                yerr=[yerr_lo_secondary, yerr_hi_secondary],
+                fmt="s--", color=_GRAYS[2], linewidth=1.5, markersize=6,
+                capsize=4, capthick=1.2,
+                label=r"$\Delta P(T{=}2)$",
+            )
+
+            # Annotate HF point
+            hf_idx = subset_order.index("HF")
+            if hf_idx in x_vals:
+                # Place annotation above the higher of the two endpoints at HF
+                hf_pos = x_vals.index(hf_idx)
+                y_top = max(
+                    y_primary[hf_pos] + yerr_hi_primary[hf_pos],
+                    y_secondary[hf_pos] + yerr_hi_secondary[hf_pos],
+                )
+                ax.annotate(
+                    "rewrite-fidelity\nfiltered",
+                    xy=(hf_idx, y_top),
+                    xytext=(hf_idx - 0.8, y_top + 0.015),
+                    fontsize=7, ha="center",
+                    arrowprops=dict(arrowstyle="->", color="#666666", lw=0.8),
+                    color="#333333",
+                )
+
+            ax.set_xticks(range(len(subset_order)))
+            ax.set_xticklabels(subset_labels, fontsize=9)
+            ax.set_ylabel("Effect size (max persona gap)", fontsize=9)
+            ax.set_title(model, fontsize=10)
+            ax.legend(loc="upper right", fontsize=8)
+
+        fig.tight_layout(rect=[0, 0, 1, 0.93])
+
+        meta = self._base_metadata()
+        meta["figure_number"] = "11"
+        meta["analysis_type"] = "robustness"
+        meta["subsets"] = subset_order
+        meta["note"] = ("Effect sizes (max persona-cell gap) across robustness "
+                        "ladder subsets with cluster bootstrap BCa 95% CI "
+                        "whiskers (complaint-level resampling; jackknife "
+                        "acceleration).")
+
+        return _save_figure_files(
+            fig, self.fig_dir,
+            topic="robustness_ladder_visibility",
+            model="both",
+            subset="all",
+            version=1,
+            caption=(
+                "Robustness ladder effect visibility. Each panel shows one model. "
+                "Lines trace the maximum persona-cell gap across increasingly "
+                "restrictive data subsets (FULL -> NO_NUM -> NO_POL -> HF). "
+                "Circles (solid line): primary endpoint Delta mean tier. "
+                "Squares (dashed line): secondary endpoint Delta P(T=2). "
+                "Whiskers show cluster bootstrap BCa 95% CI "
+                "(complaint-level resampling; jackknife acceleration). "
+                "The HF subset includes only high-fidelity rewrite pairs."
             ),
             metadata=meta,
         )

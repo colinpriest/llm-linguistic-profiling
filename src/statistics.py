@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
 
-from src.schemas import ESTIMATE_DIMS
+from src.schemas import ESTIMATE_DIMS, CAUSAL_DIMS, parse_persona_label
 from src.estimable import NE, NEValue, is_estimable
 
 logger = logging.getLogger(__name__)
@@ -419,6 +419,70 @@ def bootstrap_ci(
     lo = np.percentile(boot_stats, 100 * alpha / 2)
     hi = np.percentile(boot_stats, 100 * (1 - alpha / 2))
     return float(statistic_fn(data)), float(lo), float(hi)
+
+
+def bca_interval(
+    theta_hat: float,
+    theta_star: np.ndarray,
+    theta_jack: np.ndarray,
+    alpha: float = 0.05,
+    eps: float = 1e-6,
+) -> Tuple[float, float]:
+    """Bias-corrected and accelerated (BCa) bootstrap confidence interval.
+
+    Parameters
+    ----------
+    theta_hat : float
+        Statistic computed on the full sample.
+    theta_star : ndarray, shape (B,)
+        Bootstrap replicate statistics (same statistic as *theta_hat*).
+    theta_jack : ndarray, shape (n,)
+        Jackknife leave-one-cluster-out replicate statistics.
+    alpha : float
+        Significance level (default 0.05 → 95 % CI).
+    eps : float
+        Floor / ceiling for adjusted percentiles.
+
+    Returns
+    -------
+    (ci_lower, ci_upper) : tuple of float
+    """
+    B = len(theta_star)
+    if B < 2:
+        return (float("nan"), float("nan"))
+
+    # --- Bias correction z0 ---
+    prop = float(np.mean(theta_star < theta_hat))  # strict <
+    prop = np.clip(prop, 1.0 / (2 * B), 1.0 - 1.0 / (2 * B))
+    z0 = float(sp_stats.norm.ppf(prop))
+
+    # --- Acceleration a (jackknife) ---
+    finite_jack = theta_jack[np.isfinite(theta_jack)]
+    if len(finite_jack) < 2:
+        a = 0.0
+    else:
+        theta_dot = float(np.mean(finite_jack))
+        u = theta_dot - finite_jack  # influence values
+        denom = float(np.sum(u ** 2)) ** 1.5
+        a = float(np.sum(u ** 3)) / (6.0 * denom) if abs(denom) > 1e-15 else 0.0
+
+    # --- Adjusted percentiles ---
+    z_lo = float(sp_stats.norm.ppf(alpha / 2))
+    z_hi = float(sp_stats.norm.ppf(1.0 - alpha / 2))
+
+    def _adj(z: float) -> float:
+        numer = z0 + z
+        d = 1.0 - a * numer
+        if abs(d) < 1e-15:
+            return 0.5
+        return float(sp_stats.norm.cdf(z0 + numer / d))
+
+    alpha_lo = np.clip(_adj(z_lo), eps, 1.0 - eps)
+    alpha_hi = np.clip(_adj(z_hi), eps, 1.0 - eps)
+
+    ci_lo = float(np.percentile(theta_star, 100.0 * alpha_lo))
+    ci_hi = float(np.percentile(theta_star, 100.0 * alpha_hi))
+    return (ci_lo, ci_hi)
 
 
 # ---------------------------------------------------------------------------
@@ -891,7 +955,194 @@ def causal_analysis(
     # 4. Effect sizes with CIs
     results["effect_sizes"] = _causal_effect_sizes(persona_decisions)
 
+    # 5. Per-dimension gap analysis with bootstrap CIs
+    results["dimension_gaps"] = _dimension_gap_analysis(persona_decisions)
+
     return results
+
+
+# ---------------------------------------------------------------------------
+# Dimension-level gap analysis (matched-guise)
+# ---------------------------------------------------------------------------
+
+def _dimension_gap_analysis(
+    df: pd.DataFrame,
+    n_boot: int = 1000,
+    seed: int = 42,
+) -> Dict[str, Any]:
+    """Per-dimension max-min gap in favorable rates from matched-guise data.
+
+    Computes marginal rates by averaging across persona combinations within
+    each dimension level, then computes the max-min gap.  Bootstrap CIs are
+    computed via complaint-level resampling to respect within-complaint
+    correlation.
+
+    Parameters
+    ----------
+    df : DataFrame
+        Must contain columns: case_id, variant, favorable.
+    n_boot : int
+        Number of bootstrap iterations.
+    seed : int
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    dict
+        Keyed by dimension name (``age``, ``geographic``, …) and
+        ``full_grid``.  Each value is a dict with keys:
+        ``gap``, ``sd``, ``ci_lower``, ``ci_upper``, ``p_value``,
+        ``level_rates``.
+    """
+    df = df.copy()
+
+    # Parse persona labels → dimension columns
+    parsed = df["variant"].apply(parse_persona_label)
+    unparsed = parsed.isna()
+    if unparsed.any():
+        logger.warning(
+            "Could not parse %d/%d persona variant labels; "
+            "dimension_gaps may be incomplete.",
+            int(unparsed.sum()), len(df),
+        )
+    for dim in CAUSAL_DIMS:
+        df[dim] = parsed.apply(lambda d, _d=dim: d[_d] if isinstance(d, dict) else None)
+    df = df.dropna(subset=CAUSAL_DIMS)
+
+    if df.empty:
+        return {}
+
+    rng = np.random.default_rng(seed)
+    results: Dict[str, Any] = {}
+
+    # --- Per-dimension analysis ---
+    for dim in CAUSAL_DIMS:
+        # Per-complaint × per-level mean favorable rate
+        clm = (
+            df.groupby(["case_id", dim])["favorable"]
+            .mean()
+            .unstack(fill_value=np.nan)
+        )
+        if clm.shape[1] < 2:
+            continue
+
+        level_means = clm.mean(axis=0)
+        gap = float(level_means.max() - level_means.min())
+        sd = float(level_means.std(ddof=1))
+
+        # Bootstrap CI (complaint-level cluster resampling)
+        n_complaints = len(clm)
+        boot_gaps = np.empty(n_boot)
+        clm_values = clm.values  # numpy for speed
+        for b in range(n_boot):
+            idx = rng.integers(0, n_complaints, size=n_complaints)
+            boot_means = clm_values[idx].mean(axis=0)
+            boot_gaps[b] = boot_means.max() - boot_means.min()
+
+        # Jackknife (leave-one-complaint-out) via pre-aggregated sums
+        col_sums = clm_values.sum(axis=0)  # (k,)
+        if n_complaints > 1:
+            jack_means = (col_sums[np.newaxis, :] - clm_values) / (n_complaints - 1)
+            jack_gaps = jack_means.max(axis=1) - jack_means.min(axis=1)
+        else:
+            jack_gaps = np.array([gap])
+
+        ci_lower, ci_upper = bca_interval(gap, boot_gaps, jack_gaps)
+        boot_median = float(np.median(boot_gaps))
+
+        # Within-complaint paired test
+        p_value = _dimension_paired_test(clm)
+
+        results[dim] = {
+            "gap": gap,
+            "boot_median": boot_median,
+            "sd": sd,
+            "ci_lower": ci_lower,
+            "ci_upper": ci_upper,
+            "ci_method": "BCa",
+            "p_value": p_value,
+            "level_rates": {str(k): float(v) for k, v in level_means.items()},
+        }
+
+    # --- Full persona grid gap ---
+    cpg = (
+        df.groupby(["case_id", "variant"])["favorable"]
+        .mean()
+        .unstack(fill_value=np.nan)
+    )
+    if cpg.shape[1] >= 2:
+        persona_means = cpg.mean(axis=0)
+        full_gap = float(persona_means.max() - persona_means.min())
+        full_sd = float(persona_means.std(ddof=1))
+
+        n_complaints = len(cpg)
+        boot_full = np.empty(n_boot)
+        cpg_values = cpg.values
+        for b in range(n_boot):
+            idx = rng.integers(0, n_complaints, size=n_complaints)
+            bm = cpg_values[idx].mean(axis=0)
+            boot_full[b] = bm.max() - bm.min()
+
+        # Jackknife (leave-one-complaint-out) via pre-aggregated sums
+        cpg_col_sums = cpg_values.sum(axis=0)  # (36,)
+        if n_complaints > 1:
+            jack_means_full = (cpg_col_sums[np.newaxis, :] - cpg_values) / (n_complaints - 1)
+            jack_full = jack_means_full.max(axis=1) - jack_means_full.min(axis=1)
+        else:
+            jack_full = np.array([full_gap])
+
+        full_ci_lo, full_ci_hi = bca_interval(full_gap, boot_full, jack_full)
+        full_boot_median = float(np.median(boot_full))
+
+        results["full_grid"] = {
+            "gap": full_gap,
+            "boot_median": full_boot_median,
+            "sd": full_sd,
+            "ci_lower": full_ci_lo,
+            "ci_upper": full_ci_hi,
+            "ci_method": "BCa",
+            "p_value": None,  # Friedman test is in causal["friedman"]
+            "level_rates": None,
+        }
+
+    return results
+
+
+def _dimension_paired_test(clm: pd.DataFrame) -> float:
+    """Within-complaint paired test for a dimension's effect on favorable rate.
+
+    Parameters
+    ----------
+    clm : DataFrame
+        Rows = complaints, columns = dimension levels.
+        Values = mean favorable rate for that complaint at that level.
+
+    Returns
+    -------
+    float
+        p-value.  Returns NaN if the test cannot be computed.
+    """
+    clm = clm.dropna()
+    if len(clm) < 5:
+        return float("nan")
+
+    cols = list(clm.columns)
+    try:
+        if len(cols) == 2:
+            # Wilcoxon signed-rank test
+            diff = clm.iloc[:, 0].values - clm.iloc[:, 1].values
+            if np.all(diff == 0):
+                return 1.0
+            stat, p = sp_stats.wilcoxon(diff)
+            return float(p)
+        else:
+            # Friedman test for 3+ levels
+            groups = [clm[c].values for c in cols]
+            stat, p = sp_stats.friedmanchisquare(*groups)
+            return float(p)
+    except Exception as e:
+        logger.warning("Dimension paired test failed: %s", e)
+        return float("nan")
 
 
 def _pairwise_mcnemar(df: pd.DataFrame) -> List[Dict[str, Any]]:

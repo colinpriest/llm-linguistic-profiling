@@ -36,23 +36,51 @@ def _fmt_prop(v: Any) -> str:
     return f"{float(v):.3f}"
 
 
-def _fmt_pval(v: Any) -> str:
-    """Format a p-value: 2 sig figs, scientific if <1e-3."""
+def _log_p_exponent(log_p: float) -> int:
+    """Convert a natural-log p-value to a base-10 exponent floor.
+
+    E.g. log_p = -500  →  floor(-500 / ln(10)) = floor(-217.1) = -218.
+    """
+    return int(np.floor(log_p / np.log(10)))
+
+
+def _fmt_pval(v: Any, log_p: Optional[float] = None) -> str:
+    """Format a p-value: 2 sig figs, scientific if <1e-3.
+
+    Parameters
+    ----------
+    v : p-value (may be 0.0 due to underflow).
+    log_p : optional log(p) computed in log-space; used when *v* underflows.
+    """
     if not is_estimable(v):
         if isinstance(v, NEValue) and v.code == NECode.SINGULAR_MATRIX:
             return "Sep.$^{\\dagger}$"
         return "---"
     fv = float(v)
     if fv < 1e-3:
-        return f"{fv:.2e}"
-    return f"{fv:.4f}"
+        if fv < 1e-15:
+            if log_p is not None and np.isfinite(log_p) and log_p < 0:
+                exp10 = _log_p_exponent(log_p)
+                return f"<1e{exp10}"
+            return "<1e-15"
+        result = f"{fv:.2e}"
+        _validate_pval_string(result)
+        return result
+    result = f"{fv:.4f}"
+    _validate_pval_string(result)
+    return result
 
 
-def _fmt_pval_latex(v: Any) -> str:
+def _fmt_pval_latex(v: Any, log_p: Optional[float] = None) -> str:
     """Format a p-value for raw LaTeX (no escape pass).
 
     Returns ready-to-embed LaTeX: math-mode scientific notation, dagger
     for separation, or plain decimal.
+
+    Parameters
+    ----------
+    v : p-value (may be 0.0 due to underflow).
+    log_p : optional log(p) computed in log-space; used when *v* underflows.
     """
     if not is_estimable(v):
         if isinstance(v, NEValue) and v.code == NECode.SINGULAR_MATRIX:
@@ -60,11 +88,59 @@ def _fmt_pval_latex(v: Any) -> str:
         return "---"
     fv = float(v)
     if fv < 1e-3:
+        if fv < 1e-15:
+            if log_p is not None and np.isfinite(log_p) and log_p < 0:
+                exp10 = _log_p_exponent(log_p)
+                return f"$<\\!10^{{{exp10}}}$"
+            return r"$<\!10^{-15}$"
         # e.g. 5.11e-05 -> $5.11\times10^{-5}$
         mantissa, exp = f"{fv:.2e}".split("e")
         exp_int = int(exp)
-        return f"${mantissa}\\times10^{{{exp_int}}}$"
-    return f"{fv:.4f}"
+        result = f"${mantissa}\\times10^{{{exp_int}}}$"
+        _validate_pval_string(result)
+        return result
+    result = f"{fv:.4f}"
+    _validate_pval_string(result)
+    return result
+
+
+def _validate_pval_string(s: str) -> None:
+    """Guardrail: ensure a formatted p-value is not misleading.
+
+    Raises ValueError if the string looks like a zero p-value
+    (``0.00 × 10^0`` or literal ``"0"``).
+    """
+    import re
+    stripped = s.strip().replace("$", "").replace("\\!", "")
+    # Reject "0.00\\times10^{0}" or "0.00e+00" or plain "0"/"0.00"
+    if re.match(r"^-?0\.?0*$", stripped):
+        raise ValueError(f"p-value formatted as literal zero: {s!r}")
+    if re.search(r"0\.00.*(?:times|×).*10\^.*\{0\}", stripped):
+        raise ValueError(f"p-value formatted as 0.00×10^0: {s!r}")
+    if re.search(r"0\.00e\+?0+$", stripped):
+        raise ValueError(f"p-value formatted as 0.00e+00: {s!r}")
+
+
+def _warn_point_outside_ci(
+    point: float,
+    ci_lo: float,
+    ci_hi: float,
+    *,
+    context: str = "",
+    tol: float = 1e-6,
+) -> None:
+    """Log a warning if point falls outside [ci_lo, ci_hi].
+
+    Does **not** clamp or raise — the table is emitted with the actual
+    values so the mismatch is visible for review.
+    """
+    if np.isfinite(ci_lo) and np.isfinite(ci_hi):
+        if not (ci_lo - tol <= point <= ci_hi + tol):
+            logger.warning(
+                "Point estimate %.6f outside CI [%.6f, %.6f] for %s. "
+                "If CIs are BCa this is rare; check data regeneration.",
+                point, ci_lo, ci_hi, context,
+            )
 
 
 def _fmt_effect(v: Any) -> str:
@@ -139,6 +215,32 @@ def _escape_latex(s: str) -> str:
 
 
 # ------------------------------------------------------------------
+# Provenance comment
+# ------------------------------------------------------------------
+
+def _build_source_comment(**fields: str) -> str:
+    """Build a ``% SOURCE: ...`` LaTeX comment for table provenance.
+
+    The comment is invisible in PDF output but makes it trivial to trace
+    which dataframe / code-path produced a given ``.tex`` file.
+
+    Example::
+
+        % SOURCE: severity_df | model=gpt-5-mini | endpoint=tier2_gap | units=pp
+    """
+    if not fields:
+        return ""
+    parts: list[str] = []
+    # ``source`` always comes first when present.
+    if "source" in fields:
+        parts.append(fields["source"])
+    for k, v in fields.items():
+        if k != "source":
+            parts.append(f"{k}={v}")
+    return "% SOURCE: " + " | ".join(parts)
+
+
+# ------------------------------------------------------------------
 # Multi-format output
 # ------------------------------------------------------------------
 
@@ -165,6 +267,7 @@ def _write_three_formats(
     col_spec: Optional[str] = None,
     use_tabularx: bool = False,
     font_size: Optional[str] = None,
+    source_meta: Optional[Dict[str, str]] = None,
 ) -> List[Path]:
     """Write a DataFrame as .tex, .md, and .csv. Returns list of paths."""
     paths: List[Path] = []
@@ -172,9 +275,11 @@ def _write_three_formats(
     # --- LaTeX ---
     tex_name = _build_filename(kind, scope, topic, model, subset, version, "tex")
     tex_path = output_dir / tex_name
+    comment = _build_source_comment(**(source_meta or {}))
     tex_lines = _dataframe_to_booktabs(
         df, caption, label,
         col_spec=col_spec, use_tabularx=use_tabularx, font_size=font_size,
+        source_comment=comment,
     )
     tex_path.write_text(tex_lines, encoding="utf-8")
     paths.append(tex_path)
@@ -203,6 +308,7 @@ def _dataframe_to_booktabs(
     col_spec: Optional[str] = None,
     use_tabularx: bool = False,
     font_size: Optional[str] = None,
+    source_comment: str = "",
 ) -> str:
     """Convert DataFrame to booktabs LaTeX table.
 
@@ -213,6 +319,8 @@ def _dataframe_to_booktabs(
         in the preamble).  At least one ``X`` column is expected in *col_spec*.
     font_size : e.g. ``"small"`` or ``"footnotesize"``; wrapped around the table
         body so the table shrinks without affecting the caption.
+    source_comment : ``% SOURCE: ...`` provenance comment prepended before
+        ``\\begin{table}``.
     """
     n_cols = len(df.columns)
     if col_spec is None:
@@ -226,12 +334,15 @@ def _dataframe_to_booktabs(
     )
     env_close = r"\end{" + env + "}"
 
-    lines = [
+    lines: list[str] = []
+    if source_comment:
+        lines.append(source_comment)
+    lines.extend([
         r"\begin{table}[htbp]",
         r"\centering",
         r"\caption{" + _escape_latex(caption) + "}",
         r"\label{" + label + "}",
-    ]
+    ])
     if font_size:
         lines.append("\\" + font_size)
     lines.append(env_open)
@@ -322,6 +433,9 @@ class TableGenerator:
         paths.extend(self._table9_manipulation_signal_reduction(main_dir))
         for model in self.models:
             paths.extend(self._table10_operational_friction(main_dir, model))
+        for model in self.models:
+            paths.extend(self._table11_robustness_ladder(main_dir, model))
+        paths.extend(self._table12_endpoint_summary(main_dir))
         return paths
 
     def _table1_dataset_sampling(self, out: Path) -> List[Path]:
@@ -348,17 +462,16 @@ class TableGenerator:
             df, out, "table", "main", "dataset_sampling_summary", "na", "all", 1,
             caption="Dataset and sampling summary.",
             label="tab:dataset_summary",
+            source_meta={"source": "run_config", "model": "na", "endpoint": "na", "units": "count"},
         )
 
     def _table2_endpoint_definitions(self, out: Path) -> List[Path]:
         """Table 2: Endpoint definitions."""
         rows = [
-            ("Tier 0", "No action warranted", "Baseline category", "Primary (reference)"),
-            ("Tier 1", "Non-monetary remediation or guidance", "Positive remediation", "Primary"),
-            ("Tier 2", "Monetary remediation recommended", "Most consequential allocation", "Primary"),
-            ("Y2 = 1[T=2]", "Binary: monetary remediation", "Primary distributive endpoint", "Confirmatory"),
+            ("T in {0,1,2}", "Ordered tier: no action (0), non-monetary (1), monetary (2)", "Primary distributive endpoint", "Confirmatory"),
+            ("Y2 = 1[T=2]", "Binary: monetary remediation", "Threshold summary of T", "Secondary"),
             ("Y1+ = 1[T>=1]", "Binary: any positive remediation", "Sensitivity check", "Exploratory"),
-            ("F = 1[need_more_info]", "Model requests additional information", "Operational friction (secondary)", "Exploratory"),
+            ("F = 1[need_more_info]", "Model requests additional information", "Operational friction", "Exploratory"),
             ("M = 1[amount_extractable]", "Dollar amount present indicator", "Two-part severity handling", "Descriptive"),
             ("S in {L,M,H}", "Monetary severity band (within M=1)", "Severity amplification", "Confirmatory (M=1)"),
             ("Issue severity", "Product x issue derived score", "Severity amplification", "Confirmatory (all)"),
@@ -367,12 +480,10 @@ class TableGenerator:
 
         # --- Custom LaTeX with ragged columns ---
         tex_rows = [
-            (r"Tier 0", "No action warranted", "Baseline category", "Primary (reference)"),
-            (r"Tier 1", "Non-monetary remediation or guidance", "Positive remediation", "Primary"),
-            (r"Tier 2", "Monetary remediation recommended", "Most consequential allocation", "Primary"),
-            (r"$Y_2=\mathbf{1}[T=2]$", "Binary: monetary remediation", "Primary distributive endpoint", "Confirmatory"),
+            (r"$T\in\{0,1,2\}$", r"Ordered tier: no action (0), non-monetary (1), monetary (2)", "Primary distributive endpoint", "Confirmatory"),
+            (r"$Y_2=\mathbf{1}[T=2]$", "Binary: monetary remediation", r"Threshold summary of $T$", "Secondary"),
             (r"$Y_1^{+}=\mathbf{1}[T\ge 1]$", "Binary: any positive remediation", "Sensitivity check", "Exploratory"),
-            (r"\indcode{F}{need_more_info}", "Model requests additional information", "Operational friction (secondary)", "Exploratory"),
+            (r"\indcode{F}{need_more_info}", "Model requests additional information", "Operational friction", "Exploratory"),
             (r"\indcode{M}{amount_extractable}", "Dollar amount present indicator", "Two-part severity handling", "Descriptive"),
             (r"$S\in\{L,M,H\}$", r"Monetary severity band (within $M=1$)", "Severity amplification", r"Confirmatory ($M=1$)"),
             ("Issue severity", r"Product $\times$ issue derived score", "Severity amplification", "Confirmatory (all)"),
@@ -404,6 +515,7 @@ class TableGenerator:
 
         tex_name = _build_filename("table", "main", "endpoint_definitions", "na", "all", 1, "tex")
         tex_path = out / tex_name
+        tex_lines.insert(0, _build_source_comment(source="static", model="na", endpoint="na"))
         tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
 
         # --- Markdown + CSV via standard path ---
@@ -439,14 +551,28 @@ class TableGenerator:
             df, out, "table", "main", "persona_grid_design", "na", "matched", 1,
             caption="Persona grid and matched-guise rewrite design.",
             label="tab:persona_grid",
+            source_meta={"source": "static", "model": "na", "endpoint": "na"},
         )
 
     def _table4_distributive_fairness(self, out: Path, model: str) -> List[Path]:
-        """Table 4: Main distributive fairness results (Tier 2, matched-guise)."""
+        """Table 4: Main distributive fairness results (matched-guise).
+
+        Shows per-dimension max-min gap in favorable-outcome rates from the
+        matched-guise experiment, with BCa CIs and within-complaint
+        paired p-values.  Data comes from ``causal["dimension_gaps"]``
+        (computed in :func:`src.statistics._dimension_gap_analysis`).
+        """
         model_r = self.ar.get(model, {})
         causal = model_r.get("causal", {})
-        severity = self.ar.get("severity", {})
-        dim_sev = severity.get("dimension_severity", {})
+        dim_gaps = causal.get("dimension_gaps", {})
+
+        if not dim_gaps:
+            logger.warning(
+                "No dimension_gaps in causal results for %s; "
+                "skipping distributive_fairness_tier2 table.",
+                model,
+            )
+            return []
 
         # LaTeX dimension labels (allow hyphenation for long words)
         _dim_tex = {
@@ -457,70 +583,98 @@ class TableGenerator:
         }
 
         rows = []          # plain-text tuples for md/csv
-        tex_rows = []      # LaTeX-ready tuples (no escape pass)
+        tex_rows = []      # LaTeX-ready tuples
         needs_dagger = False
 
         for dim in ["age", "geographic", "education", "socioeconomic"]:
-            # Get dimension-specific interaction data
-            dim_data = {}
-            for metric in ["monetary_severity", "issue_severity"]:
-                dd = dim_sev.get(metric, {}).get(model, {}).get(dim, {})
-                if dd and not dd.get("error"):
-                    dim_data[metric] = dd
+            dg = dim_gaps.get(dim)
+            if not dg:
+                rows.append((dim.capitalize(), "---", "---", "---", "---"))
+                tex_rows.append((_dim_tex[dim], "---", "---", "---", "---"))
+                continue
 
-            # Extract disparity metrics
-            ne_amp = NE.missing_data(context=f"amp {dim}")
-            amp = dim_data.get("issue_severity", {}).get("amplification", {})
-            max_min = amp.get("bias_high", ne_amp) if amp else ne_amp
-            sd = amp.get("bias_low", ne_amp) if amp else ne_amp
-            ci_lo = amp.get("ci_lower", ne_amp) if amp else ne_amp
-            ci_hi = amp.get("ci_upper", ne_amp) if amp else ne_amp
+            raw_gap = dg["gap"]
+            sd = dg["sd"]
+            ci_lo = dg["ci_lower"]
+            ci_hi = dg["ci_upper"]
+            p_val = dg["p_value"]
 
-            # Interaction p from GEE (confirmatory)
-            gee = self.ar.get("severity", {}).get("gee_interactions_tier2", {})
-            gee_dim = gee.get("issue_severity", {}).get(model, {}).get(dim, {})
-            int_p = gee_dim.get("interaction_p", ne_amp) if not gee_dim.get("skipped") else NE.skipped("GEE skipped")
+            # Sanity: gap must be non-negative and on probability scale
+            if raw_gap < 0 or raw_gap > 1:
+                logger.warning(
+                    "dimension_gaps[%s].gap = %.4f out of [0,1]; skipping row.",
+                    dim, raw_gap,
+                )
+                rows.append((dim.capitalize(), "---", "---", "---", "---"))
+                tex_rows.append((_dim_tex[dim], "---", "---", "---", "---"))
+                continue
+            if ci_hi > 1.0 + 1e-6 or ci_lo < -1e-6:
+                logger.warning(
+                    "dimension_gaps[%s] CI [%.4f, %.4f] outside [0,1]; "
+                    "clamping to probability scale.",
+                    dim, ci_lo, ci_hi,
+                )
+                ci_lo = max(0.0, ci_lo)
+                ci_hi = min(1.0, ci_hi)
 
-            p_latex = _fmt_pval_latex(int_p)
+            # Use sample statistic as point estimate (BCa CI should contain it)
+            gap = raw_gap
+            _warn_point_outside_ci(
+                gap, ci_lo, ci_hi,
+                context=f"distributive_fairness/{model}/{dim}",
+            )
+
+            ci_str = f"[{_fmt_effect(ci_lo)}, {_fmt_effect(ci_hi)}]"
+            p_latex = _fmt_pval_latex(p_val)
             if r"\dagger" in p_latex:
                 needs_dagger = True
 
             rows.append((
                 dim.capitalize(),
-                _fmt_effect(max_min),
+                _fmt_effect(gap),
                 _fmt_effect(sd),
-                f"[{_fmt_effect(ci_lo)}, {_fmt_effect(ci_hi)}]",
-                _fmt_pval(int_p),
+                ci_str,
+                _fmt_pval(p_val),
             ))
             tex_rows.append((
                 _dim_tex[dim],
-                _fmt_effect(max_min),
+                _fmt_effect(gap),
                 _fmt_effect(sd),
-                f"[{_fmt_effect(ci_lo)}, {_fmt_effect(ci_hi)}]",
+                ci_str,
                 p_latex,
             ))
 
         # Full persona grid summary
-        interactions_t2 = severity.get("interactions_tier2", {})
-        full_int = interactions_t2.get("issue_severity", {}).get(model, {})
-        full_amp = full_int.get("amplification", {})
+        fg = dim_gaps.get("full_grid")
+        if fg:
+            fg_raw_gap = fg["gap"]
+            fg_sd = fg["sd"]
+            fg_ci_lo = max(0.0, fg["ci_lower"])
+            fg_ci_hi = min(1.0, fg["ci_upper"])
 
-        ne_full = NE.missing_data(context="full grid amp")
-        if full_amp:
-            bias_hi = full_amp.get("bias_high", ne_full)
-            bias_lo = full_amp.get("bias_low", ne_full)
-            gap = bias_hi - bias_lo if is_estimable(bias_hi) and is_estimable(bias_lo) else ne_full
+            if fg_raw_gap < 0 or fg_raw_gap > 1:
+                logger.warning(
+                    "dimension_gaps[full_grid].gap = %.4f out of [0,1]; "
+                    "replacing with ---.",
+                    fg_raw_gap,
+                )
+                full_row = ("Full persona grid", "---", "---", "---", "---")
+            else:
+                fg_gap = fg_raw_gap
+                _warn_point_outside_ci(
+                    fg_gap, fg_ci_lo, fg_ci_hi,
+                    context=f"distributive_fairness/{model}/full_grid",
+                )
+                fg_ci_str = f"[{_fmt_effect(fg_ci_lo)}, {_fmt_effect(fg_ci_hi)}]"
+                full_row = (
+                    "Full persona grid",
+                    _fmt_effect(fg_gap),
+                    _fmt_effect(fg_sd),
+                    fg_ci_str,
+                    "---",
+                )
         else:
-            gap = ne_full
-            bias_hi = ne_full
-
-        full_row = (
-            "Full persona grid",
-            _fmt_effect(gap) if full_amp else "---",
-            _fmt_effect(bias_hi) if full_amp else "---",
-            f"[{_fmt_effect(full_amp.get('ci_lower', ne_full))}, {_fmt_effect(full_amp.get('ci_upper', ne_full))}]" if full_amp else "---",
-            "---",
-        )
+            full_row = ("Full persona grid", "---", "---", "---", "---")
         rows.append(full_row)
         tex_rows.append(full_row)
 
@@ -537,7 +691,7 @@ class TableGenerator:
             r"\label{" + label + "}",
             r"\begin{tabular}{@{}p{0.30\linewidth}r r p{0.23\linewidth}p{0.17\linewidth}@{}}",
             r"\toprule",
-            r"Dimension & Max--Min Gap & SD & 95\% CI & Interaction $p$ \\",
+            r"Dimension & Max--Min Gap & SD & 95\% CI & $p$ \\",
             r"\midrule",
         ]
         for dim_label, mm, s, ci, p in tex_rows:
@@ -549,16 +703,17 @@ class TableGenerator:
             tex_lines.append(r"\vspace{2pt}")
             tex_lines.append(
                 r"\parbox{0.94\linewidth}{\footnotesize $^{\dagger}$"
-                r" Interaction $p$-value unavailable / not estimable for this row.}"
+                r" $p$-value unavailable / not estimable for this row.}"
             )
         tex_lines.append(r"\end{table}")
 
         tex_name = _build_filename("table", "main", "distributive_fairness_tier2", model_clean, "matched", 1, "tex")
         tex_path = out / tex_name
+        tex_lines.insert(0, _build_source_comment(source="causal.dimension_gaps", model=model, endpoint="favorable_gap", units="probability", ci="cluster_bootstrap_bca_complaint_level"))
         tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
 
         # --- Markdown + CSV via DataFrame ---
-        df = pd.DataFrame(rows, columns=["Dimension", "Max-Min Gap", "SD", "95% CI", "Interaction p"])
+        df = pd.DataFrame(rows, columns=["Dimension", "Max-Min Gap", "SD", "95% CI", "p"])
 
         md_name = _build_filename("table", "main", "distributive_fairness_tier2", model_clean, "matched", 1, "md")
         md_path = out / md_name
@@ -623,6 +778,7 @@ class TableGenerator:
             model_clean, "baseline_vs_neutralized", 1,
             caption=f"Neutralisation mitigation effects -- {model}.",
             label=f"tab:neutralization_{model_clean}",
+            source_meta={"source": "neutralisation_results", "model": model, "endpoint": "tier2_mcnemar", "units": "pp"},
         )
 
     def _table6_amplification(self, out: Path, model: str, metric: str) -> List[Path]:
@@ -728,6 +884,7 @@ class TableGenerator:
         topic = "severity_amplification_confirmatory"
         tex_name = _build_filename("table", "main", topic, model_clean, f"{metric_clean}__{subset}", 1, "tex")
         tex_path = out / tex_name
+        tex_lines.insert(0, _build_source_comment(source="severity_analysis", model=model, endpoint="amplification", units="ratio", metric=metric))
         tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
 
         # --- Markdown + CSV via DataFrame ---
@@ -834,6 +991,7 @@ class TableGenerator:
 
         tex_name = _build_filename("table", "main", "persona_explainability", "na", "all", 1, "tex")
         tex_path = out / tex_name
+        tex_lines.insert(0, _build_source_comment(source="text_feature_importance", model="all", endpoint="logistic_coeff", units="mixed"))
         tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
 
         md_name = _build_filename("table", "main", "persona_explainability", "na", "all", 1, "md")
@@ -875,6 +1033,7 @@ class TableGenerator:
             df, out, "table", "main", "manipulation_rewrite_match", "na", "all", 1,
             caption="Manipulation check: persona re-estimation match rates after style rewriting.",
             label="tab:manipulation_rewrite",
+            source_meta={"source": "manipulation_checks", "model": "all", "endpoint": "match_rate", "units": "proportion"},
         )
 
     def _table9_manipulation_signal_reduction(self, out: Path) -> List[Path]:
@@ -908,6 +1067,7 @@ class TableGenerator:
             df, out, "table", "main", "manipulation_signal_reduction", "na", "all", 1,
             caption="Manipulation check: entropy signal reduction after language neutralisation.",
             label="tab:manipulation_signal",
+            source_meta={"source": "signal_reduction", "model": "all", "endpoint": "entropy", "units": "bits"},
         )
 
     def _table10_operational_friction(self, out: Path, model: str) -> List[Path]:
@@ -990,6 +1150,7 @@ class TableGenerator:
 
         tex_name = _build_filename("table", "main", "operational_friction", model_clean, "all", 1, "tex")
         tex_path = out / tex_name
+        tex_lines.insert(0, _build_source_comment(source="operational_friction", model=model, endpoint="info_request_rate", units="proportion"))
         tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
 
         # --- Markdown + CSV via DataFrame ---
@@ -1006,6 +1167,339 @@ class TableGenerator:
         df.to_csv(csv_path, index=False, encoding="utf-8")
 
         logger.info("Written table: operational_friction (.tex/.md/.csv)")
+        return [tex_path, md_path, csv_path]
+
+    # ------------------------------------------------------------------
+    # Table 11: Robustness ladder (per model)
+    # ------------------------------------------------------------------
+
+    def _table11_robustness_ladder(self, out: Path, model: str) -> List[Path]:
+        """Table 11: Robustness ladder — effect sizes across data subsets."""
+        rob = self.ar.get("robustness_subsets", {})
+        if not rob or rob.get("skipped"):
+            return []
+
+        rob_dir = Path(rob.get("output_dir", ""))
+        ep_path = rob_dir / "endpoint_summary.csv"
+        om_path = rob_dir / "omnibus_tests.csv"
+        if not ep_path.exists() or not om_path.exists():
+            return []
+
+        ep_df = pd.read_csv(ep_path)
+        om_df = pd.read_csv(om_path)
+
+        # Filter to this model
+        ep = ep_df[ep_df["model_name"] == model]
+        om = om_df[om_df["model_name"] == model]
+        if ep.empty:
+            return []
+
+        # HF pair rate from slot audit (for footnote)
+        sa = self.ar.get("slot_audit", {})
+        hf_metrics = sa.get("metrics", {}).get("global", {}).get("high_fidelity", {})
+        hf_rate = hf_metrics.get("pair_rate")
+        hf_pct = f"{hf_rate * 100:.1f}" if hf_rate is not None else "?"
+
+        # Subset order (skip HF_NO_POL — duplicates HF in this dataset)
+        subset_order = ["FULL", "HF", "NO_POL", "NO_NUM"]
+        subset_labels = {
+            "FULL": "FULL",
+            "HF": r"HF$^{a}$",
+            "NO_POL": r"NO\_POL$^{a}$",
+            "NO_NUM": r"NO\_NUM$^{a}$",
+        }
+
+        tex_rows = []
+        md_rows = []
+        for subset in subset_order:
+            row = ep[ep["subset"] == subset]
+            if row.empty:
+                continue
+            r = row.iloc[0]
+
+            ret = r["pair_retention"]
+            ci_lo_t2 = r["ci_lower_max_persona_gap_p_tier2"]
+            ci_hi_t2 = r["ci_upper_max_persona_gap_p_tier2"]
+            ci_lo_mt = r["ci_lower_max_persona_gap_mean_tier"]
+            ci_hi_mt = r["ci_upper_max_persona_gap_mean_tier"]
+            # Use bootstrap median as point estimate so it is consistent
+            # with the percentile CI (both from the same distribution).
+            # The sample statistic (max-min) is upward-biased under
+            # resampling; displaying it alongside a percentile CI can
+            # place the point estimate outside the interval.
+            gap_t2 = r["max_persona_gap_p_tier2"]
+            gap_mt = r["max_persona_gap_mean_tier"]
+
+            # Validate: point should lie inside BCa CI
+            _warn_point_outside_ci(
+                gap_t2, ci_lo_t2, ci_hi_t2,
+                context=f"robustness_ladder/{model}/{subset}/tier2",
+            )
+            _warn_point_outside_ci(
+                gap_mt, ci_lo_mt, ci_hi_mt,
+                context=f"robustness_ladder/{model}/{subset}/mean_tier",
+            )
+
+            # Omnibus p-values (with log-space fallback for underflow)
+            om_t2 = om[(om["subset"] == subset) & (om["endpoint"] == "tier2")]
+            om_mt = om[(om["subset"] == subset) & (om["endpoint"] == "tier_numeric")]
+            p_t2 = om_t2.iloc[0]["p_value"] if not om_t2.empty else None
+            p_mt = om_mt.iloc[0]["p_value"] if not om_mt.empty else None
+            log_p_t2 = om_t2.iloc[0].get("log_p_value") if not om_t2.empty else None
+            log_p_mt = om_mt.iloc[0].get("log_p_value") if not om_mt.empty else None
+
+            tex_rows.append((
+                subset_labels.get(subset, subset),
+                f"{ret * 100:.1f}\\%",
+                f"{gap_t2:.3f} [{ci_lo_t2:.3f}, {ci_hi_t2:.3f}]",
+                f"{gap_mt:.3f} [{ci_lo_mt:.3f}, {ci_hi_mt:.3f}]",
+                _fmt_pval_latex(p_t2, log_p=log_p_t2),
+                _fmt_pval_latex(p_mt, log_p=log_p_mt),
+            ))
+            md_rows.append((
+                subset, f"{ret * 100:.1f}%",
+                f"{gap_t2:.3f} [{ci_lo_t2:.3f}, {ci_hi_t2:.3f}]",
+                f"{gap_mt:.3f} [{ci_lo_mt:.3f}, {ci_hi_mt:.3f}]",
+                _fmt_pval(p_t2, log_p=log_p_t2),
+                _fmt_pval(p_mt, log_p=log_p_mt),
+            ))
+
+        if not tex_rows:
+            return []
+
+        model_clean = model.replace("-", "").replace("_", "")
+
+        # --- Custom LaTeX ---
+        tex_lines = [
+            r"\begin{table}[htbp]",
+            r"\centering",
+            r"\small",
+            r"\caption{Robustness ladder: effect sizes across data subsets -- "
+            + _escape_latex(model) + r".}",
+            r"\label{tab:robustness_ladder_" + model_clean + "}",
+            r"\begin{tabular}{@{}l r ll cc@{}}",
+            r"\toprule",
+            r"Subset & Retention"
+            r" & $\Delta P(T{=}2)$$^{b}$ & $\Delta\bar{\tau}$$^{b}$"
+            r" & $p_W$ (tier$_2$)$^{c}$ & $p_W$ ($\bar{\tau}$)$^{c}$ \\",
+            r"\midrule",
+        ]
+        for label, ret, gt2, gmt, pt2, pmt in tex_rows:
+            tex_lines.append(
+                f"{label} & {ret} & {gt2} & {gmt} & {pt2} & {pmt} \\\\"
+            )
+        tex_lines.append(r"\bottomrule")
+        tex_lines.append(r"\end{tabular}")
+        tex_lines.append("")
+        tex_lines.append(r"\vspace{2pt}")
+        tex_lines.append(
+            r"\parbox{0.95\linewidth}{\footnotesize"
+        )
+        tex_lines.append(
+            r"$^{a}$ HF = high-fidelity rewrite pairs ("
+            + hf_pct
+            + r"\% of all pairs); NO\_POL = no polarity contradictions;"
+            r" NO\_NUM = no numeric mutations.\\"
+        )
+        tex_lines.append(
+            r"$^{b}$ $\Delta$ = maximum persona-cell gap; full-sample point estimate"
+            r" (cluster bootstrap BCa 95\% CI; complaint-level resampling;"
+            r" jackknife acceleration).\\"
+        )
+        tex_lines.append(
+            r"$^{c}$ $p_W$: GEE omnibus Wald test, exchangeable working correlation."
+        )
+        tex_lines.append(r"}")
+        tex_lines.append(r"\end{table}")
+
+        tex_name = _build_filename(
+            "table", "main", "robustness_ladder", model_clean, "all", 1, "tex"
+        )
+        tex_path = out / tex_name
+        tex_lines.insert(0, _build_source_comment(source="robustness_subsets", model=model, endpoint="tier2_gap", units="pp"))
+        tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
+
+        # --- Markdown + CSV ---
+        df = pd.DataFrame(md_rows, columns=[
+            "Subset", "Retention",
+            "Delta P(T=2) [95% CI]", "Delta mean tier [95% CI]",
+            "p_W (tier2)", "p_W (mean tier)",
+        ])
+        md_name = _build_filename(
+            "table", "main", "robustness_ladder", model_clean, "all", 1, "md"
+        )
+        md_path = out / md_name
+        caption_md = f"Robustness ladder: effect sizes across data subsets -- {model}."
+        md_path.write_text(_dataframe_to_markdown(df, caption_md), encoding="utf-8")
+
+        csv_name = _build_filename(
+            "table", "main", "robustness_ladder", model_clean, "all", 1, "csv"
+        )
+        csv_path = out / csv_name
+        df.to_csv(csv_path, index=False, encoding="utf-8")
+
+        logger.info("Written table: robustness_ladder (%s) (.tex/.md/.csv)", model)
+        return [tex_path, md_path, csv_path]
+
+    # ------------------------------------------------------------------
+    # Table 12: Endpoint summary (compact, both models)
+    # ------------------------------------------------------------------
+
+    def _table12_endpoint_summary(self, out: Path) -> List[Path]:
+        """Table 12: Compact primary + secondary endpoint dispersion summary."""
+        rob = self.ar.get("robustness_subsets", {})
+        if not rob or rob.get("skipped"):
+            return []
+
+        rob_dir = Path(rob.get("output_dir", ""))
+        ep_path = rob_dir / "endpoint_summary.csv"
+        om_path = rob_dir / "omnibus_tests.csv"
+        if not ep_path.exists() or not om_path.exists():
+            return []
+
+        ep_df = pd.read_csv(ep_path)
+        om_df = pd.read_csv(om_path)
+
+        tex_data_rows = []
+        md_rows = []
+
+        for model in self.models:
+            ep_full = ep_df[(ep_df["model_name"] == model) & (ep_df["subset"] == "FULL")]
+            ep_hf = ep_df[(ep_df["model_name"] == model) & (ep_df["subset"] == "HF")]
+            if ep_full.empty:
+                continue
+            f = ep_full.iloc[0]
+            h = ep_hf.iloc[0] if not ep_hf.empty else None
+
+            # Primary: Delta E[T] (max_persona_gap_mean_tier)
+            de_full = f["max_persona_gap_mean_tier"]
+            de_hf = h["max_persona_gap_mean_tier"] if h is not None else None
+
+            # Secondary: Delta P(T=2) (max_persona_gap_p_tier2)
+            dp_full = f["max_persona_gap_p_tier2"]
+            dp_hf = h["max_persona_gap_p_tier2"] if h is not None else None
+
+            # Omnibus p (ordered): Friedman test from repeated_measures
+            rm = self.ar.get("repeated_measures", {}).get(model, {})
+            np_res = rm.get("nonparametric", {})
+            fr = np_res.get("friedman_tier", {})
+            p_ord = fr.get("p_value") if fr and not fr.get("skipped") else None
+
+            # Omnibus p (Tier 2): GEE Wald from omnibus_tests
+            om_t2 = om_df[
+                (om_df["model_name"] == model)
+                & (om_df["subset"] == "FULL")
+                & (om_df["endpoint"] == "tier2")
+            ]
+            p_t2 = om_t2.iloc[0]["p_value"] if not om_t2.empty else None
+            log_p_t2 = om_t2.iloc[0].get("log_p_value") if not om_t2.empty else None
+
+            # HF verdict: compare FULL vs HF gaps
+            if h is not None and de_full > 0 and dp_full > 0:
+                ratio_primary = de_hf / de_full if de_full else 1.0
+                ratio_secondary = dp_hf / dp_full if dp_full else 1.0
+                avg_ratio = (ratio_primary + ratio_secondary) / 2
+                if avg_ratio >= 1.0:
+                    hf_verdict = "amplified"
+                elif avg_ratio >= 0.9:
+                    hf_verdict = "stable"
+                else:
+                    hf_verdict = "attenuated"
+            else:
+                hf_verdict = "---"
+
+            model_tex = r"\texttt{" + _escape_latex(model) + "}"
+            tex_data_rows.append((
+                model_tex,
+                f"{de_full:.4f}", f"{de_hf:.4f}" if de_hf is not None else "---",
+                f"{dp_full:.3f}", f"{dp_hf:.3f}" if dp_hf is not None else "---",
+                _fmt_pval_latex(p_ord),
+                _fmt_pval_latex(p_t2, log_p=log_p_t2),
+                hf_verdict,
+            ))
+            md_rows.append((
+                model,
+                f"{de_full:.4f}", f"{de_hf:.4f}" if de_hf is not None else "---",
+                f"{dp_full:.3f}", f"{dp_hf:.3f}" if dp_hf is not None else "---",
+                _fmt_pval(p_ord), _fmt_pval(p_t2, log_p=log_p_t2),
+                hf_verdict,
+            ))
+
+        if not tex_data_rows:
+            return []
+
+        # Footnote marker for p_ord
+        p_ord_note = r"$^{a}$"
+
+        # --- Custom LaTeX ---
+        tex_lines = [
+            r"\begin{table}[t]",
+            r"\centering",
+            r"\small",
+            r"\caption{Primary and secondary endpoint dispersion summary (matched-guise panel).",
+            r"$\Delta E[T]$: max--min of persona-level mean tier across 36 guises.",
+            r"$\Delta P(T{=}2)$: max--min of persona-level Tier-2 rate.",
+            r"FULL: all pairs; HF: high-fidelity pairs only.}",
+            r"\label{tab:endpoint_summary}",
+            r"\begin{tabular}{@{}l cc cc cc l@{}}",
+            r"\toprule",
+            r"& \multicolumn{2}{c}{Primary: $\Delta E[T]$}",
+            r"& \multicolumn{2}{c}{Secondary: $\Delta P(T{=}2)$}",
+            r"& \multicolumn{2}{c}{Omnibus $p$} \\",
+            r"\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7}",
+            r"Model & FULL & HF & FULL & HF"
+            r" & Ordered" + p_ord_note + r" & Tier-2 & HF verdict \\",
+            r"\midrule",
+        ]
+        for mtex, de_f, de_h, dp_f, dp_h, po, pt, hfv in tex_data_rows:
+            tex_lines.append(
+                f"{mtex} & {de_f} & {de_h} & {dp_f} & {dp_h}"
+                f" & {po} & {pt} & {hfv} \\\\"
+            )
+        tex_lines.append(r"\bottomrule")
+        tex_lines.append(r"\end{tabular}")
+        tex_lines.append("")
+        tex_lines.append(r"\vspace{2pt}")
+        tex_lines.append(
+            r"\parbox{0.95\linewidth}{\footnotesize"
+            r" " + p_ord_note + r" Friedman test (within-complaint blocking,"
+            r" ordinal $T$, 36 persona treatments)."
+            r" Tier-2 omnibus: GEE Wald test,"
+            r" exchangeable working correlation.}"
+        )
+        tex_lines.append(r"\end{table}")
+
+        tex_name = _build_filename(
+            "table", "main", "endpoint_summary", "both", "matched", 1, "tex"
+        )
+        tex_path = out / tex_name
+        tex_lines.insert(0, _build_source_comment(source="endpoint_dispersion", model="both", endpoint="delta_ET_and_PT2", units="pp"))
+        tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
+
+        # --- Markdown + CSV ---
+        df = pd.DataFrame(md_rows, columns=[
+            "Model", "Delta E[T] FULL", "Delta E[T] HF",
+            "Delta P(T=2) FULL", "Delta P(T=2) HF",
+            "p (ordered)", "p (Tier-2)", "HF verdict",
+        ])
+        md_name = _build_filename(
+            "table", "main", "endpoint_summary", "both", "matched", 1, "md"
+        )
+        md_path = out / md_name
+        md_path.write_text(
+            _dataframe_to_markdown(
+                df, "Primary and secondary endpoint dispersion summary (matched-guise panel)."
+            ),
+            encoding="utf-8",
+        )
+
+        csv_name = _build_filename(
+            "table", "main", "endpoint_summary", "both", "matched", 1, "csv"
+        )
+        csv_path = out / csv_name
+        df.to_csv(csv_path, index=False, encoding="utf-8")
+
+        logger.info("Written table: endpoint_summary (.tex/.md/.csv)")
         return [tex_path, md_path, csv_path]
 
     # ==================================================================
@@ -1050,6 +1544,7 @@ class TableGenerator:
             model_clean, "matched", 1,
             caption=f"Full persona x tier distribution -- {model}.",
             label=f"tab:persona_tier_{model_clean}",
+            source_meta={"source": "persona_tier_counts", "model": model, "endpoint": "tier_distribution", "units": "proportion"},
         )
 
     def _tableA2_pairwise_comparisons(self, out: Path, model: str) -> List[Path]:
@@ -1083,6 +1578,7 @@ class TableGenerator:
             model_clean, "matched", 1,
             caption=f"Pairwise persona comparisons (top 20 by effect size) -- {model}.",
             label=f"tab:pairwise_{model_clean}",
+            source_meta={"source": "pairwise_mcnemar", "model": model, "endpoint": "tier2", "units": "risk_diff"},
         )
 
     def _tableA3_missingness_diagnostics(self, out: Path) -> List[Path]:
@@ -1127,6 +1623,7 @@ class TableGenerator:
             "na", "all", 1,
             caption="Monetary missingness diagnostics: M=1 vs M=0 comparison.",
             label="tab:missingness",
+            source_meta={"source": "missingness_diagnostic", "model": "na", "endpoint": "M1_vs_M0", "units": "mixed"},
         )
 
     def _tableA3b_missingness_ipw_summary(self, out: Path) -> List[Path]:
@@ -1224,6 +1721,7 @@ class TableGenerator:
         tex_lines.append(r"{\scriptsize\textit{Note:}\enspace " + note_lines[0] + "}")
         tex_lines.append(r"\end{table}")
 
+        tex_lines.insert(0, _build_source_comment(source="missingness_ipw", model="all", endpoint="smd_balance", units="smd"))
         tex_name = _build_filename(
             "table", "appendix", "missingness_ipw_diagnostics", "na", "all", 1, "tex",
         )
@@ -1270,6 +1768,7 @@ class TableGenerator:
             "na", "all", 1,
             caption="Prompt inventory and model parameters.",
             label="tab:prompts",
+            source_meta={"source": "static", "model": "na", "endpoint": "na"},
         )
 
     def _tableA6_text_feature_inventory(self, out: Path) -> List[Path]:
@@ -1331,6 +1830,7 @@ class TableGenerator:
 
         tex_name = _build_filename("table", "appendix", "text_feature_inventory", "na", "all", 1, "tex")
         tex_path = out / tex_name
+        tex_lines.insert(0, _build_source_comment(source="static", model="na", endpoint="text_features", units="mixed"))
         tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
 
         md_name = _build_filename("table", "appendix", "text_feature_inventory", "na", "all", 1, "md")
@@ -1392,6 +1892,7 @@ class TableGenerator:
             model_clean, "all", 1,
             caption=f"Persona distribution diagnostics -- {model}.",
             label=f"tab:persona_dist_{model_clean}",
+            source_meta={"source": "persona_estimation", "model": model, "endpoint": "distribution", "units": "entropy_and_proportion"},
         )
 
     # ==================================================================
@@ -1558,6 +2059,7 @@ class TableGenerator:
         ])
 
         # Write .tex manually (custom layout)
+        tex_lines.insert(0, _build_source_comment(source="repeated_measures_diagnostics", model="all", endpoint="rm_model_fit", units="mixed"))
         tex_name = _build_filename(
             "table", "robustness", "rm_model_diagnostics", "all", "all", 1, "tex",
         )
@@ -1638,6 +2140,7 @@ class TableGenerator:
             model_clean, "all", 1,
             caption=f"Robustness summary -- {model}.",
             label=f"tab:robustness_{model_clean}",
+            source_meta={"source": "robustness_summary", "model": model, "endpoint": "ipw_alt_disparity_alt_endpoint", "units": "mixed"},
         )
 
     # ==================================================================
@@ -1715,6 +2218,7 @@ class TableGenerator:
 
         tex_name = _build_filename("table", "robustness", "bayes_model_spec", "na", "all", 1, "tex")
         tex_path = out / tex_name
+        tex_lines.insert(0, _build_source_comment(source="static", model="na", endpoint="model_specification", units="na"))
         tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
 
         # --- Markdown + CSV via DataFrame ---
@@ -1848,6 +2352,7 @@ class TableGenerator:
         topic = "bayes_amplification_tier2"
         tex_name = _build_filename("table", "robustness", topic, model_clean, metric_clean, 1, "tex")
         tex_path = out / tex_name
+        tex_lines.insert(0, _build_source_comment(source="bayes_amplification", model=model, endpoint="tier2", units="log_odds", ci="95pct_CrI", metric=metric))
         tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
 
         # --- Markdown + CSV via DataFrame ---
@@ -1910,6 +2415,7 @@ class TableGenerator:
                 df, out, "table", "robustness", "bayes_ordinal_tier_distribution",
                 model_clean, metric_clean, 1,
                 caption=caption, label=label,
+                source_meta={"source": "bayes_ordinal", "model": model, "endpoint": "tier_probabilities", "units": "probability", "ci": "95pct_CrI", "metric": metric},
             )
 
         # --- Failure path: produce diagnostic artifact ---
@@ -2016,6 +2522,7 @@ class TableGenerator:
             df, out, "table", "robustness", "bayes_ordinal_tier_distribution",
             model_clean, metric_clean, 1,
             caption=caption, label=label,
+            source_meta={"source": "bayes_ordinal_failure_diagnostic", "model": model, "endpoint": "fallback_chain", "metric": metric},
         )
 
     def _tableB4_bayes_diagnostics(self, out: Path, model: str) -> List[Path]:
@@ -2061,6 +2568,7 @@ class TableGenerator:
             col_spec=r">{\raggedright\arraybackslash}X r r r r l",
             use_tabularx=True,
             font_size="footnotesize",
+            source_meta={"source": "bayes_mcmc_diagnostics", "model": model, "endpoint": "rhat_ess_divergences", "units": "mixed"},
         )
 
     # ==================================================================
@@ -2128,6 +2636,7 @@ class TableGenerator:
             "all", "all", 1,
             caption=f"Matched-guise slot-preservation audit summary (viability gate: {gate_label}).",
             label="tab:slot_audit_summary",
+            source_meta={"source": "slot_audit_global", "model": "all", "endpoint": "viability_gate", "units": "proportion", "ci": "bootstrap_95"},
         )
 
     def _tableS2_slot_family_breakdown(self, out: Path) -> List[Path]:
@@ -2173,6 +2682,7 @@ class TableGenerator:
             "all", "all", 1,
             caption="Slot-preservation rates by family (presence preservation = source slot present and correctly reproduced).",
             label="tab:slot_family_breakdown",
+            source_meta={"source": "slot_audit_per_family", "model": "all", "endpoint": "preservation_rates", "units": "proportion", "ci": "bootstrap_95"},
         )
 
     def _tableS3_slot_model_comparison(self, out: Path) -> List[Path]:
@@ -2203,6 +2713,7 @@ class TableGenerator:
             "all", "all", 1,
             caption="Slot-preservation audit results by model.",
             label="tab:slot_model_comparison",
+            source_meta={"source": "slot_audit_subgroups", "model": "all", "endpoint": "model_comparison", "units": "proportion"},
         )
 
     # ==================================================================
@@ -2242,6 +2753,7 @@ class TableGenerator:
             caption="Matched-guise robustness subset retention rates.",
             label="tab:slot_subset_retention",
             font_size="small",
+            source_meta={"source": "subset_manifest", "model": "all", "endpoint": "retention_rate", "units": "proportion"},
         )
 
     def _tableR2_effect_stability(self, out: Path) -> List[Path]:
@@ -2281,6 +2793,7 @@ class TableGenerator:
             caption="Matched-guise effect stability across slot-quality subsets.",
             label="tab:slot_effect_stability",
             font_size="footnotesize",
+            source_meta={"source": "robustness_vs_full", "model": "all", "endpoint": "effect_attenuation", "units": "proportion"},
         )
 
     def _tableR3_outcome_composition_shift(self, out: Path) -> List[Path]:
@@ -2299,6 +2812,11 @@ class TableGenerator:
         for _, r in df.iterrows():
             tp = r.get("tier_ttest_p", float("nan"))
             zp = r.get("tier2_ztest_p", float("nan"))
+            log_tp = r.get("log_tier_ttest_p", None)
+            log_zp = r.get("log_tier2_ztest_p", None)
+            # Use _fmt_pval (not _fmt_pval_latex) because this table goes
+            # through _write_three_formats → _escape_latex; raw LaTeX math
+            # would be double-escaped.
             display_rows.append({
                 "Model": r["model_name"],
                 "N Kept": f"{int(r['n_kept']):,}",
@@ -2306,10 +2824,10 @@ class TableGenerator:
                 "Mean Tier (K)": f"{r['mean_tier_kept']:.3f}",
                 "Mean Tier (D)": f"{r['mean_tier_dropped']:.3f}" if not np.isnan(r.get("mean_tier_dropped", float("nan"))) else "---",
                 "Diff": f"{r['tier_diff']:.3f}",
-                "p (tier)": _fmt_pval_latex(tp) if not np.isnan(tp) else "---",
+                "p (tier)": _fmt_pval(tp, log_p=log_tp) if not np.isnan(tp) else "---",
                 "Tier2 (K)": f"{r['p_tier2_kept']:.3f}",
                 "Tier2 (D)": f"{r['p_tier2_dropped']:.3f}" if not np.isnan(r.get("p_tier2_dropped", float("nan"))) else "---",
-                "p (tier2)": _fmt_pval_latex(zp) if not np.isnan(zp) else "---",
+                "p (tier2)": _fmt_pval(zp, log_p=log_zp) if not np.isnan(zp) else "---",
                 "Bias Dir.": r.get("bias_direction", ""),
             })
 
@@ -2320,6 +2838,7 @@ class TableGenerator:
             caption="Outcome-composition shift: kept vs dropped pairs under high-fidelity filtering.",
             label="tab:slot_composition_shift",
             font_size="footnotesize",
+            source_meta={"source": "outcome_composition_shift", "model": "all", "endpoint": "kept_vs_dropped", "units": "proportion"},
         )
 
     # ==================================================================
@@ -2393,6 +2912,7 @@ class TableGenerator:
             use_tabularx=True,
             col_spec=r"l >{\raggedright\arraybackslash}X c r r r r r r r",
             font_size="footnotesize",
+            source_meta={"source": "debiased_consistency", "model": model, "endpoint": "extraction_match_rate", "units": "proportion"},
         )
 
     def _table_debiased_cross_model(
@@ -2439,6 +2959,7 @@ class TableGenerator:
             use_tabularx=True,
             col_spec=r"l >{\raggedright\arraybackslash}X c c r r r r r r",
             font_size="footnotesize",
+            source_meta={"source": "debiased_cross_model", "model": "all", "endpoint": "agreement_rate", "units": "proportion"},
         )
 
     def _table_debiased_consistency_by_dim(
@@ -2474,6 +2995,7 @@ class TableGenerator:
             use_tabularx=True,
             col_spec=r"l l r r r r r r r",
             font_size="footnotesize",
+            source_meta={"source": "debiased_by_dimension", "model": model, "endpoint": "extraction_match_rate", "units": "proportion"},
         )
 
     def _table_debiased_cross_model_by_dim(
@@ -2507,6 +3029,7 @@ class TableGenerator:
             use_tabularx=True,
             col_spec=r"l l r r r r r r r",
             font_size="footnotesize",
+            source_meta={"source": "debiased_cross_model_by_dimension", "model": "all", "endpoint": "agreement_rate", "units": "proportion"},
         )
 
     def _table_debiased_worked_example(
@@ -2579,6 +3102,7 @@ class TableGenerator:
         ]
 
         # Write .tex manually (custom multi-row header)
+        tex_lines.insert(0, _build_source_comment(source="debiased_worked_example", model="all", endpoint="fact_extraction", units="mixed"))
         tex_name = _build_filename(
             "table", "appendix", "debiased_worked_example", "na", "matched", 1, "tex"
         )

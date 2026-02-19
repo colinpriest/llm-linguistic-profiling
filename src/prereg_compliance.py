@@ -144,13 +144,16 @@ def generate_claim_classifications(
 # ------------------------------------------------------------------
 
 def _check_endpoint_priority(analysis_results: Dict[str, Any]) -> str:
-    """Verify primary endpoint is Y2 (Tier 2)."""
+    """Verify primary endpoint is ordered tier T in {0,1,2}."""
     lines = []
     severity = analysis_results.get("severity", {})
     has_tier2 = "interactions_tier2" in severity
     has_gee = "gee_interactions_tier2" in severity
 
-    lines.append("### Primary endpoint: Y2 = 1[tier == 2]")
+    lines.append("### Primary endpoint: T in {0, 1, 2} (ordered tier allocation)")
+    lines.append("- Ordinal tier analysed via cumulative-link and GEE models.")
+
+    lines.append("\n### Secondary endpoint: Y2 = 1[T == 2] (threshold summary)")
     if has_tier2:
         lines.append("- PASS: Tier-2 binary interaction analysis present in `interactions_tier2`.")
     else:
@@ -161,8 +164,8 @@ def _check_endpoint_priority(analysis_results: Dict[str, Any]) -> str:
     else:
         lines.append("- WARN: No GEE-based logistic interaction tests found.")
 
-    # Check secondary endpoints
-    lines.append("\n### Secondary endpoints")
+    # Check exploratory endpoints
+    lines.append("\n### Exploratory endpoints")
     lines.append("- Y1+ (tier >= 1): reported as sensitivity check in mitigation analysis.")
 
     models = analysis_results.get("models", [])
