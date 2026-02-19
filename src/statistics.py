@@ -427,8 +427,14 @@ def bca_interval(
     theta_jack: np.ndarray,
     alpha: float = 0.05,
     eps: float = 1e-6,
-) -> Tuple[float, float]:
+) -> Tuple[float, float, str]:
     """Bias-corrected and accelerated (BCa) bootstrap confidence interval.
+
+    Uses a two-stage fallback chain:
+
+    1. **BCa** — standard bias-corrected accelerated interval.
+    2. **Symmetric percentile** — standard [alpha/2, 1-alpha/2] if BCa is
+       degenerate or excludes the point.
 
     Parameters
     ----------
@@ -439,17 +445,18 @@ def bca_interval(
     theta_jack : ndarray, shape (n,)
         Jackknife leave-one-cluster-out replicate statistics.
     alpha : float
-        Significance level (default 0.05 → 95 % CI).
+        Significance level (default 0.05 -> 95 % CI).
     eps : float
         Floor / ceiling for adjusted percentiles.
 
     Returns
     -------
-    (ci_lower, ci_upper) : tuple of float
+    (ci_lower, ci_upper, method) : tuple of (float, float, str)
+        *method* is one of ``"BCa"`` or ``"percentile"``.
     """
     B = len(theta_star)
     if B < 2:
-        return (float("nan"), float("nan"))
+        return (float("nan"), float("nan"), "BCa")
 
     # --- Bias correction z0 ---
     prop = float(np.mean(theta_star < theta_hat))  # strict <
@@ -482,7 +489,26 @@ def bca_interval(
 
     ci_lo = float(np.percentile(theta_star, 100.0 * alpha_lo))
     ci_hi = float(np.percentile(theta_star, 100.0 * alpha_hi))
-    return (ci_lo, ci_hi)
+
+    tol = 1e-9
+    degenerate = (ci_hi - ci_lo) < tol
+    outside = (theta_hat < ci_lo - tol) or (theta_hat > ci_hi + tol)
+
+    if not (degenerate or outside):
+        return (ci_lo, ci_hi, "BCa")
+
+    # --- Fallback: symmetric percentile ---
+    pct_lo = float(np.percentile(theta_star, 100.0 * alpha / 2))
+    pct_hi = float(np.percentile(theta_star, 100.0 * (1.0 - alpha / 2)))
+    logger.debug(
+        "BCa interval [%.6f, %.6f] %s for theta_hat=%.6f; "
+        "falling back to percentile [%.6f, %.6f].",
+        ci_lo, ci_hi,
+        "degenerate" if degenerate else "excludes point",
+        theta_hat, pct_lo, pct_hi,
+    )
+
+    return (pct_lo, pct_hi, "percentile")
 
 
 # ---------------------------------------------------------------------------
@@ -990,8 +1016,17 @@ def _dimension_gap_analysis(
     -------
     dict
         Keyed by dimension name (``age``, ``geographic``, …) and
-        ``full_grid``.  Each value is a dict with keys:
-        ``gap``, ``sd``, ``ci_lower``, ``ci_upper``, ``p_value``,
+        ``full_grid``.
+
+        Per-dimension dicts have keys:
+        ``sd``, ``sd_ci_lower``, ``sd_ci_upper``, ``sd_ci_method``
+        (smooth CI-bearing metric), ``gap`` (max-min, descriptive),
+        ``p_value``, ``level_rates``.
+
+        The ``full_grid`` dict has keys:
+        ``q9010``, ``q9010_ci_lower``, ``q9010_ci_upper``,
+        ``q9010_ci_method`` (smooth CI-bearing metric),
+        ``gap`` (max-min, descriptive), ``sd``, ``p_value``,
         ``level_rates``.
     """
     df = df.copy()
@@ -1030,41 +1065,41 @@ def _dimension_gap_analysis(
         gap = float(level_means.max() - level_means.min())
         sd = float(level_means.std(ddof=1))
 
-        # Bootstrap CI (complaint-level cluster resampling)
+        # Bootstrap (complaint-level cluster resampling)
+        # SD is the primary smooth CI-bearing metric for per-dimension rows.
         n_complaints = len(clm)
-        boot_gaps = np.empty(n_boot)
+        boot_sd = np.empty(n_boot)
         clm_values = clm.values  # numpy for speed
         for b in range(n_boot):
             idx = rng.integers(0, n_complaints, size=n_complaints)
             boot_means = clm_values[idx].mean(axis=0)
-            boot_gaps[b] = boot_means.max() - boot_means.min()
+            boot_sd[b] = float(np.std(boot_means, ddof=1))
 
         # Jackknife (leave-one-complaint-out) via pre-aggregated sums
         col_sums = clm_values.sum(axis=0)  # (k,)
         if n_complaints > 1:
             jack_means = (col_sums[np.newaxis, :] - clm_values) / (n_complaints - 1)
-            jack_gaps = jack_means.max(axis=1) - jack_means.min(axis=1)
+            jack_sd = np.std(jack_means, ddof=1, axis=1)
         else:
-            jack_gaps = np.array([gap])
+            jack_sd = np.array([sd])
 
-        ci_lower, ci_upper = bca_interval(gap, boot_gaps, jack_gaps)
-        boot_median = float(np.median(boot_gaps))
+        sd_ci_lo, sd_ci_hi, sd_ci_method = bca_interval(sd, boot_sd, jack_sd)
+        sd_ci_lo = max(0.0, sd_ci_lo)
 
         # Within-complaint paired test
         p_value = _dimension_paired_test(clm)
 
         results[dim] = {
-            "gap": gap,
-            "boot_median": boot_median,
             "sd": sd,
-            "ci_lower": ci_lower,
-            "ci_upper": ci_upper,
-            "ci_method": "BCa",
+            "sd_ci_lower": sd_ci_lo,
+            "sd_ci_upper": sd_ci_hi,
+            "sd_ci_method": sd_ci_method,
+            "gap": gap,
             "p_value": p_value,
             "level_rates": {str(k): float(v) for k, v in level_means.items()},
         }
 
-    # --- Full persona grid gap ---
+    # --- Full persona grid ---
     cpg = (
         df.groupby(["case_id", "variant"])["favorable"]
         .mean()
@@ -1074,33 +1109,43 @@ def _dimension_gap_analysis(
         persona_means = cpg.mean(axis=0)
         full_gap = float(persona_means.max() - persona_means.min())
         full_sd = float(persona_means.std(ddof=1))
+        vals = persona_means.values
+        full_q9010 = float(np.quantile(vals, 0.9) - np.quantile(vals, 0.1))
 
+        # Bootstrap (complaint-level cluster resampling)
+        # Q90-Q10 is the primary smooth CI-bearing metric for full grid.
         n_complaints = len(cpg)
-        boot_full = np.empty(n_boot)
+        boot_q9010 = np.empty(n_boot)
         cpg_values = cpg.values
         for b in range(n_boot):
             idx = rng.integers(0, n_complaints, size=n_complaints)
             bm = cpg_values[idx].mean(axis=0)
-            boot_full[b] = bm.max() - bm.min()
+            boot_q9010[b] = float(np.quantile(bm, 0.9) - np.quantile(bm, 0.1))
 
         # Jackknife (leave-one-complaint-out) via pre-aggregated sums
         cpg_col_sums = cpg_values.sum(axis=0)  # (36,)
         if n_complaints > 1:
             jack_means_full = (cpg_col_sums[np.newaxis, :] - cpg_values) / (n_complaints - 1)
-            jack_full = jack_means_full.max(axis=1) - jack_means_full.min(axis=1)
+            jack_q9010 = (
+                np.quantile(jack_means_full, 0.9, axis=1)
+                - np.quantile(jack_means_full, 0.1, axis=1)
+            )
         else:
-            jack_full = np.array([full_gap])
+            jack_q9010 = np.array([full_q9010])
 
-        full_ci_lo, full_ci_hi = bca_interval(full_gap, boot_full, jack_full)
-        full_boot_median = float(np.median(boot_full))
+        q9010_ci_lo, q9010_ci_hi, q9010_ci_method = bca_interval(
+            full_q9010, boot_q9010, jack_q9010,
+        )
+        q9010_ci_lo = max(0.0, q9010_ci_lo)
+        q9010_ci_hi = min(1.0, q9010_ci_hi)
 
         results["full_grid"] = {
+            "q9010": full_q9010,
+            "q9010_ci_lower": q9010_ci_lo,
+            "q9010_ci_upper": q9010_ci_hi,
+            "q9010_ci_method": q9010_ci_method,
             "gap": full_gap,
-            "boot_median": full_boot_median,
             "sd": full_sd,
-            "ci_lower": full_ci_lo,
-            "ci_upper": full_ci_hi,
-            "ci_method": "BCa",
             "p_value": None,  # Friedman test is in causal["friedman"]
             "level_rates": None,
         }

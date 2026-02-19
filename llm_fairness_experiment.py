@@ -120,8 +120,23 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def setup_logging(output_dir: str, verbose: bool, timestamp: str) -> None:
-    """Configure console and file logging."""
+class _CountingHandler(logging.Handler):
+    """Silent handler that tallies WARNING and ERROR records."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.warnings = 0
+        self.errors = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.levelno >= logging.ERROR:
+            self.errors += 1
+        elif record.levelno >= logging.WARNING:
+            self.warnings += 1
+
+
+def setup_logging(output_dir: str, verbose: bool, timestamp: str) -> _CountingHandler:
+    """Configure console and file logging. Returns the counting handler."""
     log_path = Path(output_dir) / f"experiment_{timestamp}.log"
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -149,6 +164,12 @@ def setup_logging(output_dir: str, verbose: bool, timestamp: str) -> None:
         "%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
     ))
     root.addHandler(fh)
+
+    # Counting handler: tallies warnings/errors for end-of-run summary
+    counter = _CountingHandler()
+    root.addHandler(counter)
+
+    return counter
 
 
 def main() -> None:
@@ -178,7 +199,7 @@ def main() -> None:
     # Single timestamp (UTC) shared by log file and all output artifacts
     run_timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
-    setup_logging(args.output_dir, args.verbose, run_timestamp)
+    log_counter = setup_logging(args.output_dir, args.verbose, run_timestamp)
     logger = logging.getLogger(__name__)
 
     t_start = time.monotonic()
@@ -312,6 +333,13 @@ def main() -> None:
     if bundle_info and not bundle_info.get("error"):
         logger.info("Paper bundle: %s", bundle_info.get("output_root", ""))
     _log_token_usage(experiment.llm, logger)
+    if log_counter.errors or log_counter.warnings:
+        logger.info(
+            "Issues during run: %d error(s), %d warning(s)",
+            log_counter.errors, log_counter.warnings,
+        )
+    else:
+        logger.info("Issues during run: none")
     elapsed = time.monotonic() - t_start
     hours, remainder = divmod(int(elapsed), 3600)
     minutes, seconds = divmod(remainder, 60)

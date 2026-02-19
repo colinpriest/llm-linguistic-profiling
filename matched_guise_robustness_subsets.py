@@ -47,6 +47,8 @@ BOOTSTRAP_METRICS = [
     "p_tier2",
     "max_persona_gap_p_tier2",
     "max_persona_gap_mean_tier",
+    "q9010_p_tier2",
+    "q9010_mean_tier",
 ]
 
 
@@ -240,15 +242,21 @@ def _persona_dispersion(
         return {
             "max_persona_gap_p_tier2": float("nan"),
             "max_persona_gap_mean_tier": float("nan"),
+            "q9010_p_tier2": float("nan"),
+            "q9010_mean_tier": float("nan"),
             "sd_persona_p_tier2": float("nan"),
             "sd_persona_mean_tier": float("nan"),
         }
+    v_t2 = persona_stats["p_tier2"].values
+    v_mt = persona_stats["mean_tier"].values
     return {
-        "max_persona_gap_p_tier2": float(
-            persona_stats["p_tier2"].max() - persona_stats["p_tier2"].min()
+        "max_persona_gap_p_tier2": float(v_t2.max() - v_t2.min()),
+        "max_persona_gap_mean_tier": float(v_mt.max() - v_mt.min()),
+        "q9010_p_tier2": float(
+            np.quantile(v_t2, 0.9) - np.quantile(v_t2, 0.1)
         ),
-        "max_persona_gap_mean_tier": float(
-            persona_stats["mean_tier"].max() - persona_stats["mean_tier"].min()
+        "q9010_mean_tier": float(
+            np.quantile(v_mt, 0.9) - np.quantile(v_mt, 0.1)
         ),
         "sd_persona_p_tier2": float(persona_stats["p_tier2"].std()),
         "sd_persona_mean_tier": float(persona_stats["mean_tier"].std()),
@@ -326,21 +334,21 @@ def _compute_boot_metrics_vec(
     tier2: np.ndarray,
     persona_codes: np.ndarray,
     n_personas: int,
-) -> Tuple[float, float, float, float]:
+) -> Tuple[float, float, float, float, float, float]:
     """Vectorised bootstrap metrics on pre-extracted numpy arrays.
 
     Returns (mean_tier, p_tier2, max_persona_gap_p_tier2,
-             max_persona_gap_mean_tier).
+             max_persona_gap_mean_tier, q9010_p_tier2, q9010_mean_tier).
     """
     n = len(tier)
     if n == 0:
-        return (np.nan, np.nan, np.nan, np.nan)
+        return (np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
 
     mean_tier = tier.mean()
     p_tier2 = tier2.mean()
 
     if n_personas < 2:
-        return (mean_tier, p_tier2, np.nan, np.nan)
+        return (mean_tier, p_tier2, np.nan, np.nan, np.nan, np.nan)
 
     # Per-persona sums and counts via np.bincount
     counts = np.bincount(persona_codes, minlength=n_personas)
@@ -350,15 +358,21 @@ def _compute_boot_metrics_vec(
     # Mask out personas with zero observations in this bootstrap sample
     valid = counts > 0
     if valid.sum() < 2:
-        return (mean_tier, p_tier2, np.nan, np.nan)
+        return (mean_tier, p_tier2, np.nan, np.nan, np.nan, np.nan)
 
     persona_mean_tier = tier_sums[valid] / counts[valid]
     persona_p_tier2 = tier2_sums[valid] / counts[valid]
 
     gap_mt = float(persona_mean_tier.max() - persona_mean_tier.min())
     gap_t2 = float(persona_p_tier2.max() - persona_p_tier2.min())
+    q9010_mt = float(
+        np.quantile(persona_mean_tier, 0.9) - np.quantile(persona_mean_tier, 0.1)
+    )
+    q9010_t2 = float(
+        np.quantile(persona_p_tier2, 0.9) - np.quantile(persona_p_tier2, 0.1)
+    )
 
-    return (float(mean_tier), float(p_tier2), gap_t2, gap_mt)
+    return (float(mean_tier), float(p_tier2), gap_t2, gap_mt, q9010_t2, q9010_mt)
 
 
 def bootstrap_subset_metrics(
@@ -434,6 +448,8 @@ def bootstrap_subset_metrics(
                 boot_p_tier2 = np.empty(n_boot, dtype=np.float64)
                 boot_gap_t2 = np.empty(n_boot, dtype=np.float64)
                 boot_gap_mt = np.empty(n_boot, dtype=np.float64)
+                boot_q9010_t2 = np.empty(n_boot, dtype=np.float64)
+                boot_q9010_mt = np.empty(n_boot, dtype=np.float64)
 
                 # Complaint ID array for sampling
                 complaint_arr = np.array(list(complaint_to_idx.keys()))
@@ -446,7 +462,7 @@ def bootstrap_subset_metrics(
                     row_idx = np.concatenate(
                         [complaint_to_idx[cid] for cid in sampled_ids]
                     )
-                    mt, pt, gt2, gmt = _compute_boot_metrics_vec(
+                    mt, pt, gt2, gmt, qt2, qmt = _compute_boot_metrics_vec(
                         tier_arr[row_idx],
                         tier2_arr[row_idx],
                         persona_codes[row_idx],
@@ -456,6 +472,8 @@ def bootstrap_subset_metrics(
                     boot_p_tier2[b] = pt
                     boot_gap_t2[b] = gt2
                     boot_gap_mt[b] = gmt
+                    boot_q9010_t2[b] = qt2
+                    boot_q9010_mt[b] = qmt
 
                 # --- Jackknife (leave-one-complaint-out) via pre-aggregated sums ---
                 # Per-complaint contributions to persona-level bincounts
@@ -484,6 +502,14 @@ def bootstrap_subset_metrics(
 
                 jack_gap_mt = np.nanmax(jk_mean_tier, axis=1) - np.nanmin(jk_mean_tier, axis=1)
                 jack_gap_t2 = np.nanmax(jk_p_tier2, axis=1) - np.nanmin(jk_p_tier2, axis=1)
+                jack_q9010_mt = (
+                    np.nanquantile(jk_mean_tier, 0.9, axis=1)
+                    - np.nanquantile(jk_mean_tier, 0.1, axis=1)
+                )
+                jack_q9010_t2 = (
+                    np.nanquantile(jk_p_tier2, 0.9, axis=1)
+                    - np.nanquantile(jk_p_tier2, 0.1, axis=1)
+                )
                 # For mean/proportion metrics: leave-one-complaint-out is trivial
                 # (all obs contribute equally to the grand mean)
                 n_total = float(len(tier_arr))
@@ -506,6 +532,8 @@ def bootstrap_subset_metrics(
                     "p_tier2": jack_p_tier2,
                     "max_persona_gap_p_tier2": jack_gap_t2,
                     "max_persona_gap_mean_tier": jack_gap_mt,
+                    "q9010_p_tier2": jack_q9010_t2,
+                    "q9010_mean_tier": jack_q9010_mt,
                 }
 
                 # --- BCa CIs for gap metrics, percentile for location metrics ---
@@ -516,6 +544,8 @@ def bootstrap_subset_metrics(
                     "p_tier2": boot_p_tier2,
                     "max_persona_gap_p_tier2": boot_gap_t2,
                     "max_persona_gap_mean_tier": boot_gap_mt,
+                    "q9010_p_tier2": boot_q9010_t2,
+                    "q9010_mean_tier": boot_q9010_mt,
                 }
                 for metric in BOOTSTRAP_METRICS:
                     arr = boot_arrays[metric]
@@ -523,20 +553,20 @@ def bootstrap_subset_metrics(
                     if len(finite) > 0:
                         theta_hat = point[metric]
                         jack = jack_arrays[metric]
-                        ci_lo, ci_hi = bca_interval(
+                        ci_lo, ci_hi, ci_method = bca_interval(
                             theta_hat, finite, jack, alpha=alpha,
                         )
-                        b_med = float(np.median(finite))
                     else:
-                        ci_lo = ci_hi = b_med = float("nan")
+                        ci_lo = ci_hi = float("nan")
+                        ci_method = "BCa"
                     ci_rows.append({
                         "subset": subset_name,
                         "model_name": model,
                         "metric": metric,
                         "estimate": round(point[metric], 6),
-                        "boot_median": round(b_med, 6),
                         "ci_lower": round(ci_lo, 6),
                         "ci_upper": round(ci_hi, 6),
+                        "ci_method": ci_method,
                     })
                 pbar.update(1)
 
@@ -1120,7 +1150,7 @@ def write_endpoint_summary(
     ci_wide = ci_df.pivot_table(
         index=["subset", "model_name"],
         columns="metric",
-        values=["ci_lower", "ci_upper", "boot_median"],
+        values=["ci_lower", "ci_upper"],
     )
     ci_wide.columns = [f"{val}_{met}" for val, met in ci_wide.columns]
     ci_wide = ci_wide.reset_index()
@@ -1229,13 +1259,15 @@ def write_robustness_report(
     # Endpoint summary
     lines += [
         "## Endpoint Summary\n",
-        "| Subset | Model | mean_tier | p_tier2 | max_gap_tier2 | max_gap_mean_tier |",
-        "|--------|-------|-----------|---------|---------------|-------------------|",
+        "| Subset | Model | mean_tier | p_tier2 | Q90-Q10 tier2 | Q90-Q10 mean_tier | Max-Min tier2 | Max-Min mean_tier |",
+        "|--------|-------|-----------|---------|---------------|-------------------|---------------|-------------------|",
     ]
     for _, r in metrics_df.iterrows():
         lines.append(
             f"| {r['subset']} | {r['model_name']} "
             f"| {r['mean_tier']:.4f} | {r['p_tier2']:.4f} "
+            f"| {r.get('q9010_p_tier2', float('nan')):.4f} "
+            f"| {r.get('q9010_mean_tier', float('nan')):.4f} "
             f"| {r.get('max_persona_gap_p_tier2', float('nan')):.4f} "
             f"| {r.get('max_persona_gap_mean_tier', float('nan')):.4f} |"
         )
@@ -1420,7 +1452,7 @@ def run_robustness_analysis(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     thresholds = {**DEFAULT_THRESHOLDS, "alpha": alpha}
-    primary_effects = ["max_persona_gap_p_tier2", "max_persona_gap_mean_tier"]
+    primary_effects = ["q9010_p_tier2", "q9010_mean_tier"]
 
     # Load and map (from already-loaded DataFrames)
     dec, aud = decisions_df.copy(), audit_df.copy()
@@ -1592,8 +1624,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         "min_persona_levels_for_tests": 2,
     }
     primary_effects = [
-        "max_persona_gap_p_tier2",
-        "max_persona_gap_mean_tier",
+        "q9010_p_tier2",
+        "q9010_mean_tier",
     ]
 
     t0 = time.time()

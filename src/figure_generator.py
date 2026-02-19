@@ -336,7 +336,7 @@ class FigureGenerator:
         )
 
     # ==================================================================
-    # Figure 4: Distributive fairness gaps (Tier 2)
+    # Figure 4: Distributive fairness gaps (Tier-2 secondary threshold)
     # ==================================================================
 
     def _fig4_distributive_gaps(self) -> Optional[Tuple[Path, Path]]:
@@ -347,7 +347,7 @@ class FigureGenerator:
             return None
 
         fig, axes = plt.subplots(1, n_models, figsize=(6 * n_models, 5), squeeze=False)
-        fig.suptitle("Distributive Fairness Gaps (Tier 2, Matched-Guise)", fontsize=13, fontweight="bold")
+        fig.suptitle("Distributive Fairness Gaps (Tier-2 Threshold, Matched-Guise)", fontsize=13, fontweight="bold")
 
         for i, model in enumerate(self.models):
             ax = axes[0, i]
@@ -388,10 +388,11 @@ class FigureGenerator:
         meta["figure_number"] = 4
         meta["analysis_type"] = "confirmatory"
         meta["subset"] = "matched-guise"
-        meta["endpoint"] = "Tier 2"
+        meta["endpoint"] = "Tier 2 (secondary threshold)"
         return _save_figure_files(
             fig, self.fig_dir, "distributive_gaps_tier2", "both", "matched", 1,
-            caption="Figure 4. Distributive fairness gaps by demographic dimension (Tier 2, matched-guise). "
+            caption="Figure 4. Distributive fairness gaps by demographic dimension "
+                    "(Tier-2 secondary threshold summary, matched-guise). "
                     "Bars show the amplification A = disparity(high) - disparity(low) for each dimension.",
             metadata=meta,
         )
@@ -1876,23 +1877,15 @@ class FigureGenerator:
                 r = row.iloc[0]
                 x_vals.append(j)
 
-                # Use bootstrap median as point estimate if available;
-                # fall back to sample statistic.
-                val_m = r.get(
-                    "boot_median_max_persona_gap_mean_tier",
-                    r["max_persona_gap_mean_tier"],
-                )
+                val_m = r["q9010_mean_tier"]
                 y_primary.append(val_m)
-                yerr_lo_primary.append(max(0, val_m - r["ci_lower_max_persona_gap_mean_tier"]))
-                yerr_hi_primary.append(max(0, r["ci_upper_max_persona_gap_mean_tier"] - val_m))
+                yerr_lo_primary.append(max(0, val_m - r["ci_lower_q9010_mean_tier"]))
+                yerr_hi_primary.append(max(0, r["ci_upper_q9010_mean_tier"] - val_m))
 
-                val_p = r.get(
-                    "boot_median_max_persona_gap_p_tier2",
-                    r["max_persona_gap_p_tier2"],
-                )
+                val_p = r["q9010_p_tier2"]
                 y_secondary.append(val_p)
-                yerr_lo_secondary.append(max(0, val_p - r["ci_lower_max_persona_gap_p_tier2"]))
-                yerr_hi_secondary.append(max(0, r["ci_upper_max_persona_gap_p_tier2"] - val_p))
+                yerr_lo_secondary.append(max(0, val_p - r["ci_lower_q9010_p_tier2"]))
+                yerr_hi_secondary.append(max(0, r["ci_upper_q9010_p_tier2"] - val_p))
 
             if not x_vals:
                 ax.text(0.5, 0.5, "No data", ha="center", va="center",
@@ -1906,7 +1899,7 @@ class FigureGenerator:
                 yerr=[yerr_lo_primary, yerr_hi_primary],
                 fmt="o-", color=_GRAYS[0], linewidth=1.5, markersize=6,
                 capsize=4, capthick=1.2,
-                label=r"$\Delta\bar{\tau}$",
+                label=r"$\Delta_{90\text{-}10}\;\bar{\tau}$",
             )
             # Plot secondary endpoint (threshold summary)
             ax.errorbar(
@@ -1914,7 +1907,7 @@ class FigureGenerator:
                 yerr=[yerr_lo_secondary, yerr_hi_secondary],
                 fmt="s--", color=_GRAYS[2], linewidth=1.5, markersize=6,
                 capsize=4, capthick=1.2,
-                label=r"$\Delta P(T{=}2)$",
+                label=r"$\Delta_{90\text{-}10}\;P(T{=}2)$",
             )
 
             # Annotate HF point
@@ -1937,7 +1930,7 @@ class FigureGenerator:
 
             ax.set_xticks(range(len(subset_order)))
             ax.set_xticklabels(subset_labels, fontsize=9)
-            ax.set_ylabel("Effect size (max persona gap)", fontsize=9)
+            ax.set_ylabel("Dispersion (Q90\u2013Q10)", fontsize=9)
             ax.set_title(model, fontsize=10)
             ax.legend(loc="upper right", fontsize=8)
 
@@ -1947,10 +1940,9 @@ class FigureGenerator:
         meta["figure_number"] = "11"
         meta["analysis_type"] = "robustness"
         meta["subsets"] = subset_order
-        meta["note"] = ("Effect sizes (max persona-cell gap) across robustness "
-                        "ladder subsets with cluster bootstrap BCa 95% CI "
-                        "whiskers (complaint-level resampling; jackknife "
-                        "acceleration).")
+        meta["note"] = ("Dispersion (Q90-Q10) across robustness ladder subsets "
+                        "with cluster bootstrap BCa 95% CI whiskers "
+                        "(complaint-level resampling; jackknife acceleration).")
 
         return _save_figure_files(
             fig, self.fig_dir,
@@ -1959,11 +1951,13 @@ class FigureGenerator:
             subset="all",
             version=1,
             caption=(
-                "Robustness ladder effect visibility. Each panel shows one model. "
-                "Lines trace the maximum persona-cell gap across increasingly "
+                "Robustness ladder dispersion. Each panel shows one model. "
+                "Lines trace Q90-Q10 persona dispersion across increasingly "
                 "restrictive data subsets (FULL -> NO_NUM -> NO_POL -> HF). "
-                "Circles (solid line): primary endpoint Delta mean tier. "
-                "Squares (dashed line): secondary endpoint Delta P(T=2). "
+                "Circles (solid line): primary endpoint "
+                "Delta_{90-10} mean tier. "
+                "Squares (dashed line): secondary endpoint "
+                "Delta_{90-10} P(T=2). "
                 "Whiskers show cluster bootstrap BCa 95% CI "
                 "(complaint-level resampling; jackknife acceleration). "
                 "The HF subset includes only high-fidelity rewrite pairs."

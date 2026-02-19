@@ -121,24 +121,86 @@ def _validate_pval_string(s: str) -> None:
         raise ValueError(f"p-value formatted as 0.00e+00: {s!r}")
 
 
+def _assert_probability_scale(
+    point: float,
+    ci_lo: float,
+    ci_hi: float,
+    *,
+    context: str = "",
+) -> None:
+    """Fail fast if values are not on probability scale [0, 1].
+
+    Catches unit mismatches — statistic on probability scale but
+    CI on ratio/OR scale (or vice-versa).
+
+    Raises
+    ------
+    ValueError
+        If any value is outside [0, 1] (with small tolerance) or
+        the gap is negative.
+    """
+    if not np.isfinite(point):
+        return
+    if point < -1e-6:
+        raise ValueError(
+            f"Negative gap {point:.6f} for {context}. "
+            f"Max-min gap must be non-negative."
+        )
+    for val, label in [(point, "point"), (ci_lo, "CI lower"), (ci_hi, "CI upper")]:
+        if np.isfinite(val) and (val < -0.01 or val > 1.01):
+            raise ValueError(
+                f"{label}={val:.6f} outside probability scale [0, 1] "
+                f"for {context}. This indicates a unit mismatch "
+                f"(e.g., odds ratio vs probability gap)."
+            )
+
+
+def _assert_point_in_ci(
+    point: float,
+    ci_lo: float,
+    ci_hi: float,
+    *,
+    context: str = "",
+    tol: float = 5e-4,
+) -> None:
+    """Fail fast if the displayed point estimate falls outside the CI.
+
+    Tolerance is set at display precision (3 dp -> 5e-4) so rounding
+    artefacts do not trigger false positives.
+
+    Raises
+    ------
+    ValueError
+        If the point estimate is outside the CI beyond tolerance.
+    """
+    if np.isfinite(ci_lo) and np.isfinite(ci_hi):
+        if point < ci_lo - tol or point > ci_hi + tol:
+            raise ValueError(
+                f"Point estimate {point:.6f} outside CI "
+                f"[{ci_lo:.6f}, {ci_hi:.6f}] for {context}. "
+                f"This indicates the displayed point estimate and CI "
+                f"are from different distributions."
+            )
+
+
 def _warn_point_outside_ci(
     point: float,
     ci_lo: float,
     ci_hi: float,
     *,
     context: str = "",
-    tol: float = 1e-6,
+    tol: float = 5e-4,
 ) -> None:
-    """Log a warning if point falls outside [ci_lo, ci_hi].
+    """Log a warning if a non-smooth statistic falls outside its CI.
 
-    Does **not** clamp or raise — the table is emitted with the actual
-    values so the mismatch is visible for review.
+    Used for max-min range, where the full-sample value can legitimately
+    sit below the bootstrap CI due to positive resampling bias.
     """
     if np.isfinite(ci_lo) and np.isfinite(ci_hi):
-        if not (ci_lo - tol <= point <= ci_hi + tol):
+        if point < ci_lo - tol or point > ci_hi + tol:
             logger.warning(
-                "Point estimate %.6f outside CI [%.6f, %.6f] for %s. "
-                "If CIs are BCa this is rare; check data regeneration.",
+                "Range estimate %.6f outside CI [%.6f, %.6f] for %s "
+                "(expected for non-smooth range statistic; descriptive only).",
                 point, ci_lo, ci_hi, context,
             )
 
@@ -148,6 +210,16 @@ def _fmt_effect(v: Any) -> str:
     if not is_estimable(v):
         return "---"
     return f"{float(v):.3f}"
+
+
+def _fmt_pp(v: Any, decimals: int = 1) -> str:
+    """Format a probability as percentage points (pp).
+
+    Multiplies a [0, 1] probability by 100 for display.
+    """
+    if not is_estimable(v):
+        return "---"
+    return f"{float(v) * 100:.{decimals}f}"
 
 
 def _fmt_int(v) -> str:
@@ -468,7 +540,7 @@ class TableGenerator:
     def _table2_endpoint_definitions(self, out: Path) -> List[Path]:
         """Table 2: Endpoint definitions."""
         rows = [
-            ("T in {0,1,2}", "Ordered tier: no action (0), non-monetary (1), monetary (2)", "Primary distributive endpoint", "Confirmatory"),
+            ("T in {0,1,2}", "Ordered tier: no action (0), non-monetary (1), monetary (2)", "Primary distributive endpoint", "Primary"),
             ("Y2 = 1[T=2]", "Binary: monetary remediation", "Threshold summary of T", "Secondary"),
             ("Y1+ = 1[T>=1]", "Binary: any positive remediation", "Sensitivity check", "Exploratory"),
             ("F = 1[need_more_info]", "Model requests additional information", "Operational friction", "Exploratory"),
@@ -480,7 +552,7 @@ class TableGenerator:
 
         # --- Custom LaTeX with ragged columns ---
         tex_rows = [
-            (r"$T\in\{0,1,2\}$", r"Ordered tier: no action (0), non-monetary (1), monetary (2)", "Primary distributive endpoint", "Confirmatory"),
+            (r"$T\in\{0,1,2\}$", r"Ordered tier: no action (0), non-monetary (1), monetary (2)", "Primary distributive endpoint", "Primary"),
             (r"$Y_2=\mathbf{1}[T=2]$", "Binary: monetary remediation", r"Threshold summary of $T$", "Secondary"),
             (r"$Y_1^{+}=\mathbf{1}[T\ge 1]$", "Binary: any positive remediation", "Sensitivity check", "Exploratory"),
             (r"\indcode{F}{need_more_info}", "Model requests additional information", "Operational friction", "Exploratory"),
@@ -557,10 +629,10 @@ class TableGenerator:
     def _table4_distributive_fairness(self, out: Path, model: str) -> List[Path]:
         """Table 4: Main distributive fairness results (matched-guise).
 
-        Shows per-dimension max-min gap in favorable-outcome rates from the
-        matched-guise experiment, with BCa CIs and within-complaint
-        paired p-values.  Data comes from ``causal["dimension_gaps"]``
-        (computed in :func:`src.statistics._dimension_gap_analysis`).
+        Per-dimension rows show SD (smooth, CI-bearing) and max-min
+        (descriptive).  The full-grid row shows Q90-Q10 (smooth,
+        CI-bearing) and max-min (descriptive).  All probability-scale
+        values rendered in percentage points (pp).
         """
         model_r = self.ar.get(model, {})
         causal = model_r.get("causal", {})
@@ -582,6 +654,7 @@ class TableGenerator:
             "socioeconomic": r"Socio\-economic",
         }
 
+        _blank = ("---", "---", "---", "---")
         rows = []          # plain-text tuples for md/csv
         tex_rows = []      # LaTeX-ready tuples
         needs_dagger = False
@@ -589,98 +662,81 @@ class TableGenerator:
         for dim in ["age", "geographic", "education", "socioeconomic"]:
             dg = dim_gaps.get(dim)
             if not dg:
-                rows.append((dim.capitalize(), "---", "---", "---", "---"))
-                tex_rows.append((_dim_tex[dim], "---", "---", "---", "---"))
+                rows.append((dim.capitalize(), *_blank))
+                tex_rows.append((_dim_tex[dim], *_blank))
                 continue
 
-            raw_gap = dg["gap"]
+            gap = dg["gap"]
             sd = dg["sd"]
-            ci_lo = dg["ci_lower"]
-            ci_hi = dg["ci_upper"]
+            sd_ci_lo = dg["sd_ci_lower"]
+            sd_ci_hi = dg["sd_ci_upper"]
             p_val = dg["p_value"]
 
-            # Sanity: gap must be non-negative and on probability scale
-            if raw_gap < 0 or raw_gap > 1:
-                logger.warning(
-                    "dimension_gaps[%s].gap = %.4f out of [0,1]; skipping row.",
-                    dim, raw_gap,
-                )
-                rows.append((dim.capitalize(), "---", "---", "---", "---"))
-                tex_rows.append((_dim_tex[dim], "---", "---", "---", "---"))
-                continue
-            if ci_hi > 1.0 + 1e-6 or ci_lo < -1e-6:
-                logger.warning(
-                    "dimension_gaps[%s] CI [%.4f, %.4f] outside [0,1]; "
-                    "clamping to probability scale.",
-                    dim, ci_lo, ci_hi,
-                )
-                ci_lo = max(0.0, ci_lo)
-                ci_hi = min(1.0, ci_hi)
-
-            # Use sample statistic as point estimate (BCa CI should contain it)
-            gap = raw_gap
-            _warn_point_outside_ci(
-                gap, ci_lo, ci_hi,
-                context=f"distributive_fairness/{model}/{dim}",
+            # Sanity checks on the smooth CI-bearing metric
+            _assert_probability_scale(
+                sd, sd_ci_lo, sd_ci_hi,
+                context=f"distributive_fairness/{model}/{dim}/sd",
+            )
+            _assert_point_in_ci(
+                sd, sd_ci_lo, sd_ci_hi,
+                context=f"distributive_fairness/{model}/{dim}/sd",
             )
 
-            ci_str = f"[{_fmt_effect(ci_lo)}, {_fmt_effect(ci_hi)}]"
+            ci_str = f"[{_fmt_pp(sd_ci_lo)}, {_fmt_pp(sd_ci_hi)}]"
             p_latex = _fmt_pval_latex(p_val)
             if r"\dagger" in p_latex:
                 needs_dagger = True
 
             rows.append((
                 dim.capitalize(),
-                _fmt_effect(gap),
-                _fmt_effect(sd),
+                _fmt_pp(sd),
                 ci_str,
+                _fmt_pp(gap),
                 _fmt_pval(p_val),
             ))
             tex_rows.append((
                 _dim_tex[dim],
-                _fmt_effect(gap),
-                _fmt_effect(sd),
+                _fmt_pp(sd),
                 ci_str,
+                _fmt_pp(gap),
                 p_latex,
             ))
 
-        # Full persona grid summary
+        # Full persona grid summary (uses Q90-Q10 as smooth metric)
         fg = dim_gaps.get("full_grid")
         if fg:
-            fg_raw_gap = fg["gap"]
-            fg_sd = fg["sd"]
-            fg_ci_lo = max(0.0, fg["ci_lower"])
-            fg_ci_hi = min(1.0, fg["ci_upper"])
+            fg_gap = fg["gap"]
+            fg_q9010 = fg.get("q9010", float("nan"))
+            fg_q_ci_lo = fg.get("q9010_ci_lower", float("nan"))
+            fg_q_ci_hi = fg.get("q9010_ci_upper", float("nan"))
 
-            if fg_raw_gap < 0 or fg_raw_gap > 1:
-                logger.warning(
-                    "dimension_gaps[full_grid].gap = %.4f out of [0,1]; "
-                    "replacing with ---.",
-                    fg_raw_gap,
-                )
-                full_row = ("Full persona grid", "---", "---", "---", "---")
+            if not np.isfinite(fg_q9010):
+                full_row = ("Full persona grid", *_blank)
             else:
-                fg_gap = fg_raw_gap
-                _warn_point_outside_ci(
-                    fg_gap, fg_ci_lo, fg_ci_hi,
-                    context=f"distributive_fairness/{model}/full_grid",
+                _assert_probability_scale(
+                    fg_q9010, fg_q_ci_lo, fg_q_ci_hi,
+                    context=f"distributive_fairness/{model}/full_grid/q9010",
                 )
-                fg_ci_str = f"[{_fmt_effect(fg_ci_lo)}, {_fmt_effect(fg_ci_hi)}]"
+                _assert_point_in_ci(
+                    fg_q9010, fg_q_ci_lo, fg_q_ci_hi,
+                    context=f"distributive_fairness/{model}/full_grid/q9010",
+                )
+                fg_ci_str = f"[{_fmt_pp(fg_q_ci_lo)}, {_fmt_pp(fg_q_ci_hi)}]"
                 full_row = (
                     "Full persona grid",
-                    _fmt_effect(fg_gap),
-                    _fmt_effect(fg_sd),
+                    _fmt_pp(fg_q9010),
                     fg_ci_str,
+                    _fmt_pp(fg_gap),
                     "---",
                 )
         else:
-            full_row = ("Full persona grid", "---", "---", "---", "---")
+            full_row = ("Full persona grid", *_blank)
         rows.append(full_row)
         tex_rows.append(full_row)
 
         # --- Custom LaTeX ---
         model_clean = model.replace("-", "").replace("_", "")
-        caption = f"Distributive fairness results (Tier 2, matched-guise) -- {model}."
+        caption = f"Distributive fairness results (Tier-2 secondary threshold, matched-guise) -- {model}."
         label = f"tab:fairness_tier2_{model_clean}"
 
         tex_lines = [
@@ -689,31 +745,42 @@ class TableGenerator:
             r"\small",
             r"\caption{" + _escape_latex(caption) + "}",
             r"\label{" + label + "}",
-            r"\begin{tabular}{@{}p{0.30\linewidth}r r p{0.23\linewidth}p{0.17\linewidth}@{}}",
+            r"\begin{tabular}{@{}p{0.26\linewidth}r p{0.22\linewidth}r p{0.15\linewidth}@{}}",
             r"\toprule",
-            r"Dimension & Max--Min Gap & SD & 95\% CI & $p$ \\",
+            (r"Dimension & $\sigma$/$\Delta_{90\text{-}10}$$^{a}$ (pp)"
+             r" & 95\% CI & Max--Min (pp) & $p$ \\"),
             r"\midrule",
         ]
-        for dim_label, mm, s, ci, p in tex_rows:
-            tex_lines.append(f"{dim_label} & {mm} & {s} & {ci} & {p} \\\\")
+        for dim_label, smooth_val, ci, mm, p in tex_rows:
+            tex_lines.append(f"{dim_label} & {smooth_val} & {ci} & {mm} & {p} \\\\")
         tex_lines.append(r"\bottomrule")
         tex_lines.append(r"\end{tabular}")
+        # Footnotes
+        tex_lines.append("")
+        tex_lines.append(r"\vspace{2pt}")
+        tex_lines.append(
+            r"\parbox{0.94\linewidth}{\footnotesize"
+            r" $^{a}$ Per-dimension rows: persona-level SD."
+            r" Full grid row: $\Delta_{90\text{-}10}$"
+            r" (90th--10th percentile spread)."
+            r" Cluster bootstrap BCa 95\% CI"
+            r" (complaint-level resampling)."
+            r" Max--Min: full range (descriptive, no CI)."
+        )
         if needs_dagger:
-            tex_lines.append("")
-            tex_lines.append(r"\vspace{2pt}")
             tex_lines.append(
-                r"\parbox{0.94\linewidth}{\footnotesize $^{\dagger}$"
-                r" $p$-value unavailable / not estimable for this row.}"
+                r" $^{\dagger}$ $p$-value unavailable / not estimable."
             )
+        tex_lines.append("}")
         tex_lines.append(r"\end{table}")
 
         tex_name = _build_filename("table", "main", "distributive_fairness_tier2", model_clean, "matched", 1, "tex")
         tex_path = out / tex_name
-        tex_lines.insert(0, _build_source_comment(source="causal.dimension_gaps", model=model, endpoint="favorable_gap", units="probability", ci="cluster_bootstrap_bca_complaint_level"))
+        tex_lines.insert(0, _build_source_comment(source="causal.dimension_gaps", model=model, endpoint="favorable_gap", units="pp", ci="cluster_bootstrap_bca_complaint_level"))
         tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
 
         # --- Markdown + CSV via DataFrame ---
-        df = pd.DataFrame(rows, columns=["Dimension", "Max-Min Gap", "SD", "95% CI", "p"])
+        df = pd.DataFrame(rows, columns=["Dimension", "SD/Q90-Q10 (pp)", "95% CI", "Max-Min (pp)", "p"])
 
         md_name = _build_filename("table", "main", "distributive_fairness_tier2", model_clean, "matched", 1, "md")
         md_path = out / md_name
@@ -1218,26 +1285,31 @@ class TableGenerator:
             r = row.iloc[0]
 
             ret = r["pair_retention"]
-            ci_lo_t2 = r["ci_lower_max_persona_gap_p_tier2"]
-            ci_hi_t2 = r["ci_upper_max_persona_gap_p_tier2"]
-            ci_lo_mt = r["ci_lower_max_persona_gap_mean_tier"]
-            ci_hi_mt = r["ci_upper_max_persona_gap_mean_tier"]
-            # Use bootstrap median as point estimate so it is consistent
-            # with the percentile CI (both from the same distribution).
-            # The sample statistic (max-min) is upward-biased under
-            # resampling; displaying it alongside a percentile CI can
-            # place the point estimate outside the interval.
-            gap_t2 = r["max_persona_gap_p_tier2"]
-            gap_mt = r["max_persona_gap_mean_tier"]
 
-            # Validate: point should lie inside BCa CI
-            _warn_point_outside_ci(
-                gap_t2, ci_lo_t2, ci_hi_t2,
-                context=f"robustness_ladder/{model}/{subset}/tier2",
+            # Q90-Q10 (smooth, CI-bearing)
+            q_t2 = r["q9010_p_tier2"]
+            q_ci_lo_t2 = r["ci_lower_q9010_p_tier2"]
+            q_ci_hi_t2 = r["ci_upper_q9010_p_tier2"]
+            q_mt = r["q9010_mean_tier"]
+            q_ci_lo_mt = r["ci_lower_q9010_mean_tier"]
+            q_ci_hi_mt = r["ci_upper_q9010_mean_tier"]
+
+            # Max-min (descriptive only)
+            mm_t2 = r["max_persona_gap_p_tier2"]
+            mm_mt = r["max_persona_gap_mean_tier"]
+
+            # Strict assertions on smooth metric only
+            _assert_probability_scale(
+                q_t2, q_ci_lo_t2, q_ci_hi_t2,
+                context=f"robustness_ladder/{model}/{subset}/q9010_tier2",
             )
-            _warn_point_outside_ci(
-                gap_mt, ci_lo_mt, ci_hi_mt,
-                context=f"robustness_ladder/{model}/{subset}/mean_tier",
+            _assert_point_in_ci(
+                q_t2, q_ci_lo_t2, q_ci_hi_t2,
+                context=f"robustness_ladder/{model}/{subset}/q9010_tier2",
+            )
+            _assert_point_in_ci(
+                q_mt, q_ci_lo_mt, q_ci_hi_mt,
+                context=f"robustness_ladder/{model}/{subset}/q9010_mean_tier",
             )
 
             # Omnibus p-values (with log-space fallback for underflow)
@@ -1248,18 +1320,23 @@ class TableGenerator:
             log_p_t2 = om_t2.iloc[0].get("log_p_value") if not om_t2.empty else None
             log_p_mt = om_mt.iloc[0].get("log_p_value") if not om_mt.empty else None
 
+            # Format: Q90-Q10 in pp with CI for tier2; raw for mean_tier
             tex_rows.append((
                 subset_labels.get(subset, subset),
                 f"{ret * 100:.1f}\\%",
-                f"{gap_t2:.3f} [{ci_lo_t2:.3f}, {ci_hi_t2:.3f}]",
-                f"{gap_mt:.3f} [{ci_lo_mt:.3f}, {ci_hi_mt:.3f}]",
+                f"{_fmt_pp(q_t2)} [{_fmt_pp(q_ci_lo_t2)}, {_fmt_pp(q_ci_hi_t2)}]",
+                f"{q_mt:.3f} [{q_ci_lo_mt:.3f}, {q_ci_hi_mt:.3f}]",
+                _fmt_pp(mm_t2),
+                f"{mm_mt:.3f}",
                 _fmt_pval_latex(p_t2, log_p=log_p_t2),
                 _fmt_pval_latex(p_mt, log_p=log_p_mt),
             ))
             md_rows.append((
                 subset, f"{ret * 100:.1f}%",
-                f"{gap_t2:.3f} [{ci_lo_t2:.3f}, {ci_hi_t2:.3f}]",
-                f"{gap_mt:.3f} [{ci_lo_mt:.3f}, {ci_hi_mt:.3f}]",
+                f"{_fmt_pp(q_t2)} [{_fmt_pp(q_ci_lo_t2)}, {_fmt_pp(q_ci_hi_t2)}]",
+                f"{q_mt:.3f} [{q_ci_lo_mt:.3f}, {q_ci_hi_mt:.3f}]",
+                _fmt_pp(mm_t2),
+                f"{mm_mt:.3f}",
                 _fmt_pval(p_t2, log_p=log_p_t2),
                 _fmt_pval(p_mt, log_p=log_p_mt),
             ))
@@ -1277,16 +1354,20 @@ class TableGenerator:
             r"\caption{Robustness ladder: effect sizes across data subsets -- "
             + _escape_latex(model) + r".}",
             r"\label{tab:robustness_ladder_" + model_clean + "}",
-            r"\begin{tabular}{@{}l r ll cc@{}}",
+            r"\begin{tabular}{@{}l r ll rr cc@{}}",
             r"\toprule",
-            r"Subset & Retention"
-            r" & $\Delta P(T{=}2)$$^{b}$ & $\Delta\bar{\tau}$$^{b}$"
-            r" & $p_W$ (tier$_2$)$^{c}$ & $p_W$ ($\bar{\tau}$)$^{c}$ \\",
+            r"Subset & Ret."
+            r" & $\Delta_{90\text{-}10} P(T{=}2)$$^{b}$ (pp)"
+            r" & $\Delta_{90\text{-}10}\bar{\tau}$$^{b}$"
+            r" & $\Delta_{\max}$$^{b}$ (pp)"
+            r" & $\Delta_{\max}$$^{b}$"
+            r" & $p_W$$^{c}$ & $p_W$$^{c}$ \\",
             r"\midrule",
         ]
-        for label, ret, gt2, gmt, pt2, pmt in tex_rows:
+        for lbl, ret, qt2, qmt, mmt2, mmmt, pt2, pmt in tex_rows:
             tex_lines.append(
-                f"{label} & {ret} & {gt2} & {gmt} & {pt2} & {pmt} \\\\"
+                f"{lbl} & {ret} & {qt2} & {qmt}"
+                f" & {mmt2} & {mmmt} & {pt2} & {pmt} \\\\"
             )
         tex_lines.append(r"\bottomrule")
         tex_lines.append(r"\end{tabular}")
@@ -1302,9 +1383,10 @@ class TableGenerator:
             r" NO\_NUM = no numeric mutations.\\"
         )
         tex_lines.append(
-            r"$^{b}$ $\Delta$ = maximum persona-cell gap; full-sample point estimate"
-            r" (cluster bootstrap BCa 95\% CI; complaint-level resampling;"
-            r" jackknife acceleration).\\"
+            r"$^{b}$ $\Delta_{90\text{-}10}$: 90th--10th percentile"
+            r" of persona-cell rates (cluster bootstrap BCa 95\% CI;"
+            r" complaint-level resampling)."
+            r" $\Delta_{\max}$: max--min range (descriptive, no CI).\\"
         )
         tex_lines.append(
             r"$^{c}$ $p_W$: GEE omnibus Wald test, exchangeable working correlation."
@@ -1322,7 +1404,8 @@ class TableGenerator:
         # --- Markdown + CSV ---
         df = pd.DataFrame(md_rows, columns=[
             "Subset", "Retention",
-            "Delta P(T=2) [95% CI]", "Delta mean tier [95% CI]",
+            "Q90-Q10 P(T=2) [CI] (pp)", "Q90-Q10 mean tier [CI]",
+            "Max-Min P(T=2) (pp)", "Max-Min mean tier",
             "p_W (tier2)", "p_W (mean tier)",
         ])
         md_name = _build_filename(
@@ -1371,13 +1454,17 @@ class TableGenerator:
             f = ep_full.iloc[0]
             h = ep_hf.iloc[0] if not ep_hf.empty else None
 
-            # Primary: Delta E[T] (max_persona_gap_mean_tier)
-            de_full = f["max_persona_gap_mean_tier"]
-            de_hf = h["max_persona_gap_mean_tier"] if h is not None else None
+            # Primary: Q90-Q10 of mean tier
+            de_full = f["q9010_mean_tier"]
+            de_hf = (
+                h["q9010_mean_tier"] if h is not None else None
+            )
 
-            # Secondary: Delta P(T=2) (max_persona_gap_p_tier2)
-            dp_full = f["max_persona_gap_p_tier2"]
-            dp_hf = h["max_persona_gap_p_tier2"] if h is not None else None
+            # Secondary: Q90-Q10 of P(T=2)
+            dp_full = f["q9010_p_tier2"]
+            dp_hf = (
+                h["q9010_p_tier2"] if h is not None else None
+            )
 
             # Omnibus p (ordered): Friedman test from repeated_measures
             rm = self.ar.get("repeated_measures", {}).get(model, {})
@@ -1437,14 +1524,14 @@ class TableGenerator:
             r"\centering",
             r"\small",
             r"\caption{Primary and secondary endpoint dispersion summary (matched-guise panel).",
-            r"$\Delta E[T]$: max--min of persona-level mean tier across 36 guises.",
-            r"$\Delta P(T{=}2)$: max--min of persona-level Tier-2 rate.",
+            r"$\Delta_{90\text{-}10} E[T]$: Q90--Q10 of persona-level mean tier across 36 guises.",
+            r"$\Delta_{90\text{-}10} P(T{=}2)$: Q90--Q10 of persona-level Tier-2 rate.",
             r"FULL: all pairs; HF: high-fidelity pairs only.}",
             r"\label{tab:endpoint_summary}",
             r"\begin{tabular}{@{}l cc cc cc l@{}}",
             r"\toprule",
-            r"& \multicolumn{2}{c}{Primary: $\Delta E[T]$}",
-            r"& \multicolumn{2}{c}{Secondary: $\Delta P(T{=}2)$}",
+            r"& \multicolumn{2}{c}{Primary: $\Delta_{90\text{-}10} E[T]$}",
+            r"& \multicolumn{2}{c}{Secondary: $\Delta_{90\text{-}10} P(T{=}2)$}",
             r"& \multicolumn{2}{c}{Omnibus $p$} \\",
             r"\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7}",
             r"Model & FULL & HF & FULL & HF"
@@ -1478,8 +1565,8 @@ class TableGenerator:
 
         # --- Markdown + CSV ---
         df = pd.DataFrame(md_rows, columns=[
-            "Model", "Delta E[T] FULL", "Delta E[T] HF",
-            "Delta P(T=2) FULL", "Delta P(T=2) HF",
+            "Model", "Q90-Q10 E[T] FULL", "Q90-Q10 E[T] HF",
+            "Q90-Q10 P(T=2) FULL", "Q90-Q10 P(T=2) HF",
             "p (ordered)", "p (Tier-2)", "HF verdict",
         ])
         md_name = _build_filename(

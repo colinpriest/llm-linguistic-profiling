@@ -88,12 +88,14 @@ Per subset x model, computes:
 | `mean_tier` | Average remedy tier (0-2 scale) |
 | `p_tier2` | Proportion receiving tier 2 (monetary relief) |
 | `p_need_more_info` | Proportion receiving "need more info" response |
-| `max_persona_gap_p_tier2` | Max minus min of persona-level p(tier2) |
-| `max_persona_gap_mean_tier` | Max minus min of persona-level mean tier |
+| `q9010_p_tier2` | Q90-Q10 of persona-level p(tier2) — **primary CI-bearing smooth metric** |
+| `q9010_mean_tier` | Q90-Q10 of persona-level mean tier — **primary CI-bearing smooth metric** |
+| `max_persona_gap_p_tier2` | Max minus min of persona-level p(tier2) — descriptive worst-case |
+| `max_persona_gap_mean_tier` | Max minus min of persona-level mean tier — descriptive worst-case |
 | `sd_persona_p_tier2` | Standard deviation of persona-level p(tier2) |
 | `sd_persona_mean_tier` | Standard deviation of persona-level mean tier |
 
-The persona-gap and SD metrics are the key indicators of persona-based dispersion. If these shrink meaningfully in filtered subsets, the findings may not be robust.
+The Q90-Q10 metrics (90th-10th percentile spread) are the primary CI-bearing dispersion statistics. They are smooth functions of the data, ensuring well-behaved bootstrap distributions. Max-min gap is retained as a descriptive "worst-case" companion but does not carry a CI or containment assertion (range statistics are positively biased under resampling). If Q90-Q10 shrinks meaningfully in filtered subsets, the findings may not be robust.
 
 ### 6. Bootstrap Confidence Intervals
 
@@ -101,13 +103,12 @@ Cluster bootstrap BCa 95% CI (complaint-level resampling; jackknife acceleration
 
 1. Sample complaint IDs with replacement (default: 1,000 iterations)
 2. Take all rows for each sampled complaint
-3. Recompute the four key metrics: `mean_tier`, `p_tier2`, `max_persona_gap_p_tier2`, `max_persona_gap_mean_tier`
-4. Compute bias-corrected and accelerated (BCa) confidence intervals:
-   - **Bias correction (z₀):** proportion of bootstrap replicates below the full-sample point estimate, transformed to the normal scale
-   - **Acceleration (a):** estimated from a leave-one-complaint-out jackknife using pre-aggregated per-complaint sums for efficiency
-   - **Adjusted percentiles:** the standard ±1.96 quantiles are shifted by z₀ and a to correct for bias and skewness in the bootstrap distribution
+3. Recompute six key metrics: `mean_tier`, `p_tier2`, `max_persona_gap_p_tier2`, `max_persona_gap_mean_tier`, `q9010_p_tier2`, `q9010_mean_tier`
+4. Compute confidence intervals using a two-stage fallback chain:
+   - **BCa (primary):** Bias-corrected and accelerated interval. Bias correction z₀ is the proportion of bootstrap replicates below the point estimate (normal-transformed). Acceleration *a* is estimated from a leave-one-complaint-out jackknife using pre-aggregated sums.
+   - **Symmetric percentile (fallback):** Standard [α/2, 1−α/2] percentile interval, used when BCa produces a degenerate (near-zero-width) interval or excludes the point estimate.
 
-Complaint-level (rather than pair-level) resampling respects the clustering structure — all persona rewrites of the same complaint are included together. BCa intervals are used because the max-min gap statistic is positively biased under resampling — standard percentile intervals can exclude the full-sample point estimate.
+Complaint-level (rather than pair-level) resampling respects the clustering structure — all persona rewrites of the same complaint are included together. Because Q90-Q10 is a smooth function of the data, its bootstrap distribution is well-behaved and the standard BCa/percentile chain suffices. Max-min gap CIs are computed for completeness but the point-in-CI containment assertion applies only to Q90-Q10 (range statistics are upward-biased under resampling, so the full-sample max-min can legitimately sit below its bootstrap CI lower bound).
 
 ### 7. GEE Omnibus Tests
 
@@ -124,7 +125,7 @@ The omnibus Wald test evaluates whether the persona block is jointly significant
 
 ### 8. Comparison vs FULL + Verdicts
 
-For each non-FULL subset x model x primary effect:
+For each non-FULL subset x model x primary effect (`q9010_p_tier2`, `q9010_mean_tier`):
 
 **Effect stability metrics:**
 - `abs_ratio = |effect_subset| / |effect_full|`
