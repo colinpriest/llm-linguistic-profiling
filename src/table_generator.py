@@ -45,63 +45,42 @@ def _log_p_exponent(log_p: float) -> int:
 
 
 def _fmt_pval(v: Any, log_p: Optional[float] = None) -> str:
-    """Format a p-value: 2 sig figs, scientific if <1e-3.
+    """Format a p-value: 3 dp, '< 0.001' for smaller values.
 
     Parameters
     ----------
     v : p-value (may be 0.0 due to underflow).
-    log_p : optional log(p) computed in log-space; used when *v* underflows.
+    log_p : optional log(p) computed in log-space (kept for API compat).
     """
     if not is_estimable(v):
         if isinstance(v, NEValue) and v.code == NECode.SINGULAR_MATRIX:
             return "Sep.$^{\\dagger}$"
         return "---"
     fv = float(v)
-    if fv < 1e-3:
-        if fv < 1e-15:
-            if log_p is not None and np.isfinite(log_p) and log_p < 0:
-                exp10 = _log_p_exponent(log_p)
-                return f"<1e{exp10}"
-            return "<1e-15"
-        result = f"{fv:.2e}"
-        _validate_pval_string(result)
-        return result
-    result = f"{fv:.4f}"
-    _validate_pval_string(result)
-    return result
+    if fv < 0.001:
+        return "< 0.001"
+    return f"{fv:.3f}"
 
 
 def _fmt_pval_latex(v: Any, log_p: Optional[float] = None) -> str:
     """Format a p-value for raw LaTeX (no escape pass).
 
-    Returns ready-to-embed LaTeX: math-mode scientific notation, dagger
-    for separation, or plain decimal.
+    Returns ready-to-embed LaTeX: ``$< 0.001$`` for tiny values, dagger
+    for separation, or plain decimal (3 dp).
 
     Parameters
     ----------
     v : p-value (may be 0.0 due to underflow).
-    log_p : optional log(p) computed in log-space; used when *v* underflows.
+    log_p : optional log(p) computed in log-space (kept for API compat).
     """
     if not is_estimable(v):
         if isinstance(v, NEValue) and v.code == NECode.SINGULAR_MATRIX:
             return r"N/A$^{\dagger}$"
         return "---"
     fv = float(v)
-    if fv < 1e-3:
-        if fv < 1e-15:
-            if log_p is not None and np.isfinite(log_p) and log_p < 0:
-                exp10 = _log_p_exponent(log_p)
-                return f"$<\\!10^{{{exp10}}}$"
-            return r"$<\!10^{-15}$"
-        # e.g. 5.11e-05 -> $5.11\times10^{-5}$
-        mantissa, exp = f"{fv:.2e}".split("e")
-        exp_int = int(exp)
-        result = f"${mantissa}\\times10^{{{exp_int}}}$"
-        _validate_pval_string(result)
-        return result
-    result = f"{fv:.4f}"
-    _validate_pval_string(result)
-    return result
+    if fv < 0.001:
+        return r"$< 0.001$"
+    return f"{fv:.3f}"
 
 
 def _validate_pval_string(s: str) -> None:
@@ -231,17 +210,23 @@ def _fmt_int(v) -> str:
 
 
 def _fmt_pct(v: Any, decimals: int = 1) -> str:
-    """Format a percentage."""
+    """Format a percentage (avoids '-0.0%')."""
     if not is_estimable(v):
         return "---"
-    return f"{float(v):.{decimals}f}%"
+    rounded = round(float(v), decimals)
+    if rounded == 0:
+        rounded = 0.0  # eliminate negative zero
+    return f"{rounded:.{decimals}f}%"
 
 
 def _fmt_pct_tex(v: Any, decimals: int = 1) -> str:
-    """Format a percentage with escaped ``%`` for LaTeX."""
+    """Format a percentage with escaped ``%`` for LaTeX (avoids '-0.0\\%')."""
     if not is_estimable(v):
         return "---"
-    return f"{float(v):.{decimals}f}\\%"
+    rounded = round(float(v), decimals)
+    if rounded == 0:
+        rounded = 0.0  # eliminate negative zero
+    return f"{rounded:.{decimals}f}\\%"
 
 
 def _resolve_variance_change(block: Dict[str, Any]) -> Dict[str, Any]:
@@ -260,18 +245,20 @@ def _resolve_variance_change(block: Dict[str, Any]) -> Dict[str, Any]:
         except (TypeError, ValueError):
             pass
 
-    # Accept either stored percent change or legacy ratio reduction.
+    # Derive percent change from SDs (preferred) or legacy variance ratio.
     if "pct_change" not in vc:
-        if "variance_reduction" in block:
-            try:
-                vc["pct_change"] = -100.0 * float(block["variance_reduction"])
-            except (TypeError, ValueError):
-                pass
-        elif "baseline_sd" in vc and "neutralized_sd" in vc:
+        if "baseline_sd" in vc and "neutralized_sd" in vc:
             base = vc.get("baseline_sd")
             neut = vc.get("neutralized_sd")
             if is_estimable(base) and is_estimable(neut) and float(base) != 0:
                 vc["pct_change"] = (float(neut) - float(base)) / float(base) * 100.0
+        elif "variance_reduction" in block:
+            # Legacy fallback: convert variance ratio to SD percent change.
+            try:
+                vr = float(block["variance_reduction"])
+                vc["pct_change"] = (np.sqrt(max(0.0, 1 - vr)) - 1) * 100.0
+            except (TypeError, ValueError):
+                pass
 
     return vc
 
@@ -508,6 +495,7 @@ class TableGenerator:
         for model in self.models:
             paths.extend(self._table11_robustness_ladder(main_dir, model))
         paths.extend(self._table12_endpoint_summary(main_dir))
+        paths.extend(self._table13_permutation_test(main_dir))
         return paths
 
     def _table1_dataset_sampling(self, out: Path) -> List[Path]:
@@ -627,117 +615,109 @@ class TableGenerator:
         )
 
     def _table4_distributive_fairness(self, out: Path, model: str) -> List[Path]:
-        """Table 4: Main distributive fairness results (matched-guise).
+        """Table 4: Distributive fairness results (matched-guise).
+
+        Two panels:
+          A — Monetary remediation (Tier = 2)
+          B — Acknowledgement (Tier >= 1)
 
         Per-dimension rows show SD (smooth, CI-bearing) and max-min
-        (descriptive).  The full-grid row shows Q90-Q10 (smooth,
-        CI-bearing) and max-min (descriptive).  All probability-scale
+        (descriptive).  Full-grid row likewise.  All probability-scale
         values rendered in percentage points (pp).
         """
         model_r = self.ar.get(model, {})
         causal = model_r.get("causal", {})
-        dim_gaps = causal.get("dimension_gaps", {})
+        gaps_tier2 = causal.get("dimension_gaps_tier2", {})
+        gaps_ack = causal.get("dimension_gaps_ack", {})
 
-        if not dim_gaps:
+        if not gaps_tier2 and not gaps_ack:
             logger.warning(
                 "No dimension_gaps in causal results for %s; "
-                "skipping distributive_fairness_tier2 table.",
+                "skipping distributive_fairness table.",
                 model,
             )
             return []
 
-        # LaTeX dimension labels (allow hyphenation for long words)
+        # LaTeX dimension labels
         _dim_tex = {
             "age": "Age",
             "geographic": "Geographic",
             "education": "Education",
             "socioeconomic": r"Socio\-economic",
         }
-
+        _dims = ["age", "geographic", "education", "socioeconomic"]
         _blank = ("---", "---", "---", "---")
-        rows = []          # plain-text tuples for md/csv
-        tex_rows = []      # LaTeX-ready tuples
-        needs_dagger = False
 
-        for dim in ["age", "geographic", "education", "socioeconomic"]:
-            dg = dim_gaps.get(dim)
-            if not dg:
-                rows.append((dim.capitalize(), *_blank))
-                tex_rows.append((_dim_tex[dim], *_blank))
-                continue
-
-            gap = dg["gap"]
-            sd = dg["sd"]
-            sd_ci_lo = dg["sd_ci_lower"]
-            sd_ci_hi = dg["sd_ci_upper"]
-            p_val = dg["p_value"]
-
-            # Sanity checks on the smooth CI-bearing metric
-            _assert_probability_scale(
-                sd, sd_ci_lo, sd_ci_hi,
-                context=f"distributive_fairness/{model}/{dim}/sd",
-            )
-            _assert_point_in_ci(
-                sd, sd_ci_lo, sd_ci_hi,
-                context=f"distributive_fairness/{model}/{dim}/sd",
-            )
-
-            ci_str = f"[{_fmt_pp(sd_ci_lo)}, {_fmt_pp(sd_ci_hi)}]"
-            p_latex = _fmt_pval_latex(p_val)
-            if r"\dagger" in p_latex:
-                needs_dagger = True
-
-            rows.append((
-                dim.capitalize(),
-                _fmt_pp(sd),
-                ci_str,
-                _fmt_pp(gap),
-                _fmt_pval(p_val),
-            ))
-            tex_rows.append((
-                _dim_tex[dim],
-                _fmt_pp(sd),
-                ci_str,
-                _fmt_pp(gap),
-                p_latex,
-            ))
-
-        # Full persona grid summary (uses Q90-Q10 as smooth metric)
-        fg = dim_gaps.get("full_grid")
-        if fg:
-            fg_gap = fg["gap"]
-            fg_q9010 = fg.get("q9010", float("nan"))
-            fg_q_ci_lo = fg.get("q9010_ci_lower", float("nan"))
-            fg_q_ci_hi = fg.get("q9010_ci_upper", float("nan"))
-
-            if not np.isfinite(fg_q9010):
-                full_row = ("Full persona grid", *_blank)
-            else:
+        def _build_panel_rows(dim_gaps, endpoint_label):
+            """Build row tuples for one endpoint panel."""
+            plain = []
+            tex = []
+            dagger = False
+            for dim in _dims:
+                dg = dim_gaps.get(dim)
+                if not dg:
+                    plain.append((dim.capitalize(), *_blank))
+                    tex.append((_dim_tex[dim], *_blank))
+                    continue
+                gap = dg["gap"]
+                sd = dg["sd"]
+                sd_ci_lo = dg["sd_ci_lower"]
+                sd_ci_hi = dg["sd_ci_upper"]
+                p_val = dg["p_value"]
                 _assert_probability_scale(
-                    fg_q9010, fg_q_ci_lo, fg_q_ci_hi,
-                    context=f"distributive_fairness/{model}/full_grid/q9010",
+                    sd, sd_ci_lo, sd_ci_hi,
+                    context=f"distributive_fairness/{model}/{endpoint_label}/{dim}/sd",
                 )
                 _assert_point_in_ci(
-                    fg_q9010, fg_q_ci_lo, fg_q_ci_hi,
-                    context=f"distributive_fairness/{model}/full_grid/q9010",
+                    sd, sd_ci_lo, sd_ci_hi,
+                    context=f"distributive_fairness/{model}/{endpoint_label}/{dim}/sd",
                 )
-                fg_ci_str = f"[{_fmt_pp(fg_q_ci_lo)}, {_fmt_pp(fg_q_ci_hi)}]"
-                full_row = (
-                    "Full persona grid",
-                    _fmt_pp(fg_q9010),
-                    fg_ci_str,
-                    _fmt_pp(fg_gap),
-                    "---",
-                )
-        else:
-            full_row = ("Full persona grid", *_blank)
-        rows.append(full_row)
-        tex_rows.append(full_row)
+                ci_str = f"[{_fmt_pp(sd_ci_lo)}, {_fmt_pp(sd_ci_hi)}]"
+                p_latex = _fmt_pval_latex(p_val)
+                if r"\dagger" in p_latex:
+                    dagger = True
+                plain.append((dim.capitalize(), _fmt_pp(sd), ci_str, _fmt_pp(gap), _fmt_pval(p_val)))
+                tex.append((_dim_tex[dim], _fmt_pp(sd), ci_str, _fmt_pp(gap), p_latex))
+
+            fg = dim_gaps.get("full_grid")
+            if fg:
+                fg_sd = fg.get("sd", float("nan"))
+                fg_sd_ci_lo = fg.get("sd_ci_lower", float("nan"))
+                fg_sd_ci_hi = fg.get("sd_ci_upper", float("nan"))
+                fg_gap = fg["gap"]
+                if np.isfinite(fg_sd):
+                    _assert_probability_scale(
+                        fg_sd, fg_sd_ci_lo, fg_sd_ci_hi,
+                        context=f"distributive_fairness/{model}/{endpoint_label}/full_grid/sd",
+                    )
+                    _assert_point_in_ci(
+                        fg_sd, fg_sd_ci_lo, fg_sd_ci_hi,
+                        context=f"distributive_fairness/{model}/{endpoint_label}/full_grid/sd",
+                    )
+                    fg_ci_str = f"[{_fmt_pp(fg_sd_ci_lo)}, {_fmt_pp(fg_sd_ci_hi)}]"
+                    frow = ("Full persona grid", _fmt_pp(fg_sd), fg_ci_str, _fmt_pp(fg_gap), "---")
+                else:
+                    frow = ("Full persona grid", *_blank)
+            else:
+                frow = ("Full persona grid", *_blank)
+            plain.append(frow)
+            tex.append(frow)
+            return plain, tex, dagger
+
+        rows_t2, tex_t2, dag_t2 = _build_panel_rows(gaps_tier2, "tier2")
+        rows_ack, tex_ack, dag_ack = _build_panel_rows(gaps_ack, "ack")
+        needs_dagger = dag_t2 or dag_ack
+
+        # Combined plain-text rows for CSV/markdown
+        rows = [("Panel A: Monetary remediation (Tier = 2)", "", "", "", "")]
+        rows.extend(rows_t2)
+        rows.append(("Panel B: Acknowledgement (Tier >= 1)", "", "", "", ""))
+        rows.extend(rows_ack)
 
         # --- Custom LaTeX ---
         model_clean = model.replace("-", "").replace("_", "")
-        caption = f"Distributive fairness results (Tier-2 secondary threshold, matched-guise) -- {model}."
-        label = f"tab:fairness_tier2_{model_clean}"
+        caption = f"Distributive fairness results (matched-guise) -- {model}."
+        label = f"tab:fairness_{model_clean}"
 
         tex_lines = [
             r"\begin{table}[htbp]",
@@ -747,11 +727,18 @@ class TableGenerator:
             r"\label{" + label + "}",
             r"\begin{tabular}{@{}p{0.26\linewidth}r p{0.22\linewidth}r p{0.15\linewidth}@{}}",
             r"\toprule",
-            (r"Dimension & $\sigma$/$\Delta_{90\text{-}10}$$^{a}$ (pp)"
-             r" & 95\% CI & Max--Min (pp) & $p$ \\"),
+            (r"Dimension & $\sigma$ (pp)"
+             r" & 95\% CI$^{\ast}$ & Max--Min (pp) & $p$ \\"),
             r"\midrule",
+            r"\multicolumn{5}{@{}l}{\textit{Panel A: Monetary remediation (Tier\,=\,2)}} \\",
         ]
-        for dim_label, smooth_val, ci, mm, p in tex_rows:
+        for dim_label, smooth_val, ci, mm, p in tex_t2:
+            tex_lines.append(f"{dim_label} & {smooth_val} & {ci} & {mm} & {p} \\\\")
+        tex_lines.append(r"\addlinespace")
+        tex_lines.append(
+            r"\multicolumn{5}{@{}l}{\textit{Panel B: Acknowledgement (Tier\,$\geq$\,1)}} \\",
+        )
+        for dim_label, smooth_val, ci, mm, p in tex_ack:
             tex_lines.append(f"{dim_label} & {smooth_val} & {ci} & {mm} & {p} \\\\")
         tex_lines.append(r"\bottomrule")
         tex_lines.append(r"\end{tabular}")
@@ -760,12 +747,12 @@ class TableGenerator:
         tex_lines.append(r"\vspace{2pt}")
         tex_lines.append(
             r"\parbox{0.94\linewidth}{\footnotesize"
-            r" $^{a}$ Per-dimension rows: persona-level SD."
-            r" Full grid row: $\Delta_{90\text{-}10}$"
-            r" (90th--10th percentile spread)."
-            r" Cluster bootstrap BCa 95\% CI"
-            r" (complaint-level resampling)."
+            r" $\sigma$: SD of persona-level estimates (ddof\,=\,0)."
+            r" $^{\ast}$ 95\% CI (log-scale bootstrap;"
+            r" complaint-level resampling)."
             r" Max--Min: full range (descriptive, no CI)."
+            r" Panel A uses $\mathbf{1}[\text{tier}=2]$;"
+            r" Panel B uses $\mathbf{1}[\text{tier}\geq 1]$."
         )
         if needs_dagger:
             tex_lines.append(
@@ -774,23 +761,23 @@ class TableGenerator:
         tex_lines.append("}")
         tex_lines.append(r"\end{table}")
 
-        tex_name = _build_filename("table", "main", "distributive_fairness_tier2", model_clean, "matched", 1, "tex")
+        tex_name = _build_filename("table", "main", "distributive_fairness", model_clean, "matched", 1, "tex")
         tex_path = out / tex_name
-        tex_lines.insert(0, _build_source_comment(source="causal.dimension_gaps", model=model, endpoint="favorable_gap", units="pp", ci="cluster_bootstrap_bca_complaint_level"))
+        tex_lines.insert(0, _build_source_comment(source="causal.dimension_gaps_tier2+ack", model=model, endpoint="tier2+ack", units="pp", ci="log_scale_bootstrap"))
         tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
 
         # --- Markdown + CSV via DataFrame ---
-        df = pd.DataFrame(rows, columns=["Dimension", "SD/Q90-Q10 (pp)", "95% CI", "Max-Min (pp)", "p"])
+        df = pd.DataFrame(rows, columns=["Dimension", "SD (pp)", "95% CI (log-scale bootstrap)", "Max-Min (pp)", "p"])
 
-        md_name = _build_filename("table", "main", "distributive_fairness_tier2", model_clean, "matched", 1, "md")
+        md_name = _build_filename("table", "main", "distributive_fairness", model_clean, "matched", 1, "md")
         md_path = out / md_name
         md_path.write_text(_dataframe_to_markdown(df, caption), encoding="utf-8")
 
-        csv_name = _build_filename("table", "main", "distributive_fairness_tier2", model_clean, "matched", 1, "csv")
+        csv_name = _build_filename("table", "main", "distributive_fairness", model_clean, "matched", 1, "csv")
         csv_path = out / csv_name
         df.to_csv(csv_path, index=False, encoding="utf-8")
 
-        logger.info("Written table: distributive_fairness_tier2 (.tex/.md/.csv)")
+        logger.info("Written table: distributive_fairness (.tex/.md/.csv)")
         return [tex_path, md_path, csv_path]
 
     def _table5_neutralisation(self, out: Path, model: str) -> List[Path]:
@@ -810,7 +797,7 @@ class TableGenerator:
         pct_change = variance_change.get("pct_change", ne_vc)
 
         rows.append((
-            "Tier 2 disparity (SD)",
+            "Outcome disparity (SD)",
             _fmt_effect(baseline_sd),
             _fmt_effect(neutralized_sd),
             _fmt_effect(neutralized_sd - baseline_sd) if is_estimable(baseline_sd) and is_estimable(neutralized_sd) else "---",
@@ -906,7 +893,7 @@ class TableGenerator:
             rows.append(tuple(row_plain))
             tex_rows.append(tuple(row_tex))
 
-        columns = ["Dimension", "Interaction p", "A (high-low)", "R (ratio)", "95% CI"]
+        columns = ["Dimension", "Interaction p", "A (high-low)", "R (ratio)", "95% CI (percentile bootstrap)"]
         if metric == "monetary_severity":
             columns.append("Coverage")
         df = pd.DataFrame(rows, columns=columns)
@@ -929,23 +916,35 @@ class TableGenerator:
             r"\begin{tabular}{" + col_spec + "}",
             r"\toprule",
         ]
-        header = " & ".join(columns) + r" \\"
-        # Escape the % in "95% CI" for LaTeX
-        header = header.replace("95% CI", r"95\% CI")
+        # Build LaTeX header — replace long CI label with footnote marker
+        tex_columns = list(columns)
+        ci_idx = next(i for i, c in enumerate(tex_columns) if c.startswith("95% CI"))
+        tex_columns[ci_idx] = r"95\% CI$^{\ast}$"
+        header = " & ".join(tex_columns) + r" \\"
         tex_lines.append(header)
         tex_lines.append(r"\midrule")
         for row_tex in tex_rows:
             tex_lines.append(" & ".join(str(c) for c in row_tex) + r" \\")
         tex_lines.append(r"\bottomrule")
         tex_lines.append(r"\end{tabular}")
+        # Footnotes
+        footnotes: List[str] = []
+        footnotes.append(
+            r"$^{\ast}$ 95\% CI (percentile bootstrap)."
+        )
         if has_separation:
-            tex_lines.append("")
-            tex_lines.append(r"\vspace{2pt}")
-            tex_lines.append(
-                r"\parbox{0.95\linewidth}{\footnotesize $^\dagger$ Sep."
+            footnotes.append(
+                r"$^\dagger$ Sep."
                 r" = quasi-complete separation in persona $\times$ severity"
-                r" cells; Wald test not identified.}"
+                r" cells; Wald test not identified."
             )
+        tex_lines.append("")
+        tex_lines.append(r"\vspace{2pt}")
+        tex_lines.append(
+            r"\parbox{0.95\linewidth}{\footnotesize "
+            + r"\\".join(footnotes)
+            + "}"
+        )
         tex_lines.append(r"\end{table}")
 
         topic = "severity_amplification_confirmatory"
@@ -1255,6 +1254,22 @@ class TableGenerator:
         ep_df = pd.read_csv(ep_path)
         om_df = pd.read_csv(om_path)
 
+        # Guard: require SD columns (generated by updated robustness code v3)
+        _required_cols = [
+            "sd_persona_p_tier2", "sd_persona_mean_tier",
+            "ci_lower_sd_persona_p_tier2", "ci_upper_sd_persona_p_tier2",
+            "ci_lower_sd_persona_mean_tier", "ci_upper_sd_persona_mean_tier",
+        ]
+        missing = [c for c in _required_cols if c not in ep_df.columns]
+        if missing:
+            logger.error(
+                "endpoint_summary.csv missing columns %s; "
+                "re-run robustness subset analysis to regenerate. "
+                "Skipping robustness_ladder table for %s.",
+                missing, model,
+            )
+            return []
+
         # Filter to this model
         ep = ep_df[ep_df["model_name"] == model]
         om = om_df[om_df["model_name"] == model]
@@ -1286,30 +1301,34 @@ class TableGenerator:
 
             ret = r["pair_retention"]
 
-            # Q90-Q10 (smooth, CI-bearing)
-            q_t2 = r["q9010_p_tier2"]
-            q_ci_lo_t2 = r["ci_lower_q9010_p_tier2"]
-            q_ci_hi_t2 = r["ci_upper_q9010_p_tier2"]
-            q_mt = r["q9010_mean_tier"]
-            q_ci_lo_mt = r["ci_lower_q9010_mean_tier"]
-            q_ci_hi_mt = r["ci_upper_q9010_mean_tier"]
+            # SD (inferential, CI-bearing — normal CI centered on plug-in)
+            sd_t2 = r["sd_persona_p_tier2"]
+            sd_ci_lo_t2 = r["ci_lower_sd_persona_p_tier2"]
+            sd_ci_hi_t2 = r["ci_upper_sd_persona_p_tier2"]
+            sd_mt = r["sd_persona_mean_tier"]
+            sd_ci_lo_mt = r["ci_lower_sd_persona_mean_tier"]
+            sd_ci_hi_mt = r["ci_upper_sd_persona_mean_tier"]
 
-            # Max-min (descriptive only)
+            # Q90-Q10 (descriptive point only)
+            q_t2 = r.get("q9010_p_tier2", float("nan"))
+            q_mt = r.get("q9010_mean_tier", float("nan"))
+
+            # Max-min (descriptive point only)
             mm_t2 = r["max_persona_gap_p_tier2"]
             mm_mt = r["max_persona_gap_mean_tier"]
 
-            # Strict assertions on smooth metric only
+            # Strict assertions on SD (containment holds by construction)
             _assert_probability_scale(
-                q_t2, q_ci_lo_t2, q_ci_hi_t2,
-                context=f"robustness_ladder/{model}/{subset}/q9010_tier2",
+                sd_t2, sd_ci_lo_t2, sd_ci_hi_t2,
+                context=f"robustness_ladder/{model}/{subset}/sd_tier2",
             )
             _assert_point_in_ci(
-                q_t2, q_ci_lo_t2, q_ci_hi_t2,
-                context=f"robustness_ladder/{model}/{subset}/q9010_tier2",
+                sd_t2, sd_ci_lo_t2, sd_ci_hi_t2,
+                context=f"robustness_ladder/{model}/{subset}/sd_tier2",
             )
             _assert_point_in_ci(
-                q_mt, q_ci_lo_mt, q_ci_hi_mt,
-                context=f"robustness_ladder/{model}/{subset}/q9010_mean_tier",
+                sd_mt, sd_ci_lo_mt, sd_ci_hi_mt,
+                context=f"robustness_ladder/{model}/{subset}/sd_mean_tier",
             )
 
             # Omnibus p-values (with log-space fallback for underflow)
@@ -1320,23 +1339,28 @@ class TableGenerator:
             log_p_t2 = om_t2.iloc[0].get("log_p_value") if not om_t2.empty else None
             log_p_mt = om_mt.iloc[0].get("log_p_value") if not om_mt.empty else None
 
-            # Format: Q90-Q10 in pp with CI for tier2; raw for mean_tier
+            # Format: SD [CI] in pp for tier2; raw for mean_tier;
+            # Q90-Q10 and Max-Min as descriptive points
             tex_rows.append((
                 subset_labels.get(subset, subset),
                 f"{ret * 100:.1f}\\%",
-                f"{_fmt_pp(q_t2)} [{_fmt_pp(q_ci_lo_t2)}, {_fmt_pp(q_ci_hi_t2)}]",
-                f"{q_mt:.3f} [{q_ci_lo_mt:.3f}, {q_ci_hi_mt:.3f}]",
+                f"{_fmt_pp(sd_t2)} [{_fmt_pp(sd_ci_lo_t2)}, {_fmt_pp(sd_ci_hi_t2)}]",
+                f"{sd_mt:.4f} [{sd_ci_lo_mt:.4f}, {sd_ci_hi_mt:.4f}]",
+                _fmt_pp(q_t2),
+                f"{q_mt:.4f}",
                 _fmt_pp(mm_t2),
-                f"{mm_mt:.3f}",
+                f"{mm_mt:.4f}",
                 _fmt_pval_latex(p_t2, log_p=log_p_t2),
                 _fmt_pval_latex(p_mt, log_p=log_p_mt),
             ))
             md_rows.append((
                 subset, f"{ret * 100:.1f}%",
-                f"{_fmt_pp(q_t2)} [{_fmt_pp(q_ci_lo_t2)}, {_fmt_pp(q_ci_hi_t2)}]",
-                f"{q_mt:.3f} [{q_ci_lo_mt:.3f}, {q_ci_hi_mt:.3f}]",
+                f"{_fmt_pp(sd_t2)} [{_fmt_pp(sd_ci_lo_t2)}, {_fmt_pp(sd_ci_hi_t2)}]",
+                f"{sd_mt:.4f} [{sd_ci_lo_mt:.4f}, {sd_ci_hi_mt:.4f}]",
+                _fmt_pp(q_t2),
+                f"{q_mt:.4f}",
                 _fmt_pp(mm_t2),
-                f"{mm_mt:.3f}",
+                f"{mm_mt:.4f}",
                 _fmt_pval(p_t2, log_p=log_p_t2),
                 _fmt_pval(p_mt, log_p=log_p_mt),
             ))
@@ -1354,20 +1378,24 @@ class TableGenerator:
             r"\caption{Robustness ladder: effect sizes across data subsets -- "
             + _escape_latex(model) + r".}",
             r"\label{tab:robustness_ladder_" + model_clean + "}",
-            r"\begin{tabular}{@{}l r ll rr cc@{}}",
+            r"\begin{tabular}{@{}l r ll rr rr cc@{}}",
             r"\toprule",
             r"Subset & Ret."
-            r" & $\Delta_{90\text{-}10} P(T{=}2)$$^{b}$ (pp)"
-            r" & $\Delta_{90\text{-}10}\bar{\tau}$$^{b}$"
+            r" & $\sigma\;P(T{=}2)$$^{b}$ [CI] (pp)"
+            r" & $\sigma\;\bar{\tau}$$^{b}$ [CI]"
+            r" & $\Delta_{90\text{-}10}$$^{b}$ (pp)"
+            r" & $\Delta_{90\text{-}10}$$^{b}$"
             r" & $\Delta_{\max}$$^{b}$ (pp)"
             r" & $\Delta_{\max}$$^{b}$"
-            r" & $p_W$$^{c}$ & $p_W$$^{c}$ \\",
+            r" & $p_W(Y_2)$$^{c}$ & $p_W(\bar{\tau})$$^{c}$ \\",
             r"\midrule",
         ]
-        for lbl, ret, qt2, qmt, mmt2, mmmt, pt2, pmt in tex_rows:
+        for row_tuple in tex_rows:
+            lbl, ret, sdt2, sdmt, qt2, qmt, mmt2, mmmt, pt2, pmt = row_tuple
             tex_lines.append(
-                f"{lbl} & {ret} & {qt2} & {qmt}"
-                f" & {mmt2} & {mmmt} & {pt2} & {pmt} \\\\"
+                f"{lbl} & {ret} & {sdt2} & {sdmt}"
+                f" & {qt2} & {qmt} & {mmt2} & {mmmt}"
+                f" & {pt2} & {pmt} \\\\"
             )
         tex_lines.append(r"\bottomrule")
         tex_lines.append(r"\end{tabular}")
@@ -1383,13 +1411,15 @@ class TableGenerator:
             r" NO\_NUM = no numeric mutations.\\"
         )
         tex_lines.append(
-            r"$^{b}$ $\Delta_{90\text{-}10}$: 90th--10th percentile"
-            r" of persona-cell rates (cluster bootstrap BCa 95\% CI;"
+            r"$^{b}$ $\sigma$: SD of persona-level estimates."
+            r" 95\% CI (log-scale bootstrap;"
             r" complaint-level resampling)."
-            r" $\Delta_{\max}$: max--min range (descriptive, no CI).\\"
+            r" $\Delta_{90\text{-}10}$: 90th--10th percentile spread (descriptive)."
+            r" $\Delta_{\max}$: max--min range (descriptive).\\"
         )
         tex_lines.append(
             r"$^{c}$ $p_W$: GEE omnibus Wald test, exchangeable working correlation."
+            r" $Y_2 = P(T{=}2)$; $\bar{\tau}$ = mean tier."
         )
         tex_lines.append(r"}")
         tex_lines.append(r"\end{table}")
@@ -1404,7 +1434,8 @@ class TableGenerator:
         # --- Markdown + CSV ---
         df = pd.DataFrame(md_rows, columns=[
             "Subset", "Retention",
-            "Q90-Q10 P(T=2) [CI] (pp)", "Q90-Q10 mean tier [CI]",
+            "SD P(T=2) [95% CI, log-scale bootstrap] (pp)", "SD mean tier [95% CI, log-scale bootstrap]",
+            "Q90-Q10 P(T=2) (pp)", "Q90-Q10 mean tier",
             "Max-Min P(T=2) (pp)", "Max-Min mean tier",
             "p_W (tier2)", "p_W (mean tier)",
         ])
@@ -1443,6 +1474,18 @@ class TableGenerator:
         ep_df = pd.read_csv(ep_path)
         om_df = pd.read_csv(om_path)
 
+        # Guard: require SD columns (generated by updated robustness code v3)
+        _sd_cols = ["sd_persona_p_tier2", "sd_persona_mean_tier"]
+        missing = [c for c in _sd_cols if c not in ep_df.columns]
+        if missing:
+            logger.error(
+                "endpoint_summary.csv missing columns %s; "
+                "re-run robustness subset analysis to regenerate. "
+                "Skipping endpoint_summary table.",
+                missing,
+            )
+            return []
+
         tex_data_rows = []
         md_rows = []
 
@@ -1454,16 +1497,16 @@ class TableGenerator:
             f = ep_full.iloc[0]
             h = ep_hf.iloc[0] if not ep_hf.empty else None
 
-            # Primary: Q90-Q10 of mean tier
-            de_full = f["q9010_mean_tier"]
+            # Primary: SD of mean tier
+            de_full = f["sd_persona_mean_tier"]
             de_hf = (
-                h["q9010_mean_tier"] if h is not None else None
+                h["sd_persona_mean_tier"] if h is not None else None
             )
 
-            # Secondary: Q90-Q10 of P(T=2)
-            dp_full = f["q9010_p_tier2"]
+            # Secondary: SD of P(T=2)
+            dp_full = f["sd_persona_p_tier2"]
             dp_hf = (
-                h["q9010_p_tier2"] if h is not None else None
+                h["sd_persona_p_tier2"] if h is not None else None
             )
 
             # Omnibus p (ordered): Friedman test from repeated_measures
@@ -1481,61 +1524,88 @@ class TableGenerator:
             p_t2 = om_t2.iloc[0]["p_value"] if not om_t2.empty else None
             log_p_t2 = om_t2.iloc[0].get("log_p_value") if not om_t2.empty else None
 
-            # HF verdict: compare FULL vs HF gaps
+            # HF direction label: compare FULL vs HF dispersion, qualified
+            # by omnibus significance so noise-level models are not called
+            # "amplified".  Rule is stated in table footnote c.
+            # Band: stable = [0.9, 1.1]; amplified = >1.1; attenuated = <0.9.
+            either_sig = (
+                (p_ord is not None and p_ord < 0.05)
+                or (p_t2 is not None and p_t2 < 0.05)
+            )
             if h is not None and de_full > 0 and dp_full > 0:
                 ratio_primary = de_hf / de_full if de_full else 1.0
                 ratio_secondary = dp_hf / dp_full if dp_full else 1.0
                 avg_ratio = (ratio_primary + ratio_secondary) / 2
-                if avg_ratio >= 1.0:
-                    hf_verdict = "amplified"
-                elif avg_ratio >= 0.9:
-                    hf_verdict = "stable"
+                if either_sig:
+                    if avg_ratio > 1.1:
+                        hf_verdict_tex = "amplified"
+                        hf_verdict_md = "amplified"
+                    elif avg_ratio < 0.9:
+                        hf_verdict_tex = "attenuated"
+                        hf_verdict_md = "attenuated"
+                    else:
+                        hf_verdict_tex = "stable"
+                        hf_verdict_md = "stable"
                 else:
-                    hf_verdict = "attenuated"
+                    # Non-significant: signal is below noise floor
+                    if avg_ratio > 1.1:
+                        hf_verdict_tex = r"stable / slight$\uparrow$"
+                        hf_verdict_md = "stable / slight\u2191"
+                    elif avg_ratio < 0.9:
+                        hf_verdict_tex = r"stable / slight$\downarrow$"
+                        hf_verdict_md = "stable / slight\u2193"
+                    else:
+                        hf_verdict_tex = "stable"
+                        hf_verdict_md = "stable"
             else:
-                hf_verdict = "---"
+                hf_verdict_tex = "---"
+                hf_verdict_md = "---"
 
             model_tex = r"\texttt{" + _escape_latex(model) + "}"
             tex_data_rows.append((
                 model_tex,
                 f"{de_full:.4f}", f"{de_hf:.4f}" if de_hf is not None else "---",
-                f"{dp_full:.3f}", f"{dp_hf:.3f}" if dp_hf is not None else "---",
+                _fmt_pp(dp_full), _fmt_pp(dp_hf) if dp_hf is not None else "---",
                 _fmt_pval_latex(p_ord),
                 _fmt_pval_latex(p_t2, log_p=log_p_t2),
-                hf_verdict,
+                hf_verdict_tex,
             ))
             md_rows.append((
                 model,
                 f"{de_full:.4f}", f"{de_hf:.4f}" if de_hf is not None else "---",
-                f"{dp_full:.3f}", f"{dp_hf:.3f}" if dp_hf is not None else "---",
+                _fmt_pp(dp_full), _fmt_pp(dp_hf) if dp_hf is not None else "---",
                 _fmt_pval(p_ord), _fmt_pval(p_t2, log_p=log_p_t2),
-                hf_verdict,
+                hf_verdict_md,
             ))
 
         if not tex_data_rows:
             return []
-
-        # Footnote marker for p_ord
-        p_ord_note = r"$^{a}$"
 
         # --- Custom LaTeX ---
         tex_lines = [
             r"\begin{table}[t]",
             r"\centering",
             r"\small",
-            r"\caption{Primary and secondary endpoint dispersion summary (matched-guise panel).",
-            r"$\Delta_{90\text{-}10} E[T]$: Q90--Q10 of persona-level mean tier across 36 guises.",
-            r"$\Delta_{90\text{-}10} P(T{=}2)$: Q90--Q10 of persona-level Tier-2 rate.",
-            r"FULL: all pairs; HF: high-fidelity pairs only.}",
+            r"\caption{Primary and secondary endpoint dispersion summary"
+            r" (matched-guise panel).",
+            r"$\sigma\,E[T]$: SD of persona-level mean tier (tier units)"
+            r" across 36 guises.",
+            r"$\sigma\,P(T{=}2)$: SD of persona-level Tier-2 rate"
+            r" (percentage points, pp).",
+            r"FULL: all pairs; HF: high-fidelity pairs only.",
+            r"Primary endpoint: $\sigma\,E[T]$."
+            r" Secondary endpoint: $\sigma\,P(T{=}2)$.}",
             r"\label{tab:endpoint_summary}",
             r"\begin{tabular}{@{}l cc cc cc l@{}}",
             r"\toprule",
-            r"& \multicolumn{2}{c}{Primary: $\Delta_{90\text{-}10} E[T]$}",
-            r"& \multicolumn{2}{c}{Secondary: $\Delta_{90\text{-}10} P(T{=}2)$}",
-            r"& \multicolumn{2}{c}{Omnibus $p$} \\",
-            r"\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7}",
+            r"& \multicolumn{2}{c}{$\sigma\,E[T]$}",
+            r"& \multicolumn{2}{c}{$\sigma\,P(T{=}2)$ (pp)}"
+            r" & & & \\",
+            r"\cmidrule(lr){2-3} \cmidrule(lr){4-5}",
             r"Model & FULL & HF & FULL & HF"
-            r" & Ordered" + p_ord_note + r" & Tier-2 & HF verdict \\",
+            r" & $p_{\mathrm{ord}}$$^{a}$"
+            r" & $p_{Y_2}$$^{b}$"
+            r" & HF direction$^{c}$ \\",
             r"\midrule",
         ]
         for mtex, de_f, de_h, dp_f, dp_h, po, pt, hfv in tex_data_rows:
@@ -1547,13 +1617,37 @@ class TableGenerator:
         tex_lines.append(r"\end{tabular}")
         tex_lines.append("")
         tex_lines.append(r"\vspace{2pt}")
+        tex_lines.append(r"\parbox{0.95\linewidth}{\footnotesize")
         tex_lines.append(
-            r"\parbox{0.95\linewidth}{\footnotesize"
-            r" " + p_ord_note + r" Friedman test (within-complaint blocking,"
-            r" ordinal $T$, 36 persona treatments)."
-            r" Tier-2 omnibus: GEE Wald test,"
-            r" exchangeable working correlation.}"
+            r"$^{a}$~$p_{\mathrm{ord}}$: Friedman test"
+            r" (within-complaint blocking; ordinal $T$;"
+            r" 36 persona treatments)."
+            r" (Supportive / descriptive.)\\"
         )
+        tex_lines.append(
+            r"$^{b}$~$p_{Y_2}$: GEE Wald test on"
+            r" $Y_2 = \mathbf{1}[T{=}2]$ with exchangeable"
+            r" working correlation."
+            r" (Confirmatory omnibus for Tier-2 invariance.)\\"
+        )
+        tex_lines.append(
+            r"$^{c}$~\textit{HF direction} (heuristic descriptor):"
+            r" Let $r_E = \sigma_E^{\mathrm{HF}} / \sigma_E^{\mathrm{FULL}}$"
+            r" and $r_P = \sigma_P^{\mathrm{HF}} / \sigma_P^{\mathrm{FULL}}$,"
+            r" where $\sigma_E$ is the SD of persona-level mean tier and"
+            r" $\sigma_P$ the SD of persona-level Tier-2 rate."
+            r" Define $\bar{r} = \tfrac{1}{2}(r_E + r_P)$."
+            r" \emph{Stable}: $0.9 \le \bar{r} \le 1.1$;"
+            r" \emph{amplified}: $\bar{r} > 1.1$;"
+            r" \emph{attenuated}: $\bar{r} < 0.9$."
+            r" Significance gate: when neither omnibus test is significant"
+            r" ($p_{\mathrm{ord}} \ge 0.05$ and $p_{Y_2} \ge 0.05$),"
+            r" the label is \emph{stable} with a directional qualifier"
+            r" (slight$\uparrow$ or slight$\downarrow$)"
+            r" rather than \emph{amplified}/\emph{attenuated}."
+            r" Thresholds are descriptive; this is not a formal test."
+        )
+        tex_lines.append(r"}")
         tex_lines.append(r"\end{table}")
 
         tex_name = _build_filename(
@@ -1565,9 +1659,10 @@ class TableGenerator:
 
         # --- Markdown + CSV ---
         df = pd.DataFrame(md_rows, columns=[
-            "Model", "Q90-Q10 E[T] FULL", "Q90-Q10 E[T] HF",
-            "Q90-Q10 P(T=2) FULL", "Q90-Q10 P(T=2) HF",
-            "p (ordered)", "p (Tier-2)", "HF verdict",
+            "Model", "SD E[T] FULL", "SD E[T] HF",
+            "SD P(T=2) FULL (pp)", "SD P(T=2) HF (pp)",
+            "p_ord (Friedman on T)", "p_Y2 (GEE Wald on Y2)",
+            "HF direction",
         ])
         md_name = _build_filename(
             "table", "main", "endpoint_summary", "both", "matched", 1, "md"
@@ -1587,6 +1682,145 @@ class TableGenerator:
         df.to_csv(csv_path, index=False, encoding="utf-8")
 
         logger.info("Written table: endpoint_summary (.tex/.md/.csv)")
+        return [tex_path, md_path, csv_path]
+
+    def _table13_permutation_test(self, out: Path) -> List[Path]:
+        """Table 13: Within-complaint permutation test for σ_E invariance."""
+        # Read bootstrap CIs from endpoint_summary
+        rob = self.ar.get("robustness_subsets", {})
+        rob_dir = Path(rob.get("output_dir", "")) if rob and not rob.get("skipped") else None
+        ep_df = None
+        if rob_dir:
+            ep_path = rob_dir / "endpoint_summary.csv"
+            if ep_path.exists():
+                ep_df = pd.read_csv(ep_path)
+
+        tex_data_rows = []
+        md_rows = []
+
+        for model in self.models:
+            perm = self.ar.get(model, {}).get("permutation_sigma_e", {})
+            sigma_obs = perm.get("sigma_obs")
+            perm_p = perm.get("perm_p")
+            if sigma_obs is None or (isinstance(sigma_obs, float) and np.isnan(sigma_obs)):
+                continue
+
+            # Bootstrap CI from endpoint_summary (FULL subset)
+            ci_str_tex = "---"
+            ci_str_md = "---"
+            if ep_df is not None and "ci_lower_sd_persona_mean_tier" in ep_df.columns:
+                row = ep_df[
+                    (ep_df["model_name"] == model) & (ep_df["subset"] == "FULL")
+                ]
+                if not row.empty:
+                    lo = row.iloc[0]["ci_lower_sd_persona_mean_tier"]
+                    hi = row.iloc[0]["ci_upper_sd_persona_mean_tier"]
+                    ci_str_tex = f"[{lo:.4f},\\;{hi:.4f}]"
+                    ci_str_md = f"[{lo:.4f}, {hi:.4f}]"
+
+            # Conclusion
+            if perm_p < 0.001:
+                conclusion_tex = r"Reject $H_0$"
+                conclusion_md = "Reject H0"
+            elif perm_p < 0.05:
+                conclusion_tex = r"Reject $H_0$"
+                conclusion_md = "Reject H0"
+            else:
+                conclusion_tex = r"Fail to reject"
+                conclusion_md = "Fail to reject"
+
+            model_tex = r"\texttt{" + _escape_latex(model) + "}"
+            tex_data_rows.append((
+                model_tex,
+                f"{sigma_obs:.4f}",
+                ci_str_tex,
+                _fmt_pval_latex(perm_p),
+                conclusion_tex,
+            ))
+            md_rows.append((
+                model,
+                f"{sigma_obs:.4f}",
+                ci_str_md,
+                _fmt_pval(perm_p),
+                conclusion_md,
+            ))
+
+        if not tex_data_rows:
+            return []
+
+        B = self.ar.get(self.models[0], {}).get("permutation_sigma_e", {}).get("B", 10_000)
+        B_str = f"{B:,}"
+
+        tex_lines = [
+            r"\begin{table}[t]",
+            r"\centering",
+            r"\small",
+            r"\caption{Within-complaint randomisation test for"
+            r" ordered-endpoint invariance"
+            rf" ($B = {B_str}$ permutations).",
+            r"The test statistic is $\sigma_E$ (SD of persona-level mean tier).",
+            r"Cluster-bootstrap 95\% CI from Table~\ref{tab:endpoint_summary}"
+            r" shown for comparison.}",
+            r"\label{tab:permutation_sigma_e}",
+            r"\begin{tabular}{@{}l c c c l@{}}",
+            r"\toprule",
+            r"Model & $\sigma_E^{\mathrm{obs}}$"
+            r" & Bootstrap 95\% CI"
+            r" & Permutation $p$"
+            r" & Conclusion \\",
+            r"\midrule",
+        ]
+        for mtex, sigma, ci, p, conc in tex_data_rows:
+            tex_lines.append(
+                f"{mtex} & {sigma} & ${ci}$ & {p} & {conc} \\\\"
+            )
+        tex_lines.extend([
+            r"\bottomrule",
+            r"\end{tabular}",
+            "",
+            r"\vspace{2pt}",
+            r"\parbox{0.95\linewidth}{\footnotesize",
+            r"\textit{Note.}~Under $H_0$ persona labels are exchangeable"
+            r" within each complaint; the tier vector is permuted"
+            r" independently per complaint.",
+            r"$p$-value: proportion of permuted $\sigma_E \ge"
+            r" \sigma_E^{\mathrm{obs}}$ (conservative: $(k+1)/(B+1)$).}",
+            r"\end{table}",
+        ])
+
+        tex_name = _build_filename(
+            "table", "main", "permutation_sigma_e", "both", "matched", 1, "tex"
+        )
+        tex_path = out / tex_name
+        tex_lines.insert(0, _build_source_comment(
+            source="permutation_test", model="both",
+            endpoint="sigma_E", units="tier",
+        ))
+        tex_path.write_text("\n".join(tex_lines), encoding="utf-8")
+
+        # --- Markdown + CSV ---
+        df = pd.DataFrame(md_rows, columns=[
+            "Model", "sigma_E_obs", "Bootstrap 95% CI",
+            "Permutation p", "Conclusion",
+        ])
+        md_name = _build_filename(
+            "table", "main", "permutation_sigma_e", "both", "matched", 1, "md"
+        )
+        md_path = out / md_name
+        md_path.write_text(
+            _dataframe_to_markdown(
+                df, "Within-complaint randomisation test for ordered-endpoint invariance."
+            ),
+            encoding="utf-8",
+        )
+
+        csv_name = _build_filename(
+            "table", "main", "permutation_sigma_e", "both", "matched", 1, "csv"
+        )
+        csv_path = out / csv_name
+        df.to_csv(csv_path, index=False, encoding="utf-8")
+
+        logger.info("Written table: permutation_sigma_e (.tex/.md/.csv)")
         return [tex_path, md_path, csv_path]
 
     # ==================================================================
@@ -2717,7 +2951,7 @@ class TableGenerator:
         gate_label = "PASS" if vg.get("pass") else "FAIL"
         rows.append(("Viability gate", gate_label, "---", "---"))
 
-        df = pd.DataFrame(rows, columns=["Metric", "Value", "95% CI", "Threshold"])
+        df = pd.DataFrame(rows, columns=["Metric", "Value", "95% CI (Wilson)", "Threshold"])
         return _write_three_formats(
             df, out, "table", "robustness", "slot_audit_summary",
             "all", "all", 1,
@@ -2752,7 +2986,7 @@ class TableGenerator:
             row = {
                 "Family": fam.title(),
                 "Pres. Rate": pres_str,
-                "Pres. 95% CI": ci_str,
+                "Pres. 95% CI (Wilson)": ci_str,
                 "Omission": _fmt_prop(fm.get("omission_rate")),
                 "Addition": _fmt_prop(fm.get("addition_rate")),
                 "Mutation": _fmt_prop(fm.get("mutation_rate")),

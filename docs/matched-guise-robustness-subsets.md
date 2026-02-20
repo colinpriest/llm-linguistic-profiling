@@ -88,27 +88,28 @@ Per subset x model, computes:
 | `mean_tier` | Average remedy tier (0-2 scale) |
 | `p_tier2` | Proportion receiving tier 2 (monetary relief) |
 | `p_need_more_info` | Proportion receiving "need more info" response |
-| `q9010_p_tier2` | Q90-Q10 of persona-level p(tier2) — **primary CI-bearing smooth metric** |
-| `q9010_mean_tier` | Q90-Q10 of persona-level mean tier — **primary CI-bearing smooth metric** |
+| `sd_persona_p_tier2` | Standard deviation of persona-level p(tier2) — **primary CI-bearing metric** |
+| `sd_persona_mean_tier` | Standard deviation of persona-level mean tier — **primary CI-bearing metric** |
+| `q9010_p_tier2` | Q90-Q10 of persona-level p(tier2) — descriptive spread |
+| `q9010_mean_tier` | Q90-Q10 of persona-level mean tier — descriptive spread |
 | `max_persona_gap_p_tier2` | Max minus min of persona-level p(tier2) — descriptive worst-case |
 | `max_persona_gap_mean_tier` | Max minus min of persona-level mean tier — descriptive worst-case |
-| `sd_persona_p_tier2` | Standard deviation of persona-level p(tier2) |
-| `sd_persona_mean_tier` | Standard deviation of persona-level mean tier |
 
-The Q90-Q10 metrics (90th-10th percentile spread) are the primary CI-bearing dispersion statistics. They are smooth functions of the data, ensuring well-behaved bootstrap distributions. Max-min gap is retained as a descriptive "worst-case" companion but does not carry a CI or containment assertion (range statistics are positively biased under resampling). If Q90-Q10 shrinks meaningfully in filtered subsets, the findings may not be robust.
+SD (standard deviation of persona-level estimates) is the primary CI-bearing dispersion statistic. Its bootstrap distribution is unbiased (unlike order-statistic-based spread measures), and the normal CI (`SD ± 1.96 × SE_boot`) is centred on the plug-in estimate by construction. Q90-Q10 and max-min gap are retained as descriptive companions but carry no CI or containment assertion (order-statistic spread measures are positively biased under resampling). If SD shrinks meaningfully in filtered subsets, the findings may not be robust.
 
 ### 6. Bootstrap Confidence Intervals
 
-Cluster bootstrap BCa 95% CI (complaint-level resampling; jackknife acceleration):
+Cluster bootstrap 95% CI (complaint-level resampling):
 
 1. Sample complaint IDs with replacement (default: 1,000 iterations)
 2. Take all rows for each sampled complaint
-3. Recompute six key metrics: `mean_tier`, `p_tier2`, `max_persona_gap_p_tier2`, `max_persona_gap_mean_tier`, `q9010_p_tier2`, `q9010_mean_tier`
-4. Compute confidence intervals using a two-stage fallback chain:
-   - **BCa (primary):** Bias-corrected and accelerated interval. Bias correction z₀ is the proportion of bootstrap replicates below the point estimate (normal-transformed). Acceleration *a* is estimated from a leave-one-complaint-out jackknife using pre-aggregated sums.
-   - **Symmetric percentile (fallback):** Standard [α/2, 1−α/2] percentile interval, used when BCa produces a degenerate (near-zero-width) interval or excludes the point estimate.
+3. Recompute eight key metrics: `mean_tier`, `p_tier2`, `max_persona_gap_p_tier2`, `max_persona_gap_mean_tier`, `q9010_p_tier2`, `q9010_mean_tier`, `sd_persona_p_tier2`, `sd_persona_mean_tier`
+4. Compute confidence intervals — method depends on the metric:
+   - **SD metrics (`sd_persona_*`) — log-scale normal CI:** Inference on `log(SD + ε)`, back-transformed: `[exp(y − 1.96·SE_y) − ε, exp(y + 1.96·SE_y) − ε]`. Guarantees non-negative bounds and handles right-skew when dispersion is small.
+   - **Location metrics (`mean_tier`, `p_tier2`) — BCa:** Bias-corrected and accelerated interval with jackknife acceleration, falling back to symmetric percentile if BCa produces a degenerate interval.
+   - **Spread metrics (`max_persona_gap_*`, `q9010_*`) — BCa:** Computed for completeness but no containment assertion (order-statistic spread measures are positively biased under resampling).
 
-Complaint-level (rather than pair-level) resampling respects the clustering structure — all persona rewrites of the same complaint are included together. Because Q90-Q10 is a smooth function of the data, its bootstrap distribution is well-behaved and the standard BCa/percentile chain suffices. Max-min gap CIs are computed for completeness but the point-in-CI containment assertion applies only to Q90-Q10 (range statistics are upward-biased under resampling, so the full-sample max-min can legitimately sit below its bootstrap CI lower bound).
+Complaint-level (rather than pair-level) resampling respects the clustering structure — all persona rewrites of the same complaint are included together. A diagnostic check verifies that every bootstrap replicate retains the full set of persona labels (since complaints are the resampling unit and each complaint contributes all 36 personas, persona counts should be consistent across replicates).
 
 ### 7. GEE Omnibus Tests
 
@@ -125,15 +126,15 @@ The omnibus Wald test evaluates whether the persona block is jointly significant
 
 ### 8. Comparison vs FULL + Verdicts
 
-For each non-FULL subset x model x primary effect (`q9010_p_tier2`, `q9010_mean_tier`):
+For each non-FULL subset x model x primary effect (`sd_persona_p_tier2`, `sd_persona_mean_tier`):
 
 **Effect stability metrics:**
 - `abs_ratio = |effect_subset| / |effect_full|`
 - `attenuation = 1 - abs_ratio`
-- `effect_change_class`:
-  - `"stable"` if attenuation between -0.05 and +0.05
-  - `"amplified"` if attenuation < -0.05 (effect is larger in subset)
-  - `"attenuated"` if attenuation > +0.05 (effect is smaller in subset)
+- `effect_change_class` (±10% band, i.e. ratio in [0.9, 1.1]):
+  - `"stable"` if attenuation between -0.10 and +0.10
+  - `"amplified"` if attenuation < -0.10 (effect is larger in subset)
+  - `"attenuated"` if attenuation > +0.10 (effect is smaller in subset)
 
 **CI overlap check:** Do the BCa bootstrap CIs for FULL and the subset overlap? Non-overlapping CIs indicate a statistically meaningful change.
 

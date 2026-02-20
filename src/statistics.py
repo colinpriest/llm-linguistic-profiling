@@ -421,6 +421,71 @@ def bootstrap_ci(
     return float(statistic_fn(data)), float(lo), float(hi)
 
 
+def persona_sd(vec) -> float:
+    """Population SD of persona-level estimates (ddof=0).
+
+    The 36-persona grid is the full population of interest, not a sample
+    from a larger population, so ddof=0 (population SD) is appropriate.
+    """
+    return float(np.std(vec, ddof=0))
+
+
+def permutation_test_sigma_e(
+    persona_decisions_df: pd.DataFrame,
+    model: str,
+    B: int = 10_000,
+    seed: int = 42,
+) -> Dict[str, Any]:
+    """Within-complaint permutation test for ordered-endpoint invariance.
+
+    H0: Tier assignments are exchangeable across persona labels within
+    each complaint (i.e. persona identity has no effect on tier).
+
+    Test statistic: sigma_E = population SD (ddof=0) of persona-level
+    mean tier across the 36 guises.
+
+    Parameters
+    ----------
+    persona_decisions_df : DataFrame
+        Must contain columns ``case_id``, ``model``, ``variant``, ``tier``.
+    model : str
+        Which LLM model to filter on.
+    B : int
+        Number of permutations.
+    seed : int
+        Random seed.
+
+    Returns
+    -------
+    dict
+        Keys: ``sigma_obs``, ``perm_p``, ``B``.
+    """
+    df = persona_decisions_df[persona_decisions_df["model"] == model]
+    pivot = df.pivot_table(
+        index="case_id", columns="variant", values="tier", aggfunc="first",
+    ).dropna()
+
+    if pivot.shape[0] < 5 or pivot.shape[1] < 3:
+        return {"sigma_obs": float("nan"), "perm_p": float("nan"), "B": B}
+
+    mat = pivot.values  # (n_complaints, n_personas)
+
+    # Observed sigma_E
+    sigma_obs = float(np.std(mat.mean(axis=0), ddof=0))
+
+    # Permutation null distribution
+    rng = np.random.default_rng(seed)
+    count_ge = 0
+    for _ in range(B):
+        perm = rng.permuted(mat, axis=1)  # shuffle within each row
+        perm_sigma = float(np.std(perm.mean(axis=0), ddof=0))
+        if perm_sigma >= sigma_obs:
+            count_ge += 1
+
+    p_value = (count_ge + 1) / (B + 1)  # conservative
+    return {"sigma_obs": sigma_obs, "perm_p": p_value, "B": B}
+
+
 def bca_interval(
     theta_hat: float,
     theta_star: np.ndarray,
@@ -873,10 +938,10 @@ def correlation_analysis(
         if ct_dim.shape[0] > 1 and ct_dim.shape[1] > 1:
             results[f"{dim}_chi2"] = chi_squared_test(ct_dim)
 
-    # 3. Logistic regression: favorable (tier >= 1) ~ demographics
-    merged["favorable"] = (merged["tier"] >= 1).astype(int)
+    # 3. Logistic regression: acknowledgement (tier >= 1) ~ demographics
+    merged["ack"] = (merged["tier"] >= 1).astype(int)
     results["logistic_favorable"] = logistic_regression_analysis(
-        merged, "favorable", available_dims
+        merged, "ack", available_dims
     )
 
     # 4. Adverse impact ratios by persona
@@ -894,7 +959,7 @@ def correlation_analysis(
 
 def _compute_air_by_persona(df: pd.DataFrame) -> Dict[str, Any]:
     """Compute AIR for each persona relative to the most favorable."""
-    rates = df.groupby("persona_label")["favorable"].mean()
+    rates = df.groupby("persona_label")["ack"].mean()
     if rates.empty:
         return {}
     best_rate = rates.max()
@@ -916,7 +981,7 @@ def _rates_by_dimension(df: pd.DataFrame, dims: Optional[List[str]] = None) -> D
     result = {}
     for dim in dims:
         if dim in df.columns:
-            result[dim] = df.groupby(dim)["favorable"].mean().to_dict()
+            result[dim] = df.groupby(dim)["ack"].mean().to_dict()
     return result
 
 
@@ -954,9 +1019,12 @@ def causal_analysis(
     # Avoid mutating the caller's DataFrame
     persona_decisions = persona_decisions.copy()
 
-    # 1. Favorable outcome rates by persona variant
-    persona_decisions["favorable"] = (persona_decisions["tier"] >= 1).astype(int)
-    rates = persona_decisions.groupby("variant")["favorable"].mean()
+    # Binary outcome columns
+    persona_decisions["ack"] = (persona_decisions["tier"] >= 1).astype(int)
+    persona_decisions["tier2"] = (persona_decisions["tier"] >= 2).astype(int)
+
+    # 1. Outcome rates by persona variant (acknowledgement endpoint)
+    rates = persona_decisions.groupby("variant")["ack"].mean()
     results["rates_by_persona"] = rates.to_dict()
 
     # 2. Within-complaint variance (Friedman test)
@@ -981,8 +1049,13 @@ def causal_analysis(
     # 4. Effect sizes with CIs
     results["effect_sizes"] = _causal_effect_sizes(persona_decisions)
 
-    # 5. Per-dimension gap analysis with bootstrap CIs
-    results["dimension_gaps"] = _dimension_gap_analysis(persona_decisions)
+    # 5. Per-dimension gap analysis with bootstrap CIs — two endpoints
+    results["dimension_gaps_tier2"] = _dimension_gap_analysis(
+        persona_decisions, outcome_col="tier2",
+    )
+    results["dimension_gaps_ack"] = _dimension_gap_analysis(
+        persona_decisions, outcome_col="ack",
+    )
 
     return results
 
@@ -993,20 +1066,24 @@ def causal_analysis(
 
 def _dimension_gap_analysis(
     df: pd.DataFrame,
+    outcome_col: str = "ack",
     n_boot: int = 1000,
     seed: int = 42,
 ) -> Dict[str, Any]:
-    """Per-dimension max-min gap in favorable rates from matched-guise data.
+    """Per-dimension dispersion in outcome rates from matched-guise data.
 
     Computes marginal rates by averaging across persona combinations within
-    each dimension level, then computes the max-min gap.  Bootstrap CIs are
-    computed via complaint-level resampling to respect within-complaint
-    correlation.
+    each dimension level, then computes dispersion metrics.
+
+    SD is the primary CI-bearing metric (log-scale normal CI, back-transformed).
+    Q90-Q10 and max-min gap are descriptive (point only, no CI).
 
     Parameters
     ----------
     df : DataFrame
-        Must contain columns: case_id, variant, favorable.
+        Must contain columns: case_id, variant, and *outcome_col*.
+    outcome_col : str
+        Name of the binary/numeric outcome column to analyse.
     n_boot : int
         Number of bootstrap iterations.
     seed : int
@@ -1015,19 +1092,18 @@ def _dimension_gap_analysis(
     Returns
     -------
     dict
-        Keyed by dimension name (``age``, ``geographic``, …) and
+        Keyed by dimension name (``age``, ``geographic``, ...) and
         ``full_grid``.
 
         Per-dimension dicts have keys:
         ``sd``, ``sd_ci_lower``, ``sd_ci_upper``, ``sd_ci_method``
-        (smooth CI-bearing metric), ``gap`` (max-min, descriptive),
+        (inferential), ``gap`` (max-min, descriptive),
         ``p_value``, ``level_rates``.
 
         The ``full_grid`` dict has keys:
-        ``q9010``, ``q9010_ci_lower``, ``q9010_ci_upper``,
-        ``q9010_ci_method`` (smooth CI-bearing metric),
-        ``gap`` (max-min, descriptive), ``sd``, ``p_value``,
-        ``level_rates``.
+        ``sd``, ``sd_ci_lower``, ``sd_ci_upper``, ``sd_ci_method``
+        (inferential), ``q9010`` (descriptive), ``gap`` (descriptive),
+        ``p_value``, ``level_rates``.
     """
     df = df.copy()
 
@@ -1052,9 +1128,9 @@ def _dimension_gap_analysis(
 
     # --- Per-dimension analysis ---
     for dim in CAUSAL_DIMS:
-        # Per-complaint × per-level mean favorable rate
+        # Per-complaint × per-level mean outcome rate
         clm = (
-            df.groupby(["case_id", dim])["favorable"]
+            df.groupby(["case_id", dim])[outcome_col]
             .mean()
             .unstack(fill_value=np.nan)
         )
@@ -1063,28 +1139,28 @@ def _dimension_gap_analysis(
 
         level_means = clm.mean(axis=0)
         gap = float(level_means.max() - level_means.min())
-        sd = float(level_means.std(ddof=1))
+        sd = persona_sd(level_means.values)
 
         # Bootstrap (complaint-level cluster resampling)
-        # SD is the primary smooth CI-bearing metric for per-dimension rows.
+        # Log-scale normal CI on SD: inference on log(SD + eps), back-transformed.
+        # Guarantees non-negative bounds; handles right-skew for small effects.
+        _eps = 1e-12
         n_complaints = len(clm)
         boot_sd = np.empty(n_boot)
         clm_values = clm.values  # numpy for speed
         for b in range(n_boot):
             idx = rng.integers(0, n_complaints, size=n_complaints)
             boot_means = clm_values[idx].mean(axis=0)
-            boot_sd[b] = float(np.std(boot_means, ddof=1))
+            boot_sd[b] = persona_sd(boot_means)
 
-        # Jackknife (leave-one-complaint-out) via pre-aggregated sums
-        col_sums = clm_values.sum(axis=0)  # (k,)
-        if n_complaints > 1:
-            jack_means = (col_sums[np.newaxis, :] - clm_values) / (n_complaints - 1)
-            jack_sd = np.std(jack_means, ddof=1, axis=1)
+        if sd > 0:
+            y_hat = np.log(sd + _eps)
+            y_star = np.log(boot_sd + _eps)
+            se_y = float(np.std(y_star, ddof=1))
+            sd_ci_lo = max(0.0, float(np.exp(y_hat - 1.96 * se_y) - _eps))
+            sd_ci_hi = float(np.exp(y_hat + 1.96 * se_y) - _eps)
         else:
-            jack_sd = np.array([sd])
-
-        sd_ci_lo, sd_ci_hi, sd_ci_method = bca_interval(sd, boot_sd, jack_sd)
-        sd_ci_lo = max(0.0, sd_ci_lo)
+            sd_ci_lo = sd_ci_hi = 0.0
 
         # Within-complaint paired test
         p_value = _dimension_paired_test(clm)
@@ -1093,7 +1169,7 @@ def _dimension_gap_analysis(
             "sd": sd,
             "sd_ci_lower": sd_ci_lo,
             "sd_ci_upper": sd_ci_hi,
-            "sd_ci_method": sd_ci_method,
+            "sd_ci_method": "log-normal",
             "gap": gap,
             "p_value": p_value,
             "level_rates": {str(k): float(v) for k, v in level_means.items()},
@@ -1101,51 +1177,43 @@ def _dimension_gap_analysis(
 
     # --- Full persona grid ---
     cpg = (
-        df.groupby(["case_id", "variant"])["favorable"]
+        df.groupby(["case_id", "variant"])[outcome_col]
         .mean()
         .unstack(fill_value=np.nan)
     )
     if cpg.shape[1] >= 2:
         persona_means = cpg.mean(axis=0)
         full_gap = float(persona_means.max() - persona_means.min())
-        full_sd = float(persona_means.std(ddof=1))
+        full_sd = persona_sd(persona_means.values)
         vals = persona_means.values
         full_q9010 = float(np.quantile(vals, 0.9) - np.quantile(vals, 0.1))
 
         # Bootstrap (complaint-level cluster resampling)
-        # Q90-Q10 is the primary smooth CI-bearing metric for full grid.
+        # Log-scale normal CI on SD: inference on log(SD + eps), back-transformed.
         n_complaints = len(cpg)
-        boot_q9010 = np.empty(n_boot)
+        boot_sd_full = np.empty(n_boot)
         cpg_values = cpg.values
         for b in range(n_boot):
             idx = rng.integers(0, n_complaints, size=n_complaints)
             bm = cpg_values[idx].mean(axis=0)
-            boot_q9010[b] = float(np.quantile(bm, 0.9) - np.quantile(bm, 0.1))
+            boot_sd_full[b] = persona_sd(bm)
 
-        # Jackknife (leave-one-complaint-out) via pre-aggregated sums
-        cpg_col_sums = cpg_values.sum(axis=0)  # (36,)
-        if n_complaints > 1:
-            jack_means_full = (cpg_col_sums[np.newaxis, :] - cpg_values) / (n_complaints - 1)
-            jack_q9010 = (
-                np.quantile(jack_means_full, 0.9, axis=1)
-                - np.quantile(jack_means_full, 0.1, axis=1)
-            )
+        if full_sd > 0:
+            y_hat = np.log(full_sd + _eps)
+            y_star = np.log(boot_sd_full + _eps)
+            se_y = float(np.std(y_star, ddof=1))
+            sd_ci_lo = max(0.0, float(np.exp(y_hat - 1.96 * se_y) - _eps))
+            sd_ci_hi = float(np.exp(y_hat + 1.96 * se_y) - _eps)
         else:
-            jack_q9010 = np.array([full_q9010])
-
-        q9010_ci_lo, q9010_ci_hi, q9010_ci_method = bca_interval(
-            full_q9010, boot_q9010, jack_q9010,
-        )
-        q9010_ci_lo = max(0.0, q9010_ci_lo)
-        q9010_ci_hi = min(1.0, q9010_ci_hi)
+            sd_ci_lo = sd_ci_hi = 0.0
 
         results["full_grid"] = {
-            "q9010": full_q9010,
-            "q9010_ci_lower": q9010_ci_lo,
-            "q9010_ci_upper": q9010_ci_hi,
-            "q9010_ci_method": q9010_ci_method,
-            "gap": full_gap,
             "sd": full_sd,
+            "sd_ci_lower": sd_ci_lo,
+            "sd_ci_upper": sd_ci_hi,
+            "sd_ci_method": "log-normal",
+            "q9010": full_q9010,
+            "gap": full_gap,
             "p_value": None,  # Friedman test is in causal["friedman"]
             "level_rates": None,
         }
@@ -1198,14 +1266,14 @@ def _pairwise_mcnemar(df: pd.DataFrame) -> List[Dict[str, Any]]:
     for i in range(len(variants)):
         for j in range(i + 1, len(variants)):
             v1, v2 = variants[i], variants[j]
-            merged = df[df["variant"] == v1][["case_id", "favorable"]].merge(
-                df[df["variant"] == v2][["case_id", "favorable"]],
+            merged = df[df["variant"] == v1][["case_id", "ack"]].merge(
+                df[df["variant"] == v2][["case_id", "ack"]],
                 on="case_id", suffixes=("_1", "_2"),
             )
             if len(merged) < 5:
                 continue
-            a = merged["favorable_1"].values.astype(bool)
-            b = merged["favorable_2"].values.astype(bool)
+            a = merged["ack_1"].values.astype(bool)
+            b = merged["ack_2"].values.astype(bool)
             table = np.array([
                 [(a & b).sum(), (a & ~b).sum()],
                 [(~a & b).sum(), (~a & ~b).sum()],
@@ -1235,11 +1303,11 @@ def _pairwise_mcnemar(df: pd.DataFrame) -> List[Dict[str, Any]]:
 
 def _causal_effect_sizes(df: pd.DataFrame) -> Dict[str, Any]:
     """Effect sizes for each persona variant relative to baseline mean."""
-    overall_rate = df["favorable"].mean()
-    overall_sd = df["favorable"].std()
+    overall_rate = df["ack"].mean()
+    overall_sd = df["ack"].std()
     effects = {}
     for variant in df["variant"].unique():
-        subset = df[df["variant"] == variant]["favorable"].values
+        subset = df[df["variant"] == variant]["ack"].values
         if len(subset) < 5:
             continue
         est, lo, hi = bootstrap_ci(subset)
@@ -1298,11 +1366,11 @@ def mitigation_analysis(
     orig_merged = original_decisions.merge(personas_df, on=["case_id", "model"], suffixes=("", "_persona"))
     neut_merged = neutralized_decisions.merge(personas_df, on=["case_id", "model"], suffixes=("", "_persona"))
 
-    orig_merged["favorable"] = (orig_merged["tier"] >= 1).astype(int)
-    neut_merged["favorable"] = (neut_merged["tier"] >= 1).astype(int)
+    orig_merged["ack"] = (orig_merged["tier"] >= 1).astype(int)
+    neut_merged["ack"] = (neut_merged["tier"] >= 1).astype(int)
 
-    orig_rates = orig_merged.groupby("persona_label")["favorable"].mean()
-    neut_rates = neut_merged.groupby("persona_label")["favorable"].mean()
+    orig_rates = orig_merged.groupby("persona_label")["ack"].mean()
+    neut_rates = neut_merged.groupby("persona_label")["ack"].mean()
 
     if len(orig_rates) > 1 and len(neut_rates) > 1:
         results["variance_orig"] = float(orig_rates.var())

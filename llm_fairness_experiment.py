@@ -18,6 +18,110 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
+# ---------------------------------------------------------------------------
+# Dependency check — every third-party package the pipeline imports
+# ---------------------------------------------------------------------------
+# (pip_package_name, python_import_name)
+_REQUIRED_DEPENDENCIES: list[tuple[str, str]] = [
+    # Core
+    ("python-dotenv", "dotenv"),
+    ("openai", "openai"),
+    ("pydantic", "pydantic"),
+    ("instructor", "instructor"),
+    ("httpx", "httpx"),
+    # Data processing
+    ("pandas", "pandas"),
+    ("numpy", "numpy"),
+    ("pyarrow", "pyarrow"),
+    ("openpyxl", "openpyxl"),
+    # Statistics
+    ("scipy", "scipy"),
+    ("statsmodels", "statsmodels"),
+    ("scikit-learn", "sklearn"),
+    # Machine learning / explainability
+    ("lightgbm", "lightgbm"),
+    ("shap", "shap"),
+    # Causal inference
+    ("econml", "econml"),
+    # Bayesian / Stan
+    ("cmdstanpy", "cmdstanpy"),
+    ("arviz", "arviz"),
+    ("xarray", "xarray"),
+    # Visualization
+    ("matplotlib", "matplotlib"),
+    ("seaborn", "seaborn"),
+    # NLP / text features
+    ("fasttext-wheel", "fasttext"),
+    ("langid", "langid"),
+    ("nltk", "nltk"),
+    ("textstat", "textstat"),
+    ("textblob", "textblob"),
+    ("vaderSentiment", "vaderSentiment"),
+    ("lexicalrichness", "lexicalrichness"),
+    # Progress
+    ("tqdm", "tqdm"),
+]
+
+
+def check_dependencies() -> None:
+    """Check that every required third-party library is importable.
+
+    Suppresses noisy tracebacks during probing.  Reports missing packages
+    and version-incompatible packages in a clean table, then exits.
+    """
+    import importlib
+    import io
+    import contextlib
+
+    missing: list[tuple[str, str]] = []            # (pip, import)
+    incompatible: list[tuple[str, str, str]] = []   # (pip, import, reason)
+
+    for pip_name, import_name in _REQUIRED_DEPENDENCIES:
+        # Suppress all stderr output from the import attempt (e.g. NumPy
+        # version mismatch tracebacks printed by compiled C extensions).
+        stderr_buf = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(stderr_buf):
+                importlib.import_module(import_name)
+        except ImportError:
+            missing.append((pip_name, import_name))
+        except Exception as exc:
+            # Version-mismatch, ABI breakage, etc.
+            reason = str(exc).split("\n")[0] or type(exc).__name__
+            incompatible.append((pip_name, import_name, reason))
+
+    if not missing and not incompatible:
+        return
+
+    w = max(
+        (len(p) for p, *_ in (*missing, *incompatible)),
+        default=20,
+    )
+    sep = "=" * 60
+    print(sep, file=sys.stderr)
+    print("DEPENDENCY CHECK FAILED", file=sys.stderr)
+    print(sep, file=sys.stderr)
+
+    if missing:
+        print(f"\n  Missing ({len(missing)}):", file=sys.stderr)
+        for pip_name, import_name in missing:
+            print(f"    {pip_name:<{w}}  (import {import_name})", file=sys.stderr)
+
+    if incompatible:
+        print(f"\n  Incompatible ({len(incompatible)}):", file=sys.stderr)
+        for pip_name, import_name, reason in incompatible:
+            print(
+                f"    {pip_name:<{w}}  {reason}",
+                file=sys.stderr,
+            )
+
+    print(
+        f"\n  pip install -r requirements.txt\n{sep}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
 def _log_token_usage(llm: object, log: logging.Logger) -> None:
     """Log per-model and total token usage and cost to the console."""
     summary = llm.usage_summary()  # type: ignore[attr-defined]
@@ -174,6 +278,10 @@ def setup_logging(output_dir: str, verbose: bool, timestamp: str) -> _CountingHa
 
 def main() -> None:
     load_dotenv()
+
+    # --- Fail fast if any required library is missing ---
+    check_dependencies()
+
     args = parse_args()
 
     # Validate API key

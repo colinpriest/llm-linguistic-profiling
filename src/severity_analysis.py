@@ -494,9 +494,9 @@ def severity_main_effects(
     labels = [l for l in SEVERITY_LEVELS if len(df[df[severity_metric] == l]) > 0]
     result["anova"] = one_way_anova(groups, labels)
 
-    # Chi-square: favorable × severity
-    df["favorable"] = (df["tier"] >= 1).astype(int)
-    ct = pd.crosstab(df[severity_metric], df["favorable"])
+    # Chi-square: acknowledgement (tier >= 1) × severity
+    df["ack"] = (df["tier"] >= 1).astype(int)
+    ct = pd.crosstab(df[severity_metric], df["ack"])
     if ct.shape[0] >= 2 and ct.shape[1] >= 2:
         result["chi2_favorable"] = chi_squared_test(ct)
     else:

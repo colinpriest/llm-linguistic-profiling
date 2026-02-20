@@ -23,9 +23,15 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from src.statistics import bca_interval
+from src.statistics import bca_interval, persona_sd
 
 logger = logging.getLogger(__name__)
+
+
+def _pfmt(p: float) -> str:
+    """Format p-value: 3 dp, < 0.001 for smaller."""
+    return "< 0.001" if p < 0.001 else f"{p:.3f}"
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -49,7 +55,14 @@ BOOTSTRAP_METRICS = [
     "max_persona_gap_mean_tier",
     "q9010_p_tier2",
     "q9010_mean_tier",
+    "sd_persona_p_tier2",
+    "sd_persona_mean_tier",
 ]
+
+# Metrics that use log-scale normal CI instead of BCa.
+# CI on log(SD + eps) scale, back-transformed: guarantees non-negative intervals.
+_LOG_NORMAL_CI_METRICS = {"sd_persona_p_tier2", "sd_persona_mean_tier"}
+_LOG_CI_EPS = 1e-12
 
 
 # ---------------------------------------------------------------------------
@@ -258,8 +271,8 @@ def _persona_dispersion(
         "q9010_mean_tier": float(
             np.quantile(v_mt, 0.9) - np.quantile(v_mt, 0.1)
         ),
-        "sd_persona_p_tier2": float(persona_stats["p_tier2"].std()),
-        "sd_persona_mean_tier": float(persona_stats["mean_tier"].std()),
+        "sd_persona_p_tier2": persona_sd(persona_stats["p_tier2"].values),
+        "sd_persona_mean_tier": persona_sd(persona_stats["mean_tier"].values),
     }
 
 
@@ -334,21 +347,22 @@ def _compute_boot_metrics_vec(
     tier2: np.ndarray,
     persona_codes: np.ndarray,
     n_personas: int,
-) -> Tuple[float, float, float, float, float, float]:
+) -> Tuple[float, float, float, float, float, float, float, float]:
     """Vectorised bootstrap metrics on pre-extracted numpy arrays.
 
     Returns (mean_tier, p_tier2, max_persona_gap_p_tier2,
-             max_persona_gap_mean_tier, q9010_p_tier2, q9010_mean_tier).
+             max_persona_gap_mean_tier, q9010_p_tier2, q9010_mean_tier,
+             sd_persona_p_tier2, sd_persona_mean_tier).
     """
     n = len(tier)
     if n == 0:
-        return (np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
+        return (np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
 
     mean_tier = tier.mean()
     p_tier2 = tier2.mean()
 
     if n_personas < 2:
-        return (mean_tier, p_tier2, np.nan, np.nan, np.nan, np.nan)
+        return (mean_tier, p_tier2, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
 
     # Per-persona sums and counts via np.bincount
     counts = np.bincount(persona_codes, minlength=n_personas)
@@ -358,7 +372,7 @@ def _compute_boot_metrics_vec(
     # Mask out personas with zero observations in this bootstrap sample
     valid = counts > 0
     if valid.sum() < 2:
-        return (mean_tier, p_tier2, np.nan, np.nan, np.nan, np.nan)
+        return (mean_tier, p_tier2, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
 
     persona_mean_tier = tier_sums[valid] / counts[valid]
     persona_p_tier2 = tier2_sums[valid] / counts[valid]
@@ -371,8 +385,11 @@ def _compute_boot_metrics_vec(
     q9010_t2 = float(
         np.quantile(persona_p_tier2, 0.9) - np.quantile(persona_p_tier2, 0.1)
     )
+    sd_mt = persona_sd(persona_mean_tier)
+    sd_t2 = persona_sd(persona_p_tier2)
 
-    return (float(mean_tier), float(p_tier2), gap_t2, gap_mt, q9010_t2, q9010_mt)
+    return (float(mean_tier), float(p_tier2), gap_t2, gap_mt, q9010_t2, q9010_mt,
+            sd_t2, sd_mt)
 
 
 def bootstrap_subset_metrics(
@@ -450,9 +467,29 @@ def bootstrap_subset_metrics(
                 boot_gap_mt = np.empty(n_boot, dtype=np.float64)
                 boot_q9010_t2 = np.empty(n_boot, dtype=np.float64)
                 boot_q9010_mt = np.empty(n_boot, dtype=np.float64)
+                boot_sd_t2 = np.empty(n_boot, dtype=np.float64)
+                boot_sd_mt = np.empty(n_boot, dtype=np.float64)
 
                 # Complaint ID array for sampling
                 complaint_arr = np.array(list(complaint_to_idx.keys()))
+
+                # Diagnostic: verify each complaint contributes to all personas
+                # (cluster resampling should keep persona counts balanced)
+                _persona_counts_per_complaint = np.zeros(
+                    (n_complaints, n_personas), dtype=np.int64
+                )
+                for row_i, cid in enumerate(complaint_ids):
+                    ci = {cid_: i_ for i_, cid_ in enumerate(complaint_arr)}.get(cid)
+                    if ci is not None:
+                        _persona_counts_per_complaint[ci, persona_codes[row_i]] += 1
+                _personas_per_complaint = (_persona_counts_per_complaint > 0).sum(axis=1)
+                if _personas_per_complaint.min() < n_personas:
+                    logger.debug(
+                        "Subset %s/%s: %d/%d complaints have fewer than %d personas "
+                        "(min=%d). Bootstrap persona counts may vary.",
+                        subset_name, model, int((_personas_per_complaint < n_personas).sum()),
+                        n_complaints, n_personas, int(_personas_per_complaint.min()),
+                    )
 
                 for b in range(n_boot):
                     sampled_ids = rng.choice(
@@ -462,7 +499,7 @@ def bootstrap_subset_metrics(
                     row_idx = np.concatenate(
                         [complaint_to_idx[cid] for cid in sampled_ids]
                     )
-                    mt, pt, gt2, gmt, qt2, qmt = _compute_boot_metrics_vec(
+                    mt, pt, gt2, gmt, qt2, qmt, st2, smt = _compute_boot_metrics_vec(
                         tier_arr[row_idx],
                         tier2_arr[row_idx],
                         persona_codes[row_idx],
@@ -474,6 +511,8 @@ def bootstrap_subset_metrics(
                     boot_gap_mt[b] = gmt
                     boot_q9010_t2[b] = qt2
                     boot_q9010_mt[b] = qmt
+                    boot_sd_t2[b] = st2
+                    boot_sd_mt[b] = smt
 
                 # --- Jackknife (leave-one-complaint-out) via pre-aggregated sums ---
                 # Per-complaint contributions to persona-level bincounts
@@ -510,6 +549,10 @@ def bootstrap_subset_metrics(
                     np.nanquantile(jk_p_tier2, 0.9, axis=1)
                     - np.nanquantile(jk_p_tier2, 0.1, axis=1)
                 )
+                # Jackknife SD (leave-one-complaint-out)
+                jack_sd_mt = np.nanstd(jk_mean_tier, ddof=0, axis=1)
+                jack_sd_t2 = np.nanstd(jk_p_tier2, ddof=0, axis=1)
+
                 # For mean/proportion metrics: leave-one-complaint-out is trivial
                 # (all obs contribute equally to the grand mean)
                 n_total = float(len(tier_arr))
@@ -534,11 +577,10 @@ def bootstrap_subset_metrics(
                     "max_persona_gap_mean_tier": jack_gap_mt,
                     "q9010_p_tier2": jack_q9010_t2,
                     "q9010_mean_tier": jack_q9010_mt,
+                    "sd_persona_p_tier2": jack_sd_t2,
+                    "sd_persona_mean_tier": jack_sd_mt,
                 }
 
-                # --- BCa CIs for gap metrics, percentile for location metrics ---
-                lo_pct = (alpha / 2) * 100
-                hi_pct = (1 - alpha / 2) * 100
                 boot_arrays = {
                     "mean_tier": boot_mean_tier,
                     "p_tier2": boot_p_tier2,
@@ -546,24 +588,47 @@ def bootstrap_subset_metrics(
                     "max_persona_gap_mean_tier": boot_gap_mt,
                     "q9010_p_tier2": boot_q9010_t2,
                     "q9010_mean_tier": boot_q9010_mt,
+                    "sd_persona_p_tier2": boot_sd_t2,
+                    "sd_persona_mean_tier": boot_sd_mt,
                 }
+
+                # --- CI computation: normal for SD metrics, BCa for others ---
                 for metric in BOOTSTRAP_METRICS:
                     arr = boot_arrays[metric]
                     finite = arr[np.isfinite(arr)]
-                    if len(finite) > 0:
-                        theta_hat = point[metric]
-                        jack = jack_arrays[metric]
-                        ci_lo, ci_hi, ci_method = bca_interval(
-                            theta_hat, finite, jack, alpha=alpha,
-                        )
+                    theta_hat = point[metric]
+
+                    if metric in _LOG_NORMAL_CI_METRICS:
+                        # Log-scale normal CI: inference on log(SD + eps),
+                        # back-transformed.  Guarantees non-negative bounds
+                        # and handles right-skew when true dispersion is small.
+                        if len(finite) > 1 and theta_hat > 0:
+                            eps = _LOG_CI_EPS
+                            y_hat = np.log(theta_hat + eps)
+                            y_star = np.log(finite + eps)
+                            se_y = float(np.std(y_star, ddof=1))
+                            ci_lo = max(0.0, np.exp(y_hat - 1.96 * se_y) - eps)
+                            ci_hi = float(np.exp(y_hat + 1.96 * se_y) - eps)
+                            ci_method = "log-normal"
+                        else:
+                            ci_lo = ci_hi = float("nan")
+                            ci_method = "log-normal"
                     else:
-                        ci_lo = ci_hi = float("nan")
-                        ci_method = "BCa"
+                        # BCa CI for location and spread metrics
+                        if len(finite) > 0:
+                            jack = jack_arrays[metric]
+                            ci_lo, ci_hi, ci_method = bca_interval(
+                                theta_hat, finite, jack, alpha=alpha,
+                            )
+                        else:
+                            ci_lo = ci_hi = float("nan")
+                            ci_method = "BCa"
+
                     ci_rows.append({
                         "subset": subset_name,
                         "model_name": model,
                         "metric": metric,
-                        "estimate": round(point[metric], 6),
+                        "estimate": round(theta_hat, 6),
                         "ci_lower": round(ci_lo, 6),
                         "ci_upper": round(ci_hi, 6),
                         "ci_method": ci_method,
@@ -784,12 +849,12 @@ def compare_to_full(
                 else:
                     overlap = True
 
-                # Classify effect change direction
+                # Classify effect change direction (±10% band: ratio in [0.9, 1.1])
                 if np.isnan(attenuation):
                     change_class = "not_evaluable"
-                elif attenuation < -0.05:
+                elif attenuation < -0.10:
                     change_class = "amplified"
-                elif attenuation > 0.05:
+                elif attenuation > 0.10:
                     change_class = "attenuated"
                 else:
                     change_class = "stable"
@@ -1281,7 +1346,7 @@ def write_robustness_report(
             "|--------|-------|----------|---------|--------|",
         ]
         for _, r in tests_df.iterrows():
-            p_str = f"{r['p_value']:.4f}" if not np.isnan(r["p_value"]) else "N/A"
+            p_str = _pfmt(r['p_value']) if not np.isnan(r["p_value"]) else "N/A"
             lines.append(
                 f"| {r['subset']} | {r['model_name']} | {r['endpoint']} | {p_str} | {r['status']} |"
             )
@@ -1330,7 +1395,7 @@ def write_robustness_report(
         ]
         for _, r in persona_balance.iterrows():
             chi2_p = r.get("chi2_persona_hf_p", float("nan"))
-            p_str = f"{chi2_p:.4f}" if not np.isnan(chi2_p) else "N/A"
+            p_str = _pfmt(chi2_p) if not np.isnan(chi2_p) else "N/A"
             lines.append(
                 f"| {r['model_name']} | {r['persona_label']} "
                 f"| {int(r['hf_pairs'])} | {int(r['total_pairs'])} "
@@ -1347,9 +1412,9 @@ def write_robustness_report(
         ]
         for _, r in composition_shift.iterrows():
             tp = r.get("tier_ttest_p", float("nan"))
-            tp_str = f"{tp:.4f}" if not np.isnan(tp) else "N/A"
+            tp_str = _pfmt(tp) if not np.isnan(tp) else "N/A"
             zp = r.get("tier2_ztest_p", float("nan"))
-            zp_str = f"{zp:.4f}" if not np.isnan(zp) else "N/A"
+            zp_str = _pfmt(zp) if not np.isnan(zp) else "N/A"
             mt_d = r.get("mean_tier_dropped", float("nan"))
             mt_d_str = f"{mt_d:.4f}" if not np.isnan(mt_d) else "N/A"
             pt2_d = r.get("p_tier2_dropped", float("nan"))
@@ -1452,7 +1517,7 @@ def run_robustness_analysis(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     thresholds = {**DEFAULT_THRESHOLDS, "alpha": alpha}
-    primary_effects = ["q9010_p_tier2", "q9010_mean_tier"]
+    primary_effects = ["sd_persona_p_tier2", "sd_persona_mean_tier"]
 
     # Load and map (from already-loaded DataFrames)
     dec, aud = decisions_df.copy(), audit_df.copy()
@@ -1624,8 +1689,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         "min_persona_levels_for_tests": 2,
     }
     primary_effects = [
-        "q9010_p_tier2",
-        "q9010_mean_tier",
+        "sd_persona_p_tier2",
+        "sd_persona_mean_tier",
     ]
 
     t0 = time.time()

@@ -672,7 +672,7 @@ def fit_lightgbm_model(
     """Fit LightGBM model with cross-validation and feature importance."""
 
     if not HAS_LIGHTGBM:
-        logger.warning("lightgbm not installed; falling back to sklearn RandomForest")
+        logger.error("lightgbm not installed; falling back to sklearn RandomForest")
         return fit_sklearn_rf_model(X, y, feature_names, target_name, llm_model, n_cv_folds)
 
     # Encode categorical features
@@ -847,7 +847,7 @@ def fit_mixed_effects_model(
     """Fit mixed-effects regression model with fallback to OLS."""
 
     if not HAS_STATSMODELS:
-        logger.warning("statsmodels not installed; mixed-effects models will be unavailable")
+        logger.error("statsmodels not installed; mixed-effects models will be unavailable")
         record_model_fit_error(
             "mitigation_analysis", "mixed_effects", target,
             "statsmodels not installed", fallback=None
@@ -1072,7 +1072,7 @@ def fit_ols_model(
     rather than falling back after a failed mixed-effects attempt.
     """
     if not HAS_STATSMODELS:
-        logger.warning("statsmodels not installed; OLS model will be unavailable")
+        logger.error("statsmodels not installed; OLS model will be unavailable")
         record_model_fit_error(
             "mitigation_analysis", "ols", target,
             "statsmodels not installed", fallback=None
@@ -1154,7 +1154,7 @@ def compute_shap_values(
     """Compute SHAP values for a fitted model."""
 
     if not HAS_SHAP:
-        logger.warning("shap not installed; SHAP explanations will be unavailable")
+        logger.error("shap not installed; SHAP explanations will be unavailable")
         return np.array([]), 0.0, []
 
     # Subsample if needed
@@ -1372,7 +1372,7 @@ def estimate_heterogeneous_effects(
     """Estimate heterogeneous treatment effects using Causal Forest."""
 
     if not HAS_ECONML:
-        logger.warning("econml not installed; heterogeneous treatment effects will be unavailable")
+        logger.error("econml not installed; heterogeneous treatment effects will be unavailable")
         return HeterogeneousEffects(
             treatment=treatment_col,
             llm_model=llm_model,

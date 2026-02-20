@@ -639,7 +639,7 @@ def run_sparsity_analysis(
         merged["persona_label"] = merged["persona_label"].fillna(merged["persona_label_dup"])
         merged.drop(columns=["persona_label_dup"], inplace=True)
 
-    merged["favorable"] = (merged["tier"] >= 1).astype(int)
+    merged["ack"] = (merged["tier"] >= 1).astype(int)
 
     for model in models:
         logger.info("  Sparsity analysis for model: %s", model)
@@ -652,35 +652,35 @@ def run_sparsity_analysis(
             model_results["observed_persona"] = {
                 "support": support_summary(model_df, "persona_label"),
                 "annotated_rates": compute_annotated_rates(
-                    model_df, "persona_label", "favorable"
+                    model_df, "persona_label", "ack"
                 ),
             }
 
         # ---- Per-dimension (observed) ----
         logger.info("    Per-dimension sparsity analysis (observed)")
         model_results["per_dimension_observed"] = dimension_sparsity_analysis(
-            model_df, "favorable", dims=dim_cols, regime="observed", seed=seed,
+            model_df, "ack", dims=dim_cols, regime="observed", seed=seed,
         )
 
         # ---- (C) Bayesian interval AIR ----
         logger.info("    (C) Bayesian interval AIR")
         if "persona_label" in model_df.columns:
             model_results["bayesian_air_persona"] = compute_bayesian_air_all(
-                model_df, "persona_label", "favorable", seed=seed,
+                model_df, "persona_label", "ack", seed=seed,
             )
 
         # ---- (D) Partial pooling ----
         logger.info("    (D) Partial pooling model")
         if "persona_label" in model_df.columns:
             model_results["partial_pooling"] = partial_pooling_model(
-                model_df, "favorable", group_col="persona_label",
+                model_df, "ack", group_col="persona_label",
             )
 
         # ---- (E) Sensitivity analysis (observed) ----
         logger.info("    (E) Sensitivity analysis")
         if "persona_label" in model_df.columns:
             model_results["sensitivity_persona"] = sensitivity_analysis(
-                model_df, "persona_label", "favorable",
+                model_df, "persona_label", "ack",
                 dims=dim_cols, seed=seed,
             )
 
@@ -689,14 +689,14 @@ def run_sparsity_analysis(
             logger.info("    Designed-cell (matched-guise) analysis")
             causal_df = persona_decisions_df[persona_decisions_df["model"] == model].copy()
             if len(causal_df) > 0:
-                causal_df["favorable"] = (causal_df["tier"] >= 1).astype(int)
+                causal_df["ack"] = (causal_df["tier"] >= 1).astype(int)
                 model_results["designed_persona"] = {
                     "support": support_summary(causal_df, "variant"),
                     "annotated_rates": compute_annotated_rates(
-                        causal_df, "variant", "favorable"
+                        causal_df, "variant", "ack"
                     ),
                     "bayesian_air": compute_bayesian_air_all(
-                        causal_df, "variant", "favorable", seed=seed,
+                        causal_df, "variant", "ack", seed=seed,
                     ),
                 }
 
@@ -705,9 +705,9 @@ def run_sparsity_analysis(
             logger.info("    Mitigation sparsity-aware comparison")
             neut_model = neutralized_df[neutralized_df["model"] == model].copy()
             if "persona_label" in neut_model.columns and len(neut_model) > 0:
-                neut_model["favorable"] = (neut_model["tier"] >= 1).astype(int)
+                neut_model["ack"] = (neut_model["tier"] >= 1).astype(int)
                 neut_air = compute_bayesian_air_all(
-                    neut_model, "persona_label", "favorable", seed=seed,
+                    neut_model, "persona_label", "ack", seed=seed,
                 )
                 # Compare pre vs post mitigation Bayesian AIR
                 pre_air = model_results.get("bayesian_air_persona", {})
@@ -732,7 +732,7 @@ def run_sparsity_analysis(
 
                 # Sensitivity on neutralized
                 model_results["sensitivity_neutralized"] = sensitivity_analysis(
-                    neut_model, "persona_label", "favorable",
+                    neut_model, "persona_label", "ack",
                     dims=dim_cols, seed=seed,
                 )
 

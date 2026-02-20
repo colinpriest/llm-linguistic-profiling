@@ -152,6 +152,43 @@ def _fmt(val: Any, precision: int = 4, collect: bool = True) -> str:
     return str(val)
 
 
+def _fmt_p(val: Any, collect: bool = True) -> str:
+    """Format a p-value for HTML display: 3 dp, '< 0.001' for smaller.
+
+    Handles NE values the same way as :func:`_fmt`.
+    """
+    global _ne_collector
+
+    if isinstance(val, NEValue):
+        if collect:
+            _ne_collector.append(val)
+        return f"—<sup>{val.short_code}</sup>"
+
+    if val is None:
+        ne = NE.missing_data()
+        if collect:
+            _ne_collector.append(ne)
+        return f"—<sup>{ne.short_code}</sup>"
+
+    try:
+        fval = float(val)
+    except (TypeError, ValueError):
+        return str(val)
+
+    if not np.isfinite(fval):
+        if np.isnan(fval):
+            ne = NE.missing_data("value is NaN")
+        else:
+            ne = NE.numerical("overflow" if fval > 0 else "underflow")
+        if collect:
+            _ne_collector.append(ne)
+        return f"—<sup>{ne.short_code}</sup>"
+
+    if fval < 0.001:
+        return "< 0.001"
+    return f"{fval:.3f}"
+
+
 def _fmt_ratio(val: Any, precision: int = 2, collect: bool = True) -> str:
     """Format an amplification ratio with 'x' suffix only for estimable values.
 
@@ -197,7 +234,10 @@ def _pct(val: Any, collect: bool = True) -> str:
             if collect:
                 _ne_collector.append(ne)
             return f"—<sup>{ne.short_code}</sup>"
-        return f"{fval * 100:.1f}%"
+        rounded = round(fval * 100, 1)
+        if rounded == 0:
+            rounded = 0.0  # avoid -0.0%
+        return f"{rounded:.1f}%"
     except (TypeError, ValueError):
         return str(val)
 
@@ -1469,7 +1509,7 @@ def _build_tab_executive_summary(
             flag = row["flag"]
             parts.append(f'<tr class="flag-row-{flag}">')
             parts.append(f'<td>{row["dimension"]}</td>')
-            parts.append(f'<td data-sort-value="{_sv(row["p_value"], 999)}">{_fmt(row["p_value"])}</td>')
+            parts.append(f'<td data-sort-value="{_sv(row["p_value"], 999)}">{_fmt_p(row["p_value"])}</td>')
             parts.append(f'<td data-sort-value="{_sv(row["cramers_v"], 0)}">{_fmt(row["cramers_v"])}</td>')
             parts.append(f'<td data-sort-value="{_sv(row["min_air"])}">{_fmt(row["min_air"])}</td>')
             parts.append(f'<td><span class="badge badge-{flag}">{flag}</span></td>')
@@ -1586,7 +1626,7 @@ def _build_tab_disparate_impact_association(
         if overall_chi2:
             parts.append('<table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>')
             parts.append(f'<tr><td>Chi-squared statistic</td><td>{_fmt(overall_chi2.get("chi2"))}</td></tr>')
-            parts.append(f'<tr><td>p-value</td><td>{_fmt(overall_chi2.get("p_value"))}</td></tr>')
+            parts.append(f'<tr><td>p-value</td><td>{_fmt_p(overall_chi2.get("p_value"))}</td></tr>')
             parts.append(f'<tr><td>Degrees of freedom</td><td>{overall_chi2.get("dof", "N/A")}</td></tr>')
             parts.append(f'<tr><td>Cramer\'s V</td><td>{_fmt(overall_chi2.get("cramers_v"))}</td></tr>')
             parts.append("</tbody></table>")
@@ -1603,7 +1643,7 @@ def _build_tab_disparate_impact_association(
             d = corr.get(f"{dim}_chi2", {})
             parts.append(f'<tr><td>{dim.capitalize()}</td>')
             parts.append(f'<td data-sort-value="{_sv(d.get("chi2"), 0)}">{_fmt(d.get("chi2"))}</td>')
-            parts.append(f'<td data-sort-value="{_sv(d.get("p_value"), 1)}">{_fmt(d.get("p_value"))}</td>')
+            parts.append(f'<td data-sort-value="{_sv(d.get("p_value"), 1)}">{_fmt_p(d.get("p_value"))}</td>')
             parts.append(f'<td data-sort-value="{_sv(d.get("cramers_v"), 0)}">{_fmt(d.get("cramers_v"))}</td></tr>')
         parts.append("</tbody></table>")
 
@@ -1753,7 +1793,7 @@ def _build_tab_disparate_impact_causal(
 
         friedman = causal.get("friedman", {})
         if friedman:
-            parts.append(f'<p>Friedman test: statistic = {_fmt(friedman.get("statistic"))}, p = {_fmt(friedman.get("p_value"))}</p>')
+            parts.append(f'<p>Friedman test: statistic = {_fmt(friedman.get("statistic"))}, p = {_fmt_p(friedman.get("p_value"))}</p>')
 
         forest_chart = _chart_causal_forest(analysis_results, model)
         if forest_chart:
@@ -1798,7 +1838,7 @@ def _build_tab_disparate_impact_causal(
 
         mcnemar_pp = mit.get("mcnemar_pre_post", {})
         if mcnemar_pp:
-            parts.append(f'<p>McNemar pre/post: statistic = {_fmt(mcnemar_pp.get("statistic"))}, p = {_fmt(mcnemar_pp.get("p_value"))}</p>')
+            parts.append(f'<p>McNemar pre/post: statistic = {_fmt(mcnemar_pp.get("statistic"))}, p = {_fmt_p(mcnemar_pp.get("p_value"))}</p>')
 
         if "variance_orig" in mit:
             parts.append('<div class="metrics-grid">')
@@ -1885,7 +1925,7 @@ def _build_tab_process_discrimination(
         proc_overall = proc_corr.get("overall_chi2", {})
         if proc_overall:
             parts.append("<h4>Overall Process Association</h4>")
-            parts.append(f'<p>Chi2 = {_fmt(proc_overall.get("chi2"))}, p = {_fmt(proc_overall.get("p_value"))}, '
+            parts.append(f'<p>Chi2 = {_fmt(proc_overall.get("chi2"))}, p = {_fmt_p(proc_overall.get("p_value"))}, '
                          f'Cramer\'s V = {_fmt(proc_overall.get("cramers_v"))}</p>')
 
         parts.append("</div></div>")
@@ -1916,13 +1956,13 @@ def _build_tab_process_discrimination(
         for dim in ESTIMATE_DIMS:
             anova = info_content.get(f"length_anova_{dim}", {})
             if anova:
-                parts.append(f'<p class="muted">ANOVA ({dim}): F = {_fmt(anova.get("f_statistic"))}, p = {_fmt(anova.get("p_value"))}</p>')
+                parts.append(f'<p class="muted">ANOVA ({dim}): F = {_fmt(anova.get("f_statistic"))}, p = {_fmt_p(anova.get("p_value"))}</p>')
 
         # Process causal
         proc_causal = model_res.get("process_causal", {})
         cochrans = proc_causal.get("cochrans_q", {})
         if cochrans:
-            parts.append(f'<p>Cochran\'s Q: statistic = {_fmt(cochrans.get("statistic"))}, p = {_fmt(cochrans.get("p_value"))}</p>')
+            parts.append(f'<p>Cochran\'s Q: statistic = {_fmt(cochrans.get("statistic"))}, p = {_fmt_p(cochrans.get("p_value"))}</p>')
 
         parts.append("</div></div>")
 
@@ -1934,7 +1974,7 @@ def _build_tab_process_discrimination(
         proc_mit = model_res.get("process_mitigation", {})
         proc_mcnemar = proc_mit.get("mcnemar_pre_post", {})
         if proc_mcnemar:
-            parts.append(f'<p>McNemar pre/post: statistic = {_fmt(proc_mcnemar.get("statistic"))}, p = {_fmt(proc_mcnemar.get("p_value"))}</p>')
+            parts.append(f'<p>McNemar pre/post: statistic = {_fmt(proc_mcnemar.get("statistic"))}, p = {_fmt_p(proc_mcnemar.get("p_value"))}</p>')
 
         if "variance_orig" in proc_mit:
             parts.append('<div class="metrics-grid">')
@@ -2232,7 +2272,7 @@ def _build_tab_text_rewriting(
             parts.append(f'<td>{diff_sign}{_fmtf(diff, ".2f")}</td>')
             parts.append(f'<td>{pct_sign}{_fmtf(pct, ".1f")}%</td>')
             parts.append(f'<td style="color:{d_color};font-weight:bold;" title="{d_label} effect">{_fmtf(d, ".3f")} [{_fmtf(d_lo, ".2f")}, {_fmtf(d_hi, ".2f")}]</td>')
-            parts.append(f'<td>{_fmtf(pval, ".4f")}</td>')
+            parts.append(f'<td>{_fmt_p(pval)}</td>')
             parts.append(f'<td {sig_style}>{sig_icon}</td>')
             parts.append('</tr>')
 
@@ -2624,7 +2664,7 @@ def _build_tab_model_comparison(
             d = _safe_get(mr, "correlation", f"{dim}_chi2", default={})
             parts.append(f'<tr><td>{html.escape(model)}</td>')
             parts.append(f'<td>{_fmt(d.get("chi2"))}</td>')
-            parts.append(f'<td>{_fmt(d.get("p_value"))}</td>')
+            parts.append(f'<td>{_fmt_p(d.get("p_value"))}</td>')
             parts.append(f'<td>{_fmt(d.get("cramers_v"))}</td></tr>')
         parts.append("</tbody></table>")
 
@@ -3537,11 +3577,11 @@ def _build_tab_severity(
             chi2 = md.get("chi2_favorable", {})
             trend = md.get("trend", {})
             parts.append(f'<tr><td>{metric.replace("_"," ").title()}</td><td>{html.escape(model)}</td>')
-            parts.append(f'<td>{_fmt(anova.get("F"))}</td><td>{_fmt(anova.get("p_value"))}</td>')
+            parts.append(f'<td>{_fmt(anova.get("F"))}</td><td>{_fmt_p(anova.get("p_value"))}</td>')
             parts.append(f'<td>{_fmt(anova.get("eta_sq_partial"))}</td>')
             parts.append(f'<td>{anova.get("eta_sq_interpretation", "")}</td>')
-            parts.append(f'<td>{_fmt(chi2.get("p_value"))}</td>')
-            parts.append(f'<td>{_fmt(trend.get("spearman_r"))}</td><td>{_fmt(trend.get("p_value"))}</td></tr>')
+            parts.append(f'<td>{_fmt_p(chi2.get("p_value"))}</td>')
+            parts.append(f'<td>{_fmt(trend.get("spearman_r"))}</td><td>{_fmt_p(trend.get("p_value"))}</td></tr>')
     parts.append('</tbody></table>')
 
     parts.append('</div></div>')
@@ -3880,7 +3920,7 @@ def _build_tab_severity(
                 ed = md.get(effect, {})
                 label = effect.replace("_x_", " × ").replace("_", " ").title()
                 parts.append(f'<tr><td>{label}</td><td>{_fmt(ed.get("F"))}</td>')
-                parts.append(f'<td>{_fmt(ed.get("p_value"))}</td><td>{_fmt(ed.get("eta_sq_partial"))}</td></tr>')
+                parts.append(f'<td>{_fmt_p(ed.get("p_value"))}</td><td>{_fmt(ed.get("eta_sq_partial"))}</td></tr>')
             parts.append('</tbody></table>')
 
     parts.append('</div></div>')
@@ -3999,7 +4039,9 @@ def _build_tab_severity(
                 parts.append(f'<div style="font-size:0.8rem;">Baseline: {_fmt_ratio(base_ratio, 2)} → '
                              f'Neutralized: {_fmt_ratio(neut_ratio, 2)}</div>')
                 if is_estimable(delta) and is_estimable(pct):
-                    parts.append(f'<div style="font-size:0.8rem;">Delta: {delta:+.2f} ({pct:+.1f}%)</div>')
+                    d_r = round(float(delta), 2) or 0.0
+                    p_r = round(float(pct), 1) or 0.0
+                    parts.append(f'<div style="font-size:0.8rem;">Delta: {d_r:+.2f} ({p_r:+.1f}%)</div>')
                 parts.append('</div>')
         parts.append('</div>')
 
@@ -4050,8 +4092,8 @@ def _build_tab_severity(
                 w_color = "#2ecc71" if weakened else "#e74c3c"
                 parts.append(f'<tr><td>{metric.replace("_"," ").title()}</td>')
                 parts.append(f'<td>{html.escape(model)}</td>')
-                parts.append(f'<td>{_fmt(base_int.get("F"))}</td><td>{_fmt(base_int.get("p_value"))}</td>')
-                parts.append(f'<td>{_fmt(neut_int.get("F"))}</td><td>{_fmt(neut_int.get("p_value"))}</td>')
+                parts.append(f'<td>{_fmt(base_int.get("F"))}</td><td>{_fmt_p(base_int.get("p_value"))}</td>')
+                parts.append(f'<td>{_fmt(neut_int.get("F"))}</td><td>{_fmt_p(neut_int.get("p_value"))}</td>')
                 parts.append(f'<td style="color:{w_color};font-weight:bold;">{w_label}</td></tr>')
         parts.append('</tbody></table>')
 
@@ -4090,7 +4132,9 @@ def _build_tab_severity(
                     parts.append(f'<div style="font-size:0.8rem;">Baseline: {_fmt_ratio(base_ratio, 2)} → '
                                  f'Neutralized: {_fmt_ratio(neut_ratio, 2)}</div>')
                     if is_estimable(delta) and is_estimable(pct):
-                        parts.append(f'<div style="font-size:0.8rem;">Delta: {delta:+.2f} ({pct:+.1f}%)</div>')
+                        d_r = round(float(delta), 2) or 0.0
+                        p_r = round(float(pct), 1) or 0.0
+                        parts.append(f'<div style="font-size:0.8rem;">Delta: {d_r:+.2f} ({p_r:+.1f}%)</div>')
                     parts.append('</div>')
             parts.append('</div>')
 
@@ -4841,8 +4885,8 @@ def _build_tab_severity(
                     # Format values, collecting NE reasons
                     uw_amp_str, uw_amp_ne = format_value(uw_amp, ".2f")
                     wt_amp_str, wt_amp_ne = format_value(wt_amp, ".2f")
-                    uw_p_str, uw_p_ne = format_value(uw_p, ".4f")
-                    wt_p_str, wt_p_ne = format_value(wt_p, ".4f")
+                    uw_p_str, uw_p_ne = ("< 0.001", None) if is_estimable(uw_p) and float(uw_p) < 0.001 else format_value(uw_p, ".3f")
+                    wt_p_str, wt_p_ne = ("< 0.001", None) if is_estimable(wt_p) and float(wt_p) < 0.001 else format_value(wt_p, ".3f")
 
                     if uw_amp_ne:
                         ne_values.append(uw_amp_ne)
@@ -5533,7 +5577,7 @@ def _build_tab_repeated_measures(
                     sig = " *" if t.get("p_value", 1) < 0.05 else ""
                     parts.append(f'<h4>{test_label}</h4>')
                     parts.append(f'<p>{t.get("test", "")}: statistic = {_fmt(t.get("statistic"))}, '
-                                 f'p = {_fmt(t.get("p_value"))}{sig}, '
+                                 f'p = {_fmt_p(t.get("p_value"))}{sig}, '
                                  f'n_complaints = {t.get("n_complaints", 0)}, '
                                  f'n_personas = {t.get("n_personas", 0)}</p>')
                     posthoc = t.get("posthoc", {})

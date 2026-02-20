@@ -92,7 +92,7 @@ def _acceptance_checklist(output_root: Path, models: List[str]) -> List[str]:
     # Table 4 for each model
     for model in models:
         mc = model.replace("-", "").replace("_", "")
-        t4 = list((output_root / "analysis" / "tables" / "main").glob(f"table__main__distributive_fairness_tier2__{mc}*"))
+        t4 = list((output_root / "analysis" / "tables" / "main").glob(f"table__main__distributive_fairness__{mc}*"))
         if not t4:
             missing.append(f"Table 4 (distributive fairness) for {model}")
 
@@ -194,9 +194,9 @@ class PaperBundleGenerator:
         # Acceptance checklist
         missing = _acceptance_checklist(self.output_root, self.models)
         if missing:
-            logger.warning("Acceptance checklist: %d items missing:", len(missing))
+            logger.error("Acceptance checklist: %d items missing:", len(missing))
             for item in missing:
-                logger.warning("  - %s", item)
+                logger.error("  - %s", item)
         else:
             logger.info("Acceptance checklist: ALL PASS")
 

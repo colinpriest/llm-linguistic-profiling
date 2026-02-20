@@ -76,6 +76,7 @@ from src.statistics import (
     chi_squared_test,
     correlation_analysis,
     mitigation_analysis,
+    permutation_test_sigma_e,
 )
 from src.text_features import (
     extract_features_batch,
@@ -85,6 +86,11 @@ from src.text_features import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _pfmt(p: float) -> str:
+    """Format p-value: 3 dp, < 0.001 for smaller."""
+    return "< 0.001" if p < 0.001 else f"{p:.3f}"
 
 
 # ---------------------------------------------------------------------------
@@ -1048,8 +1054,8 @@ class Experiment:
                 chi2_result = chi_squared_test(ct)
                 model_stats["overall_chi2"] = chi2_result
                 logger.info("  ── Association Tests ──")
-                logger.info("    Overall persona×tier: chi2=%.2f, p=%.4f, V=%.3f",
-                            chi2_result["chi2"], chi2_result["p_value"], chi2_result["cramers_v"])
+                logger.info("    Overall persona×tier: chi2=%.2f, p=%s, V=%.3f",
+                            chi2_result["chi2"], _pfmt(chi2_result["p_value"]), chi2_result["cramers_v"])
 
             # Per-dimension chi2 and mean tier
             dim_stats = {}
@@ -1058,8 +1064,8 @@ class Experiment:
                 if ct_dim.shape[0] > 1 and ct_dim.shape[1] > 1:
                     dim_chi2 = chi_squared_test(ct_dim)
                     dim_stats[dim] = dim_chi2
-                    logger.info("    %s×tier: chi2=%.2f, p=%.4f, V=%.3f",
-                                dim, dim_chi2["chi2"], dim_chi2["p_value"], dim_chi2["cramers_v"])
+                    logger.info("    %s×tier: chi2=%.2f, p=%s, V=%.3f",
+                                dim, dim_chi2["chi2"], _pfmt(dim_chi2["p_value"]), dim_chi2["cramers_v"])
                 # Mean tier by level
                 means = merged.groupby(dim)["tier"].mean().to_dict()
                 model_stats[f"{dim}_mean_tier"] = means
@@ -1090,11 +1096,11 @@ class Experiment:
 
             chi2 = stats.get("overall_chi2")
             if chi2:
-                lines.append(f"  Overall persona×tier: chi2={chi2['chi2']:.2f}, p={chi2['p_value']:.4f}, V={chi2['cramers_v']:.3f}")
+                lines.append(f"  Overall persona×tier: chi2={chi2['chi2']:.2f}, p={_pfmt(chi2['p_value'])}, V={chi2['cramers_v']:.3f}")
 
             dim_chi2 = stats.get("dim_chi2", {})
             for dim, result in sorted(dim_chi2.items()):
-                lines.append(f"  {dim}×tier: chi2={result['chi2']:.2f}, p={result['p_value']:.4f}, V={result['cramers_v']:.3f}")
+                lines.append(f"  {dim}×tier: chi2={result['chi2']:.2f}, p={_pfmt(result['p_value'])}, V={result['cramers_v']:.3f}")
 
             for dim in ESTIMATE_DIMS:
                 means = stats.get(f"{dim}_mean_tier")
@@ -1558,7 +1564,7 @@ class Experiment:
             "decisions_df": self.persona_decisions_df,
             "audit_df": audit_df,
         }
-        cache_params = {"bootstrap_reps": 200, "seed": self.seed}
+        cache_params = {"bootstrap_reps": 200, "seed": self.seed, "version": 5}
         cached_result = cache.get("robustness_subsets", cache_dataframes, cache_params)
         if cached_result is not None:
             self.analysis_results["robustness_subsets"] = cached_result
@@ -2209,12 +2215,12 @@ class Experiment:
                 p_m = self.personas_df[self.personas_df["model"] == model]
                 b_m = self.baseline_df[self.baseline_df["model"] == model]
                 merged = b_m.merge(p_m, on=["case_id", "model"], how="inner")
-                merged["favorable"] = (merged["tier"] >= 1).astype(int)
+                merged["ack"] = (merged["tier"] >= 1).astype(int)
 
                 if len(merged) > 0:
                     # Check per-dimension cell sizes
                     for dim in dims:
-                        grp = merged.groupby(dim)["favorable"]
+                        grp = merged.groupby(dim)["ack"]
                         dim_info: Dict[str, Any] = {"min_cell_size": int(grp.size().min()), "constant_levels": []}
 
                         for level, sub in grp:
@@ -2286,6 +2292,12 @@ class Experiment:
                     persona_dec_m,
                 )
                 model_results["process_causal"] = process_causal_analysis(persona_dec_m)
+
+                # Permutation test for σ_E (ordered-endpoint invariance)
+                logger.info("Running permutation test (σ_E) for %s...", model)
+                model_results["permutation_sigma_e"] = permutation_test_sigma_e(
+                    self.persona_decisions_df, model, seed=self.seed,
+                )
 
             # Step 7: Mitigation
             if baseline_m is not None and neutralized_m is not None and personas_m is not None:
@@ -2500,8 +2512,8 @@ class Experiment:
                 ci_hi = amp.get("ci_upper", float("nan"))
                 int_p = interaction.get("p_value", float("nan"))
                 logger.info(
-                    "  %s [%s]: amplification=%.2fx [%.2f, %.2f], interaction p=%.4f",
-                    metric, model, ratio, ci_lo, ci_hi, int_p,
+                    "  %s [%s]: amplification=%.2fx [%.2f, %.2f], interaction p=%s",
+                    metric, model, ratio, ci_lo, ci_hi, _pfmt(int_p),
                 )
 
                 # Show bias at each severity level
@@ -2801,9 +2813,9 @@ class Experiment:
             om = mr.get("ordinal_model", {})
             if not om.get("skipped"):
                 pxs_p = om.get("p_values", {}).get("persona_x_severity", float("nan"))
-                logger.info("  %s ordinal model: n=%d, %d clusters, persona×severity p=%.4f%s",
+                logger.info("  %s ordinal model: n=%d, %d clusters, persona×severity p=%s%s",
                             model, om.get("n_obs", 0), om.get("n_clusters", 0),
-                            pxs_p, " *" if pxs_p < 0.05 else "")
+                            _pfmt(pxs_p), " *" if pxs_p < 0.05 else "")
 
             # Conditional logistic summary
             cl = mr.get("conditional_logistic_favourable", {})
@@ -2824,12 +2836,12 @@ class Experiment:
             if not np_res.get("skipped"):
                 fr = np_res.get("friedman_tier", {})
                 if not fr.get("skipped"):
-                    logger.info("  %s Friedman (tier): stat=%.2f, p=%.4f",
-                                model, fr.get("statistic", 0), fr.get("p_value", 1))
+                    logger.info("  %s Friedman (tier): stat=%.2f, p=%s",
+                                model, fr.get("statistic", 0), _pfmt(fr.get("p_value", 1)))
                 cq = np_res.get("cochran_favourable", {})
                 if not cq.get("skipped"):
-                    logger.info("  %s Cochran's Q (favourable): stat=%.2f, p=%.4f",
-                                model, cq.get("statistic", 0), cq.get("p_value", 1))
+                    logger.info("  %s Cochran's Q (favourable): stat=%.2f, p=%s",
+                                model, cq.get("statistic", 0), _pfmt(cq.get("p_value", 1)))
 
     # ------------------------------------------------------------------
     # Sparsity-aware analysis
@@ -3127,13 +3139,13 @@ class Experiment:
                 logger.info("── Correlation Analysis (Outcome) ──")
                 chi2 = corr.get("overall_chi2")
                 if chi2:
-                    logger.info("  Overall persona×tier: chi2=%.2f, p=%.4f, Cramer's V=%.3f",
-                                chi2["chi2"], chi2["p_value"], chi2["cramers_v"])
+                    logger.info("  Overall persona×tier: chi2=%.2f, p=%s, Cramer's V=%.3f",
+                                chi2["chi2"], _pfmt(chi2["p_value"]), chi2["cramers_v"])
                 for dim in ESTIMATE_DIMS:
                     d_chi2 = corr.get(f"{dim}_chi2")
                     if d_chi2:
-                        logger.info("  %s×tier: chi2=%.2f, p=%.4f, V=%.3f",
-                                    dim, d_chi2["chi2"], d_chi2["p_value"], d_chi2["cramers_v"])
+                        logger.info("  %s×tier: chi2=%.2f, p=%s, V=%.3f",
+                                    dim, d_chi2["chi2"], _pfmt(d_chi2["p_value"]), d_chi2["cramers_v"])
 
                 # Logistic regression
                 logit = corr.get("logistic_favorable", {})
@@ -3156,7 +3168,7 @@ class Experiment:
                     for k in sorted(odds.keys()):
                         if k != "const":
                             sig = "*" if pvals.get(k, 1) < 0.05 else ""
-                            logger.info("    %s: OR=%.3f, p=%.4f %s", k, odds[k], pvals.get(k, 1), sig)
+                            logger.info("    %s: OR=%.3f, p=%s %s", k, odds[k], _pfmt(pvals.get(k, 1)), sig)
 
                 # Rates by dimension
                 rates = corr.get("rates_by_dimension", {})
@@ -3172,8 +3184,8 @@ class Experiment:
                 logger.info("── Correlation Analysis (Process) ──")
                 chi2 = pcorr.get("overall_chi2")
                 if chi2:
-                    logger.info("  Overall persona×need_info: chi2=%.2f, p=%.4f, V=%.3f",
-                                chi2["chi2"], chi2["p_value"], chi2["cramers_v"])
+                    logger.info("  Overall persona×need_info: chi2=%.2f, p=%s, V=%.3f",
+                                chi2["chi2"], _pfmt(chi2["p_value"]), chi2["cramers_v"])
                 info_rates = pcorr.get("info_rates_by_dimension", {})
                 if info_rates:
                     logger.info("  Info request rates by dimension:")
@@ -3194,7 +3206,7 @@ class Experiment:
                     logger.info("  Spread: %.3f", sorted_rates[-1][1] - sorted_rates[0][1])
                 friedman = causal.get("friedman")
                 if friedman:
-                    logger.info("  Friedman test: stat=%.2f, p=%.4f", friedman["statistic"], friedman["p_value"])
+                    logger.info("  Friedman test: stat=%.2f, p=%s", friedman["statistic"], _pfmt(friedman["p_value"]))
                 # Significant pairwise McNemar
                 mcnemar_pairs = causal.get("pairwise_mcnemar", [])
                 sig_pairs = [p for p in mcnemar_pairs if p.get("significant")]
@@ -3213,7 +3225,7 @@ class Experiment:
                                 sorted_rates[-1][0], sorted_rates[-1][1])
                 cochran = pcausal.get("cochrans_q")
                 if cochran:
-                    logger.info("  Cochran's Q: stat=%.2f, p=%.4f", cochran["statistic"], cochran["p_value"])
+                    logger.info("  Cochran's Q: stat=%.2f, p=%s", cochran["statistic"], _pfmt(cochran["p_value"]))
 
             # --- Mitigation (Step 7) ---
             mitigation = mr.get("mitigation", {})
@@ -3221,8 +3233,8 @@ class Experiment:
                 logger.info("── Mitigation Analysis (Outcome) ──")
                 mcnemar_pp = mitigation.get("mcnemar_pre_post")
                 if mcnemar_pp:
-                    logger.info("  McNemar pre/post: stat=%.2f, p=%.4f",
-                                mcnemar_pp["statistic"], mcnemar_pp["p_value"])
+                    logger.info("  McNemar pre/post: stat=%.2f, p=%s",
+                                mcnemar_pp["statistic"], _pfmt(mcnemar_pp["p_value"]))
                 var_orig = mitigation.get("variance_orig")
                 var_neut = mitigation.get("variance_neut")
                 var_red = mitigation.get("variance_reduction")
@@ -3239,8 +3251,8 @@ class Experiment:
                 logger.info("── Mitigation Analysis (Process) ──")
                 mcnemar_pp = pmit.get("mcnemar_pre_post")
                 if mcnemar_pp:
-                    logger.info("  McNemar pre/post: stat=%.2f, p=%.4f",
-                                mcnemar_pp["statistic"], mcnemar_pp["p_value"])
+                    logger.info("  McNemar pre/post: stat=%.2f, p=%s",
+                                mcnemar_pp["statistic"], _pfmt(mcnemar_pp["p_value"]))
                 var_red = pmit.get("variance_reduction")
                 if var_red is not None:
                     logger.info("  Variance reduction: %.1f%%", var_red * 100)
@@ -3286,11 +3298,11 @@ class Experiment:
             lines.append("CORRELATION ANALYSIS (Outcome Discrimination):")
             chi2 = corr.get("overall_chi2")
             if chi2:
-                lines.append(f"  Overall persona x tier: chi2={chi2['chi2']:.2f}, p={chi2['p_value']:.4f}, Cramer's V={chi2['cramers_v']:.3f}")
+                lines.append(f"  Overall persona x tier: chi2={chi2['chi2']:.2f}, p={_pfmt(chi2['p_value'])}, Cramer's V={chi2['cramers_v']:.3f}")
             for dim in ESTIMATE_DIMS:
                 d_chi2 = corr.get(f"{dim}_chi2")
                 if d_chi2:
-                    lines.append(f"  {dim} x tier: chi2={d_chi2['chi2']:.2f}, p={d_chi2['p_value']:.4f}, V={d_chi2['cramers_v']:.3f}")
+                    lines.append(f"  {dim} x tier: chi2={d_chi2['chi2']:.2f}, p={_pfmt(d_chi2['p_value'])}, V={d_chi2['cramers_v']:.3f}")
             logit = corr.get("logistic_favorable", {})
             if logit.get("skipped"):
                 lines.append(f"  Logistic regression: SKIPPED ({logit.get('reason', '')})")
@@ -3306,7 +3318,7 @@ class Experiment:
                 for k in sorted(odds.keys()):
                     if k != "const":
                         sig = " *" if pvals.get(k, 1) < 0.05 else ""
-                        lines.append(f"    {k}: OR={odds[k]:.3f}, p={pvals.get(k, 1):.4f}{sig}")
+                        lines.append(f"    {k}: OR={odds[k]:.3f}, p={_pfmt(pvals.get(k, 1))}{sig}")
             rates = corr.get("rates_by_dimension", {})
             if rates:
                 lines.append("  Favorable outcome rates by dimension:")
@@ -3327,7 +3339,7 @@ class Experiment:
             lines.append("\nCORRELATION ANALYSIS (Process Discrimination - info request burden):")
             chi2 = pcorr.get("overall_chi2")
             if chi2:
-                lines.append(f"  Overall persona x need_info: chi2={chi2['chi2']:.2f}, p={chi2['p_value']:.4f}, V={chi2['cramers_v']:.3f}")
+                lines.append(f"  Overall persona x need_info: chi2={chi2['chi2']:.2f}, p={_pfmt(chi2['p_value'])}, V={chi2['cramers_v']:.3f}")
             info_rates = pcorr.get("info_rates_by_dimension", {})
             if info_rates:
                 lines.append("  Info request rates by dimension:")
@@ -3346,13 +3358,13 @@ class Experiment:
                 lines.append(f"  Spread: {sorted_rates[-1][1] - sorted_rates[0][1]:.3f}")
             friedman = causal.get("friedman")
             if friedman:
-                lines.append(f"  Friedman test: stat={friedman['statistic']:.2f}, p={friedman['p_value']:.4f}")
+                lines.append(f"  Friedman test: stat={friedman['statistic']:.2f}, p={_pfmt(friedman['p_value'])}")
             mcnemar_pairs = causal.get("pairwise_mcnemar", [])
             sig_pairs = [p for p in mcnemar_pairs if p.get("significant")]
             lines.append(f"  Pairwise McNemar: {len(sig_pairs)}/{len(mcnemar_pairs)} significant (FDR-adjusted p<0.05)")
             if sig_pairs:
                 for sp in sig_pairs[:10]:
-                    lines.append(f"    {sp['persona_1']} vs {sp['persona_2']}: rate1={sp['rate_1']:.3f}, rate2={sp['rate_2']:.3f}, p_adj={sp['p_adjusted']:.4f}")
+                    lines.append(f"    {sp['persona_1']} vs {sp['persona_2']}: rate1={sp['rate_1']:.3f}, rate2={sp['rate_2']:.3f}, p_adj={_pfmt(sp['p_adjusted'])}")
 
         # Causal (Process)
         pcausal = mr.get("process_causal", {})
@@ -3364,7 +3376,7 @@ class Experiment:
                 lines.append(f"  Need-info rates: lowest={sorted_rates[0][0]} ({sorted_rates[0][1]:.3f}), highest={sorted_rates[-1][0]} ({sorted_rates[-1][1]:.3f})")
             cochran = pcausal.get("cochrans_q")
             if cochran:
-                lines.append(f"  Cochran's Q: stat={cochran['statistic']:.2f}, p={cochran['p_value']:.4f}")
+                lines.append(f"  Cochran's Q: stat={cochran['statistic']:.2f}, p={_pfmt(cochran['p_value'])}")
 
         # Mitigation (Outcome)
         mitigation = mr.get("mitigation", {})
@@ -3372,7 +3384,7 @@ class Experiment:
             lines.append("\nMITIGATION ANALYSIS (Outcome - neutralization effectiveness):")
             mcnemar_pp = mitigation.get("mcnemar_pre_post")
             if mcnemar_pp:
-                lines.append(f"  McNemar pre/post: stat={mcnemar_pp['statistic']:.2f}, p={mcnemar_pp['p_value']:.4f}")
+                lines.append(f"  McNemar pre/post: stat={mcnemar_pp['statistic']:.2f}, p={_pfmt(mcnemar_pp['p_value'])}")
             var_orig = mitigation.get("variance_orig")
             var_neut = mitigation.get("variance_neut")
             var_red = mitigation.get("variance_reduction")
@@ -3393,7 +3405,7 @@ class Experiment:
             lines.append("\nMITIGATION ANALYSIS (Process):")
             mcnemar_pp = pmit.get("mcnemar_pre_post")
             if mcnemar_pp:
-                lines.append(f"  McNemar pre/post: stat={mcnemar_pp['statistic']:.2f}, p={mcnemar_pp['p_value']:.4f}")
+                lines.append(f"  McNemar pre/post: stat={mcnemar_pp['statistic']:.2f}, p={_pfmt(mcnemar_pp['p_value'])}")
             var_red = pmit.get("variance_reduction")
             if var_red is not None:
                 lines.append(f"  Variance reduction: {var_red * 100:.1f}%")
@@ -3412,7 +3424,7 @@ class Experiment:
                 for k, v in lmm.get("coefficients", {}).items():
                     p = lmm.get("p_values", {}).get(k, 1)
                     sig = " *" if p < 0.05 else ""
-                    lines.append(f"    {k}: coeff={v:.4f}, p={p:.4f}{sig}")
+                    lines.append(f"    {k}: coeff={v:.4f}, p={_pfmt(p)}{sig}")
 
             om = rm_model.get("ordinal_model", {})
             if om and not om.get("skipped"):
@@ -3420,7 +3432,7 @@ class Experiment:
                 for k, v in om.get("coefficients", {}).items():
                     p = om.get("p_values", {}).get(k, 1)
                     sig = " *" if p < 0.05 else ""
-                    lines.append(f"    {k}: coeff={v:.4f}, p={p:.4f}{sig}")
+                    lines.append(f"    {k}: coeff={v:.4f}, p={_pfmt(p)}{sig}")
 
             cl = rm_model.get("conditional_logistic_favourable", {})
             if cl and not cl.get("skipped"):
@@ -3428,16 +3440,16 @@ class Experiment:
                 for k, v in cl.get("odds_ratios", {}).items():
                     p = cl.get("p_values", {}).get(k, 1)
                     sig = " *" if p < 0.05 else ""
-                    lines.append(f"    {k}: OR={v:.3f}, p={p:.4f}{sig}")
+                    lines.append(f"    {k}: OR={v:.3f}, p={_pfmt(p)}{sig}")
 
             np_res = rm_model.get("nonparametric", {})
             if np_res and not np_res.get("skipped"):
                 fr = np_res.get("friedman_tier", {})
                 if fr and not fr.get("skipped"):
-                    lines.append(f"  Friedman (tier, within-complaint): stat={fr.get('statistic', 0):.2f}, p={fr.get('p_value', 1):.4f}")
+                    lines.append(f"  Friedman (tier, within-complaint): stat={fr.get('statistic', 0):.2f}, p={_pfmt(fr.get('p_value', 1))}")
                 cq = np_res.get("cochran_favourable", {})
                 if cq and not cq.get("skipped"):
-                    lines.append(f"  Cochran's Q (favourable): stat={cq.get('statistic', 0):.2f}, p={cq.get('p_value', 1):.4f}")
+                    lines.append(f"  Cochran's Q (favourable): stat={cq.get('statistic', 0):.2f}, p={_pfmt(cq.get('p_value', 1))}")
 
         # Info Content
         info = mr.get("info_content", {})
@@ -3764,7 +3776,7 @@ class Experiment:
                     lines.append("  Statistical significance (mixed-effects):")
                     for c in coeffs:
                         if c.get("p_value", 1) < 0.05:
-                            lines.append(f"    {c.get('feature')}: coef={c.get('coef', 0):.3f}, p={c.get('p_value', 1):.4f} *")
+                            lines.append(f"    {c.get('feature')}: coef={c.get('coef', 0):.3f}, p={_pfmt(c.get('p_value', 1))} *")
 
         # --- Causal persona effects (which dimension changes matter most?) ---
         lines.append("")
@@ -3906,13 +3918,13 @@ class Experiment:
                     lines.append(f"  {metric}: mean tier by level: {means_str}")
                 anova = mfx.get("anova", {})
                 if anova:
-                    lines.append(f"    ANOVA: F={anova.get('F', 0):.2f}, p={anova.get('p_value', 1):.4f}, "
+                    lines.append(f"    ANOVA: F={anova.get('F', 0):.2f}, p={_pfmt(anova.get('p_value', 1))}, "
                                  f"partial eta-sq={anova.get('eta_sq_partial', 0):.3f} "
                                  f"({anova.get('eta_sq_interpretation', 'N/A')})")
                 trend = mfx.get("trend", {})
                 if trend:
                     lines.append(f"    Trend: Spearman r={trend.get('spearman_r', 0):.3f}, "
-                                 f"p={trend.get('p_value', 1):.4f}")
+                                 f"p={_pfmt(trend.get('p_value', 1))}")
 
             # --- Amplification ---
             interactions = sev.get("interactions", {})
@@ -3938,7 +3950,7 @@ class Experiment:
                 inter = tw.get("interaction", {})
                 if inter:
                     lines.append(f"    Two-way interaction (persona x severity): "
-                                 f"F={inter.get('F', 0):.2f}, p={inter.get('p_value', 1):.4f}, "
+                                 f"F={inter.get('F', 0):.2f}, p={_pfmt(inter.get('p_value', 1))}, "
                                  f"eta-sq={inter.get('eta_sq_partial', 0):.3f}")
 
         # --- Worst case ---
@@ -3981,9 +3993,9 @@ class Experiment:
                 rob = f.get("robustness", "")
                 finding = f.get("finding", "")
                 if isinstance(p_m, float):
-                    p_m = f"{p_m:.4f}"
+                    p_m = _pfmt(p_m)
                 if isinstance(p_i, float):
-                    p_i = f"{p_i:.4f}"
+                    p_i = _pfmt(p_i)
                 lines.append(f"  {finding}: monetary={p_m}, issue={p_i} — {rob}")
 
         # --- Missingness diagnostic ---
@@ -4055,8 +4067,8 @@ class Experiment:
                     int_p_neut = comp.get("interaction_p_neutralized", float("nan"))
                     weakened = comp.get("interaction_weakened", False)
                     lines.append(
-                        f"    Interaction p: baseline={int_p_base:.4f}, "
-                        f"neutralized={int_p_neut:.4f}, weakened={weakened}"
+                        f"    Interaction p: baseline={_pfmt(int_p_base)}, "
+                        f"neutralized={_pfmt(int_p_neut)}, weakened={weakened}"
                     )
 
         # --- Dimension-specific severity amplification ---
@@ -4077,7 +4089,7 @@ class Experiment:
                         inter = anova.get("interaction", {})
                         lines.append(
                             f"  {metric} [{model}] {dim}: "
-                            f"interaction F={inter.get('F', 0):.2f}, p={inter.get('p_value', 1):.4f}, "
+                            f"interaction F={inter.get('F', 0):.2f}, p={_pfmt(inter.get('p_value', 1))}, "
                             f"eta-sq={inter.get('eta_sq_partial', 0):.4f} ({inter.get('eta_sq_interpretation', '')}), "
                             f"amplification={amp.get('point', 0):.2f}x "
                             f"[{amp.get('ci_lower', 0):.2f}, {amp.get('ci_upper', 0):.2f}]"
