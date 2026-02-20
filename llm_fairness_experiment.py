@@ -277,6 +277,10 @@ def setup_logging(output_dir: str, verbose: bool, timestamp: str) -> _CountingHa
 
 
 def main() -> None:
+    # --- Check for .env file and determine run mode ---
+    env_path = Path(".env")
+    cache_only = not env_path.exists()
+
     load_dotenv()
 
     # --- Fail fast if any required library is missing ---
@@ -284,16 +288,41 @@ def main() -> None:
 
     args = parse_args()
 
-    # Validate API key
-    api_key = os.getenv("OPENAI_API_KEY", "")
-    if not api_key:
-        print("ERROR: OPENAI_API_KEY not set. Add it to .env or environment.", file=sys.stderr)
-        sys.exit(1)
+    if cache_only:
+        # No .env → run from cached LLM calls only
+        print(
+            "WARNING: No .env file found — no OpenAI API key available. "
+            "Running solely from cached LLM calls (limited to 10 examples).",
+            file=sys.stderr,
+        )
+        cache_dir = Path(args.cache_dir)
+        if not cache_dir.exists() or not any(cache_dir.iterdir()):
+            print(
+                f"ERROR: LLM cache directory does not exist or is empty at {args.cache_dir}. "
+                "Cannot run without an API key and no cache.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        args.num_complaints = 10
+        args.causal_sample_pct = 0.1
+        args.threads = 4
+        args.seed = 42
+        api_key = "cache-only"
+    else:
+        # Validate API key
+        api_key = os.getenv("OPENAI_API_KEY", "")
+        if not api_key:
+            print("ERROR: OPENAI_API_KEY not set. Add it to .env or environment.", file=sys.stderr)
+            sys.exit(1)
 
-    # Validate data path
+    # Validate data path — fall back to filtered subset if full CSV is missing
     if not Path(args.data_path).exists():
-        print(f"ERROR: Data file not found at {args.data_path}", file=sys.stderr)
-        sys.exit(1)
+        fallback_path = str(Path(args.data_path).parent / "complaints-filtered-20000.csv")
+        if Path(fallback_path).exists():
+            args.data_path = fallback_path
+        else:
+            print(f"ERROR: Data file not found at {args.data_path}", file=sys.stderr)
+            sys.exit(1)
 
     # Parse skip steps
     skip_steps = set()

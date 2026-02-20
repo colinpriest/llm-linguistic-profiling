@@ -1,0 +1,2230 @@
+{
+  "cache_key": "4addb75655faf7db6d1a6395296f68d177467c80512fe3ef",
+  "analysis_type": "bayes_robustness",
+  "analysis_version": "3.3",
+  "params": {
+    "models": "['gpt-4o-mini', 'gpt-5-mini']",
+    "seed": 42
+  },
+  "dataframe_shapes": {
+    "baseline_sev": [
+      40000,
+      15
+    ]
+  },
+  "result": {
+    "gpt-4o-mini": {
+      "monetary_severity": {
+        "n_obs": 6706,
+        "n_complaints": 6706,
+        "K": 20,
+        "col_names": [
+          "age__old",
+          "geographic__rural",
+          "geographic__suburban",
+          "education__college",
+          "socioeconomic__high",
+          "socioeconomic__middle",
+          "sev__high",
+          "sev__medium",
+          "age__old__x__sev__high",
+          "age__old__x__sev__medium",
+          "geographic__rural__x__sev__high",
+          "geographic__rural__x__sev__medium",
+          "geographic__suburban__x__sev__high",
+          "geographic__suburban__x__sev__medium",
+          "education__college__x__sev__high",
+          "education__college__x__sev__medium",
+          "socioeconomic__high__x__sev__high",
+          "socioeconomic__high__x__sev__medium",
+          "socioeconomic__middle__x__sev__high",
+          "socioeconomic__middle__x__sev__medium"
+        ],
+        "subset": "amount_present",
+        "pct_singletons": 1.0,
+        "use_random_intercept": false,
+        "preflight": {
+          "N": 6706,
+          "K": 20,
+          "J": 6706,
+          "n_events": 1244,
+          "epp": 62.2,
+          "matrix_rank": 20,
+          "rank_deficient": false,
+          "condition_number": 25843.053425962808,
+          "ill_conditioned": false,
+          "sparse_cells": [
+            "geographic=rural|sev=low|tier=0 (n=3)",
+            "geographic=rural|sev=low|tier=1 (n=1)",
+            "geographic=rural|sev=low|tier=2 (n=1)",
+            "geographic=rural|sev=medium|tier=0 (n=2)",
+            "geographic=rural|sev=medium|tier=1 (n=3)",
+            "geographic=rural|sev=medium|tier=2 (n=0)",
+            "geographic=rural|sev=high|tier=0 (n=1)",
+            "geographic=rural|sev=high|tier=1 (n=3)",
+            "geographic=rural|sev=high|tier=2 (n=0)",
+            "socioeconomic=high|sev=low|tier=0 (n=1)",
+            "socioeconomic=high|sev=low|tier=1 (n=1)",
+            "socioeconomic=high|sev=low|tier=2 (n=0)",
+            "socioeconomic=high|sev=medium|tier=0 (n=1)",
+            "socioeconomic=high|sev=medium|tier=1 (n=1)",
+            "socioeconomic=high|sev=medium|tier=2 (n=1)",
+            "socioeconomic=high|sev=high|tier=0 (n=2)",
+            "socioeconomic=high|sev=high|tier=1 (n=3)",
+            "socioeconomic=high|sev=high|tier=2 (n=3)"
+          ],
+          "n_sparse_cells": 18,
+          "tier_counts": {
+            "0": 2191,
+            "1": 3271,
+            "2": 1244
+          },
+          "tier2_rate": 0.18550551744706234,
+          "pct_singletons": 1.0,
+          "predicted_difficulty": "hard",
+          "recommendations": [
+            "100% singleton observations prevent complaint-level random intercepts; fixed-effect models used instead",
+            "18 cross-tab cells have <5 observations; some interaction effects may be unidentifiable",
+            "B1 logistic has complete separation in 4/20 dummy columns; MCMC will be skipped in favour of Pathfinder/ADVI for B1"
+          ],
+          "logistic_separation": {
+            "n_columns_checked": 20,
+            "n_separation_cells": 4,
+            "separation_ratio": 0.2,
+            "has_complete_separation": true,
+            "skip_mcmc_b1": true,
+            "separation_cells": [
+              {
+                "column": "geographic__rural",
+                "n_total": 14,
+                "n_pos": 1,
+                "n_neg": 13,
+                "minority_count": 1,
+                "type": "near"
+              },
+              {
+                "column": "geographic__rural__x__sev__high",
+                "n_total": 4,
+                "n_pos": 0,
+                "n_neg": 4,
+                "minority_count": 0,
+                "type": "complete"
+              },
+              {
+                "column": "geographic__rural__x__sev__medium",
+                "n_total": 5,
+                "n_pos": 0,
+                "n_neg": 5,
+                "minority_count": 0,
+                "type": "complete"
+              },
+              {
+                "column": "socioeconomic__high__x__sev__medium",
+                "n_total": 3,
+                "n_pos": 1,
+                "n_neg": 2,
+                "minority_count": 1,
+                "type": "near"
+              }
+            ]
+          },
+          "ordinal_imbalance": {
+            "tier_counts": {
+              "tier0": 2191,
+              "tier1": 3271,
+              "tier2": 1244
+            },
+            "tier_rates": {
+              "tier0": 0.3267223382045929,
+              "tier1": 0.48777214434834476,
+              "tier2": 0.18550551744706234
+            },
+            "min_tier_rate": 0.18550551744706234,
+            "min_tier_label": "tier2",
+            "skip_mcmc_b2": false
+          }
+        },
+        "b1_skip_mcmc": true,
+        "logistic": {
+          "fit_id": "B1__gpt4omini__monetaryseverity__pathfinder",
+          "diagnostics": {
+            "max_rhat": NaN,
+            "min_ess_bulk": NaN,
+            "divergences": 0,
+            "treedepth_hits": 0,
+            "n_stuck_params": 0,
+            "stuck_params": [],
+            "diagnose_text": "Pathfinder approximate inference; no MCMC diagnostics."
+          },
+          "status": "PATHFINDER",
+          "amplification": {
+            "age": {
+              "A_mean": 0.000630759331896416,
+              "A_CrI_low": -0.036457572506409595,
+              "A_CrI_high": 0.03869798291172333,
+              "P_A_gt_0": 0.534,
+              "D_low_mean": 0.018850140527717055,
+              "D_high_mean": 0.019480899859613467
+            },
+            "geographic": {
+              "A_mean": 0.012813847064114578,
+              "A_CrI_low": -0.0778293347505894,
+              "A_CrI_high": 0.08520881783622371,
+              "P_A_gt_0": 0.574,
+              "D_low_mean": 0.06916078090311271,
+              "D_high_mean": 0.08197462796722729
+            },
+            "education": {
+              "A_mean": 0.009146757455506917,
+              "A_CrI_low": -0.015079908144041781,
+              "A_CrI_high": 0.04082138521813025,
+              "P_A_gt_0": 0.729,
+              "D_low_mean": 0.030491935867898046,
+              "D_high_mean": 0.039638693323404965
+            },
+            "socioeconomic": {
+              "A_mean": 0.03387990069059723,
+              "A_CrI_low": -0.04440971404894642,
+              "A_CrI_high": 0.1796941605298437,
+              "P_A_gt_0": 0.737,
+              "D_low_mean": 0.06862575570852725,
+              "D_high_mean": 0.10250565639912447
+            }
+          },
+          "method": "pathfinder logistic"
+        },
+        "ordinal": {
+          "method": "per-dimension ordinal",
+          "amplification": {
+            "geographic": {
+              "A_mean": 0.04728071070574052,
+              "A_CrI_low": -0.06173446351353812,
+              "A_CrI_high": 0.16212829978234763,
+              "P_A_gt_0": 0.79625,
+              "D_low_mean": 0.07284923324297382,
+              "D_high_mean": 0.12012994394871435
+            }
+          },
+          "tier_probs": {
+            "low": {
+              "P_tier0": {
+                "mean": 0.37582914115296706,
+                "ci_low": 0.30151024836472134,
+                "ci_high": 0.4564909183970208
+              },
+              "P_tier1": {
+                "mean": 0.4630403815572704,
+                "ci_low": 0.413144255371779,
+                "ci_high": 0.4947365673812498
+              },
+              "P_tier2": {
+                "mean": 0.16113047728976254,
+                "ci_low": 0.12869912877349804,
+                "ci_high": 0.20898712133721342
+              }
+            },
+            "high": {
+              "P_tier0": {
+                "mean": 0.3345452369473793,
+                "ci_low": 0.24973267890560177,
+                "ci_high": 0.4357170799390952
+              },
+              "P_tier1": {
+                "mean": 0.47259198838871397,
+                "ci_low": 0.4101949779132582,
+                "ci_high": 0.5024898395061262
+              },
+              "P_tier2": {
+                "mean": 0.19286277466390675,
+                "ci_low": 0.15090395863393058,
+                "ci_high": 0.2632492624530574
+              }
+            },
+            "medium": {
+              "P_tier0": {
+                "mean": 0.3381312569852968,
+                "ci_low": 0.25168538093557663,
+                "ci_high": 0.4352287767556718
+              },
+              "P_tier1": {
+                "mean": 0.47054423644901666,
+                "ci_low": 0.4086050926935562,
+                "ci_high": 0.504117739297604
+              },
+              "P_tier2": {
+                "mean": 0.1913245065656866,
+                "ci_low": 0.1520631549427804,
+                "ci_high": 0.25339543828401556
+              }
+            }
+          },
+          "per_dim_fits": {
+            "geographic": {
+              "fit_id": "gpt4omini__monetaryseverity__dim_geographic__B2",
+              "diagnostics": {
+                "max_rhat": 1.0022731460223444,
+                "min_ess_bulk": 1421.0521171362805,
+                "divergences": 0,
+                "treedepth_hits": 0,
+                "n_stuck_params": 2,
+                "stuck_params": [
+                  "stepsize__",
+                  "divergent__"
+                ]
+              },
+              "status": "OK",
+              "amplification": {
+                "geographic": {
+                  "A_mean": 0.04728071070574052,
+                  "A_CrI_low": -0.06173446351353812,
+                  "A_CrI_high": 0.16212829978234763,
+                  "P_A_gt_0": 0.79625,
+                  "D_low_mean": 0.07284923324297382,
+                  "D_high_mean": 0.12012994394871435
+                }
+              },
+              "tier_probs": {
+                "low": {
+                  "P_tier0": {
+                    "mean": 0.37582914115296706,
+                    "ci_low": 0.30151024836472134,
+                    "ci_high": 0.4564909183970208
+                  },
+                  "P_tier1": {
+                    "mean": 0.4630403815572704,
+                    "ci_low": 0.413144255371779,
+                    "ci_high": 0.4947365673812498
+                  },
+                  "P_tier2": {
+                    "mean": 0.16113047728976254,
+                    "ci_low": 0.12869912877349804,
+                    "ci_high": 0.20898712133721342
+                  }
+                },
+                "high": {
+                  "P_tier0": {
+                    "mean": 0.3345452369473793,
+                    "ci_low": 0.24973267890560177,
+                    "ci_high": 0.4357170799390952
+                  },
+                  "P_tier1": {
+                    "mean": 0.47259198838871397,
+                    "ci_low": 0.4101949779132582,
+                    "ci_high": 0.5024898395061262
+                  },
+                  "P_tier2": {
+                    "mean": 0.19286277466390675,
+                    "ci_low": 0.15090395863393058,
+                    "ci_high": 0.2632492624530574
+                  }
+                },
+                "medium": {
+                  "P_tier0": {
+                    "mean": 0.3381312569852968,
+                    "ci_low": 0.25168538093557663,
+                    "ci_high": 0.4352287767556718
+                  },
+                  "P_tier1": {
+                    "mean": 0.47054423644901666,
+                    "ci_low": 0.4086050926935562,
+                    "ci_high": 0.504117739297604
+                  },
+                  "P_tier2": {
+                    "mean": 0.1913245065656866,
+                    "ci_low": 0.1520631549427804,
+                    "ci_high": 0.25339543828401556
+                  }
+                }
+              },
+              "method": "per-dim(geographic) ordinal"
+            }
+          },
+          "partial": true,
+          "dimensions_succeeded": [
+            "geographic"
+          ],
+          "dimensions_failed": [
+            "age",
+            "education",
+            "socioeconomic"
+          ],
+          "status": "WARN"
+        },
+        "fallback_step_b1": "pathfinder",
+        "fallback_step_b2": "per-dimension (partial)",
+        "fallback_step": "pathfinder",
+        "postmortem": {
+          "model": "gpt-4o-mini",
+          "severity_metric": "monetary_severity",
+          "data_summary": {
+            "N": 6706,
+            "K": 20,
+            "J": 6706,
+            "n_tier2": 1244,
+            "n_non_tier2": 5462,
+            "tier2_rate": 0.18550551744706234,
+            "events_per_param": 62.2,
+            "tier_distribution": {
+              "0": 2191,
+              "1": 3271,
+              "2": 1244
+            },
+            "severity_distribution": {
+              "high": 2865,
+              "medium": 2223,
+              "low": 1618
+            },
+            "pct_singletons": 1.0,
+            "use_random_intercept": false,
+            "col_names": [
+              "age__old",
+              "geographic__rural",
+              "geographic__suburban",
+              "education__college",
+              "socioeconomic__high",
+              "socioeconomic__middle",
+              "sev__high",
+              "sev__medium",
+              "age__old__x__sev__high",
+              "age__old__x__sev__medium",
+              "geographic__rural__x__sev__high",
+              "geographic__rural__x__sev__medium",
+              "geographic__suburban__x__sev__high",
+              "geographic__suburban__x__sev__medium",
+              "education__college__x__sev__high",
+              "education__college__x__sev__medium",
+              "socioeconomic__high__x__sev__high",
+              "socioeconomic__high__x__sev__medium",
+              "socioeconomic__middle__x__sev__high",
+              "socioeconomic__middle__x__sev__medium"
+            ]
+          },
+          "outcome_distribution": {
+            "high": {
+              "0": 919,
+              "1": 1430,
+              "2": 516,
+              "All": 2865
+            },
+            "low": {
+              "0": 556,
+              "1": 803,
+              "2": 259,
+              "All": 1618
+            },
+            "medium": {
+              "0": 716,
+              "1": 1038,
+              "2": 469,
+              "All": 2223
+            },
+            "All": {
+              "0": 2191,
+              "1": 3271,
+              "2": 1244,
+              "All": 6706
+            }
+          },
+          "cross_tab_sparsity": {
+            "sparse_cells": [
+              "geographic=rural|sev=low|tier=0 (n=3)",
+              "geographic=rural|sev=low|tier=1 (n=1)",
+              "geographic=rural|sev=low|tier=2 (n=1)",
+              "geographic=rural|sev=medium|tier=0 (n=2)",
+              "geographic=rural|sev=medium|tier=1 (n=3)",
+              "geographic=rural|sev=medium|tier=2 (n=0)",
+              "geographic=rural|sev=high|tier=0 (n=1)",
+              "geographic=rural|sev=high|tier=1 (n=3)",
+              "geographic=rural|sev=high|tier=2 (n=0)",
+              "socioeconomic=high|sev=low|tier=0 (n=1)",
+              "socioeconomic=high|sev=low|tier=1 (n=1)",
+              "socioeconomic=high|sev=low|tier=2 (n=0)",
+              "socioeconomic=high|sev=medium|tier=0 (n=1)",
+              "socioeconomic=high|sev=medium|tier=1 (n=1)",
+              "socioeconomic=high|sev=medium|tier=2 (n=1)",
+              "socioeconomic=high|sev=high|tier=0 (n=2)",
+              "socioeconomic=high|sev=high|tier=1 (n=3)",
+              "socioeconomic=high|sev=high|tier=2 (n=3)"
+            ],
+            "n_sparse_cells": 18,
+            "total_cells": 90,
+            "sparsity_ratio": 0.2
+          },
+          "design_matrix_diagnostics": {
+            "rank": 20,
+            "K": 20,
+            "rank_deficient": false,
+            "condition_number": 25843.053425962808,
+            "ill_conditioned": false,
+            "n_interaction_cols": 12,
+            "n_main_effect_cols": 8
+          },
+          "per_step_diagnostics": [
+            {
+              "step": 1,
+              "label": "standard",
+              "description": "fixed-effect (K=20)",
+              "b1_status": "N/A",
+              "b2_status": "FAIL",
+              "b2_rhat": 1.086749174118197,
+              "b2_ess": 30.41295197713117,
+              "b2_div": 0
+            },
+            {
+              "step": 2,
+              "label": "category-RE",
+              "description": "category-RE(product_category, J=5)",
+              "b1_status": "N/A",
+              "b2_status": "FAIL",
+              "b2_rhat": 1.24156744303821,
+              "b2_ess": 11.995795608269338,
+              "b2_div": 0
+            },
+            {
+              "step": 3,
+              "label": "per-dimension (partial)",
+              "description": "per-dimension models",
+              "b1_status": "FAIL",
+              "b2_status": "WARN"
+            },
+            {
+              "step": 6,
+              "label": "variational-advi",
+              "description": "ADVI meanfield",
+              "b1_status": "FAIL",
+              "b2_status": "N/A"
+            },
+            {
+              "step": 7,
+              "label": "pathfinder",
+              "description": "Pathfinder (4 paths)",
+              "b1_status": "PATHFINDER",
+              "b2_status": "N/A",
+              "b1_rhat": NaN,
+              "b1_ess": NaN,
+              "b1_div": 0
+            }
+          ],
+          "root_causes": [
+            "Singleton structure: 100% of complaints have exactly 1 observation, preventing complaint-level random intercepts"
+          ],
+          "recommendations": [
+            "Per-dimension models were attempted (B1=FAIL, B2=WARN)",
+            "Approximate inference attempted: ADVI: B1=FAIL, B2=N/A; Pathfinder: B1=PATHFINDER, B2=N/A; B1 resolved via pathfinder",
+            "Singleton structure (100% of complaints have 1 observation) prevents complaint-level random intercepts; fixed-effect models used instead",
+            "B1 logistic near-separation detected (4/20 dummy columns); MCMC steps were skipped for B1 — resolved via pathfinder"
+          ],
+          "preflight": {
+            "N": 6706,
+            "K": 20,
+            "J": 6706,
+            "n_events": 1244,
+            "epp": 62.2,
+            "matrix_rank": 20,
+            "rank_deficient": false,
+            "condition_number": 25843.053425962808,
+            "ill_conditioned": false,
+            "sparse_cells": [
+              "geographic=rural|sev=low|tier=0 (n=3)",
+              "geographic=rural|sev=low|tier=1 (n=1)",
+              "geographic=rural|sev=low|tier=2 (n=1)",
+              "geographic=rural|sev=medium|tier=0 (n=2)",
+              "geographic=rural|sev=medium|tier=1 (n=3)",
+              "geographic=rural|sev=medium|tier=2 (n=0)",
+              "geographic=rural|sev=high|tier=0 (n=1)",
+              "geographic=rural|sev=high|tier=1 (n=3)",
+              "geographic=rural|sev=high|tier=2 (n=0)",
+              "socioeconomic=high|sev=low|tier=0 (n=1)",
+              "socioeconomic=high|sev=low|tier=1 (n=1)",
+              "socioeconomic=high|sev=low|tier=2 (n=0)",
+              "socioeconomic=high|sev=medium|tier=0 (n=1)",
+              "socioeconomic=high|sev=medium|tier=1 (n=1)",
+              "socioeconomic=high|sev=medium|tier=2 (n=1)",
+              "socioeconomic=high|sev=high|tier=0 (n=2)",
+              "socioeconomic=high|sev=high|tier=1 (n=3)",
+              "socioeconomic=high|sev=high|tier=2 (n=3)"
+            ],
+            "n_sparse_cells": 18,
+            "tier_counts": {
+              "0": 2191,
+              "1": 3271,
+              "2": 1244
+            },
+            "tier2_rate": 0.18550551744706234,
+            "pct_singletons": 1.0,
+            "predicted_difficulty": "hard",
+            "recommendations": [
+              "100% singleton observations prevent complaint-level random intercepts; fixed-effect models used instead",
+              "18 cross-tab cells have <5 observations; some interaction effects may be unidentifiable",
+              "B1 logistic has complete separation in 4/20 dummy columns; MCMC will be skipped in favour of Pathfinder/ADVI for B1"
+            ],
+            "logistic_separation": {
+              "n_columns_checked": 20,
+              "n_separation_cells": 4,
+              "separation_ratio": 0.2,
+              "has_complete_separation": true,
+              "skip_mcmc_b1": true,
+              "separation_cells": [
+                {
+                  "column": "geographic__rural",
+                  "n_total": 14,
+                  "n_pos": 1,
+                  "n_neg": 13,
+                  "minority_count": 1,
+                  "type": "near"
+                },
+                {
+                  "column": "geographic__rural__x__sev__high",
+                  "n_total": 4,
+                  "n_pos": 0,
+                  "n_neg": 4,
+                  "minority_count": 0,
+                  "type": "complete"
+                },
+                {
+                  "column": "geographic__rural__x__sev__medium",
+                  "n_total": 5,
+                  "n_pos": 0,
+                  "n_neg": 5,
+                  "minority_count": 0,
+                  "type": "complete"
+                },
+                {
+                  "column": "socioeconomic__high__x__sev__medium",
+                  "n_total": 3,
+                  "n_pos": 1,
+                  "n_neg": 2,
+                  "minority_count": 1,
+                  "type": "near"
+                }
+              ]
+            },
+            "ordinal_imbalance": {
+              "tier_counts": {
+                "tier0": 2191,
+                "tier1": 3271,
+                "tier2": 1244
+              },
+              "tier_rates": {
+                "tier0": 0.3267223382045929,
+                "tier1": 0.48777214434834476,
+                "tier2": 0.18550551744706234
+              },
+              "min_tier_rate": 0.18550551744706234,
+              "min_tier_label": "tier2",
+              "skip_mcmc_b2": false
+            }
+          },
+          "final_resolution": {
+            "b1_status": "PATHFINDER",
+            "b1_method": "pathfinder logistic",
+            "b1_step": "pathfinder",
+            "b2_status": "WARN",
+            "b2_method": "per-dimension ordinal",
+            "b2_step": "per-dimension (partial)"
+          }
+        }
+      },
+      "issue_severity": {
+        "n_obs": 20000,
+        "n_complaints": 20000,
+        "K": 19,
+        "col_names": [
+          "age__old",
+          "geographic__rural",
+          "geographic__suburban",
+          "education__college",
+          "socioeconomic__high",
+          "socioeconomic__middle",
+          "sev__high",
+          "sev__medium",
+          "age__old__x__sev__high",
+          "age__old__x__sev__medium",
+          "geographic__rural__x__sev__high",
+          "geographic__rural__x__sev__medium",
+          "geographic__suburban__x__sev__high",
+          "geographic__suburban__x__sev__medium",
+          "education__college__x__sev__high",
+          "education__college__x__sev__medium",
+          "socioeconomic__high__x__sev__medium",
+          "socioeconomic__middle__x__sev__high",
+          "socioeconomic__middle__x__sev__medium"
+        ],
+        "subset": "all",
+        "pct_singletons": 1.0,
+        "use_random_intercept": false,
+        "preflight": {
+          "N": 20000,
+          "K": 19,
+          "J": 20000,
+          "n_events": 1654,
+          "epp": 87.05263157894737,
+          "matrix_rank": 19,
+          "rank_deficient": false,
+          "condition_number": 14496.147303560096,
+          "ill_conditioned": false,
+          "sparse_cells": [
+            "geographic=rural|sev=low|tier=0 (n=4)",
+            "geographic=rural|sev=low|tier=2 (n=1)",
+            "geographic=rural|sev=medium|tier=1 (n=2)",
+            "geographic=rural|sev=medium|tier=2 (n=0)",
+            "geographic=rural|sev=high|tier=0 (n=3)",
+            "geographic=rural|sev=high|tier=1 (n=1)",
+            "geographic=rural|sev=high|tier=2 (n=0)",
+            "socioeconomic=high|sev=low|tier=0 (n=3)",
+            "socioeconomic=high|sev=low|tier=1 (n=4)",
+            "socioeconomic=high|sev=low|tier=2 (n=4)",
+            "socioeconomic=high|sev=medium|tier=0 (n=3)",
+            "socioeconomic=high|sev=medium|tier=1 (n=1)",
+            "socioeconomic=high|sev=medium|tier=2 (n=0)",
+            "socioeconomic=high|sev=high|tier=0 (n=0)",
+            "socioeconomic=high|sev=high|tier=1 (n=0)",
+            "socioeconomic=high|sev=high|tier=2 (n=0)"
+          ],
+          "n_sparse_cells": 16,
+          "tier_counts": {
+            "0": 7399,
+            "1": 10947,
+            "2": 1654
+          },
+          "tier2_rate": 0.0827,
+          "pct_singletons": 1.0,
+          "predicted_difficulty": "very_hard",
+          "recommendations": [
+            "100% singleton observations prevent complaint-level random intercepts; fixed-effect models used instead",
+            "16 cross-tab cells have <5 observations; some interaction effects may be unidentifiable",
+            "B1 logistic has complete separation in 4/19 dummy columns; MCMC will be skipped in favour of Pathfinder/ADVI for B1",
+            "B2 ordinal has severe tier imbalance (tier2 = 8.3% of obs); asymmetric cutpoints create a posterior ridge that MCMC cannot traverse. MCMC will be skipped for B2 in favour of Pathfinder/ADVI"
+          ],
+          "logistic_separation": {
+            "n_columns_checked": 19,
+            "n_separation_cells": 4,
+            "separation_ratio": 0.21052631578947367,
+            "has_complete_separation": true,
+            "skip_mcmc_b1": true,
+            "separation_cells": [
+              {
+                "column": "geographic__rural",
+                "n_total": 27,
+                "n_pos": 1,
+                "n_neg": 26,
+                "minority_count": 1,
+                "type": "near"
+              },
+              {
+                "column": "geographic__rural__x__sev__high",
+                "n_total": 4,
+                "n_pos": 0,
+                "n_neg": 4,
+                "minority_count": 0,
+                "type": "complete"
+              },
+              {
+                "column": "geographic__rural__x__sev__medium",
+                "n_total": 7,
+                "n_pos": 0,
+                "n_neg": 7,
+                "minority_count": 0,
+                "type": "complete"
+              },
+              {
+                "column": "socioeconomic__high__x__sev__medium",
+                "n_total": 4,
+                "n_pos": 0,
+                "n_neg": 4,
+                "minority_count": 0,
+                "type": "complete"
+              }
+            ]
+          },
+          "ordinal_imbalance": {
+            "tier_counts": {
+              "tier0": 7399,
+              "tier1": 10947,
+              "tier2": 1654
+            },
+            "tier_rates": {
+              "tier0": 0.36995,
+              "tier1": 0.54735,
+              "tier2": 0.0827
+            },
+            "min_tier_rate": 0.0827,
+            "min_tier_label": "tier2",
+            "skip_mcmc_b2": true
+          }
+        },
+        "b1_skip_mcmc": true,
+        "b2_skip_mcmc": true,
+        "logistic": {
+          "fit_id": "B1__gpt4omini__issueseverity__pathfinder",
+          "diagnostics": {
+            "max_rhat": NaN,
+            "min_ess_bulk": NaN,
+            "divergences": 0,
+            "treedepth_hits": 0,
+            "n_stuck_params": 0,
+            "stuck_params": [],
+            "diagnose_text": "Pathfinder approximate inference; no MCMC diagnostics."
+          },
+          "status": "PATHFINDER",
+          "amplification": {
+            "age": {
+              "A_mean": 0.0010578960908493556,
+              "A_CrI_low": -0.0071465234875596195,
+              "A_CrI_high": 0.03126969258697698,
+              "P_A_gt_0": 0.353,
+              "D_low_mean": 0.019791686751094394,
+              "D_high_mean": 0.02084958284194375
+            },
+            "geographic": {
+              "A_mean": -0.031284270990180746,
+              "A_CrI_low": -0.08039126128917423,
+              "A_CrI_high": 0.0176625254345692,
+              "P_A_gt_0": 0.272,
+              "D_low_mean": 0.08741904815697688,
+              "D_high_mean": 0.05613477716679614
+            },
+            "education": {
+              "A_mean": 0.01598690893573914,
+              "A_CrI_low": -0.008434956553007827,
+              "A_CrI_high": 0.051579388606451004,
+              "P_A_gt_0": 0.831,
+              "D_low_mean": 0.01649119527361217,
+              "D_high_mean": 0.032478104209351315
+            },
+            "socioeconomic": {
+              "A_mean": -0.03410570034399669,
+              "A_CrI_low": -0.07175678709221683,
+              "A_CrI_high": -0.0020983802431815343,
+              "P_A_gt_0": 0.021,
+              "D_low_mean": 0.1658225353792309,
+              "D_high_mean": 0.13171683503523424
+            }
+          },
+          "method": "pathfinder logistic"
+        },
+        "ordinal": {
+          "fit_id": "B2__gpt4omini__issueseverity__pathfinder",
+          "diagnostics": {
+            "max_rhat": NaN,
+            "min_ess_bulk": NaN,
+            "divergences": 0,
+            "treedepth_hits": 0,
+            "n_stuck_params": 0,
+            "stuck_params": [],
+            "diagnose_text": "Pathfinder approximate inference; no MCMC diagnostics."
+          },
+          "status": "PATHFINDER",
+          "amplification": {
+            "age": {
+              "A_mean": 0.0029145490073678787,
+              "A_CrI_low": -0.014236285027545592,
+              "A_CrI_high": 0.01265951231441198,
+              "P_A_gt_0": 0.737,
+              "D_low_mean": 0.015503604526371935,
+              "D_high_mean": 0.018418153533739812
+            },
+            "geographic": {
+              "A_mean": 0.01625386173860968,
+              "A_CrI_low": -0.021049661984004042,
+              "A_CrI_high": 0.06525712542276507,
+              "P_A_gt_0": 0.71,
+              "D_low_mean": 0.04157201645768863,
+              "D_high_mean": 0.05782587819629832
+            },
+            "education": {
+              "A_mean": 0.021118135215168702,
+              "A_CrI_low": 0.012010310581583195,
+              "A_CrI_high": 0.03059098984484876,
+              "P_A_gt_0": 0.993,
+              "D_low_mean": 0.009095776751457008,
+              "D_high_mean": 0.03021391196662571
+            },
+            "socioeconomic": {
+              "A_mean": 0.013027107229959391,
+              "A_CrI_low": 0.0023424027851667696,
+              "A_CrI_high": 0.04585422298703434,
+              "P_A_gt_0": 0.997,
+              "D_low_mean": 0.0643693834522862,
+              "D_high_mean": 0.0773964906822456
+            }
+          },
+          "method": "pathfinder ordinal",
+          "tier_probs": {
+            "low": {
+              "P_tier0": {
+                "mean": 0.4253004207843943,
+                "ci_low": 0.4050300874353142,
+                "ci_high": 0.46831698124775895
+              },
+              "P_tier1": {
+                "mean": 0.5064924926489182,
+                "ci_low": 0.4771757425815875,
+                "ci_high": 0.5192042579724778
+              },
+              "P_tier2": {
+                "mean": 0.06820708656668752,
+                "ci_low": 0.05450727617065354,
+                "ci_high": 0.08230845338026008
+              }
+            },
+            "high": {
+              "P_tier0": {
+                "mean": 0.38239269121893155,
+                "ci_low": 0.3281184436763566,
+                "ci_high": 0.42055742280142605
+              },
+              "P_tier1": {
+                "mean": 0.5355873067413748,
+                "ci_low": 0.5083050104535721,
+                "ci_high": 0.565943274449944
+              },
+              "P_tier2": {
+                "mean": 0.08202000203969374,
+                "ci_low": 0.0700515024389449,
+                "ci_high": 0.10894700925413284
+              }
+            },
+            "medium": {
+              "P_tier0": {
+                "mean": 0.5332021431019389,
+                "ci_low": 0.4889243457073076,
+                "ci_high": 0.577169298175518
+              },
+              "P_tier1": {
+                "mean": 0.42141409829368687,
+                "ci_low": 0.3840032274212194,
+                "ci_high": 0.4589581425978577
+              },
+              "P_tier2": {
+                "mean": 0.045383758604374144,
+                "ci_low": 0.03882747440326254,
+                "ci_high": 0.05631500793025446
+              }
+            }
+          }
+        },
+        "fallback_step_b1": "pathfinder",
+        "fallback_step_b2": "pathfinder",
+        "fallback_step": "pathfinder",
+        "postmortem": {
+          "model": "gpt-4o-mini",
+          "severity_metric": "issue_severity",
+          "data_summary": {
+            "N": 20000,
+            "K": 19,
+            "J": 20000,
+            "n_tier2": 1654,
+            "n_non_tier2": 18346,
+            "tier2_rate": 0.0827,
+            "events_per_param": 87.05263157894737,
+            "tier_distribution": {
+              "0": 7399,
+              "1": 10947,
+              "2": 1654
+            },
+            "severity_distribution": {
+              "low": 11078,
+              "medium": 5919,
+              "high": 3003
+            },
+            "pct_singletons": 1.0,
+            "use_random_intercept": false,
+            "col_names": [
+              "age__old",
+              "geographic__rural",
+              "geographic__suburban",
+              "education__college",
+              "socioeconomic__high",
+              "socioeconomic__middle",
+              "sev__high",
+              "sev__medium",
+              "age__old__x__sev__high",
+              "age__old__x__sev__medium",
+              "geographic__rural__x__sev__high",
+              "geographic__rural__x__sev__medium",
+              "geographic__suburban__x__sev__high",
+              "geographic__suburban__x__sev__medium",
+              "education__college__x__sev__high",
+              "education__college__x__sev__medium",
+              "socioeconomic__high__x__sev__medium",
+              "socioeconomic__middle__x__sev__high",
+              "socioeconomic__middle__x__sev__medium"
+            ]
+          },
+          "outcome_distribution": {
+            "high": {
+              "0": 806,
+              "1": 1902,
+              "2": 295,
+              "All": 3003
+            },
+            "low": {
+              "0": 4474,
+              "1": 5604,
+              "2": 1000,
+              "All": 11078
+            },
+            "medium": {
+              "0": 2119,
+              "1": 3441,
+              "2": 359,
+              "All": 5919
+            },
+            "All": {
+              "0": 7399,
+              "1": 10947,
+              "2": 1654,
+              "All": 20000
+            }
+          },
+          "cross_tab_sparsity": {
+            "sparse_cells": [
+              "geographic=rural|sev=low|tier=0 (n=4)",
+              "geographic=rural|sev=low|tier=2 (n=1)",
+              "geographic=rural|sev=medium|tier=1 (n=2)",
+              "geographic=rural|sev=medium|tier=2 (n=0)",
+              "geographic=rural|sev=high|tier=0 (n=3)",
+              "geographic=rural|sev=high|tier=1 (n=1)",
+              "geographic=rural|sev=high|tier=2 (n=0)",
+              "socioeconomic=high|sev=low|tier=0 (n=3)",
+              "socioeconomic=high|sev=low|tier=1 (n=4)",
+              "socioeconomic=high|sev=low|tier=2 (n=4)",
+              "socioeconomic=high|sev=medium|tier=0 (n=3)",
+              "socioeconomic=high|sev=medium|tier=1 (n=1)",
+              "socioeconomic=high|sev=medium|tier=2 (n=0)",
+              "socioeconomic=high|sev=high|tier=0 (n=0)",
+              "socioeconomic=high|sev=high|tier=1 (n=0)",
+              "socioeconomic=high|sev=high|tier=2 (n=0)"
+            ],
+            "n_sparse_cells": 16,
+            "total_cells": 90,
+            "sparsity_ratio": 0.17777777777777778
+          },
+          "design_matrix_diagnostics": {
+            "rank": 19,
+            "K": 19,
+            "rank_deficient": false,
+            "condition_number": 14496.147303560096,
+            "ill_conditioned": false,
+            "n_interaction_cols": 11,
+            "n_main_effect_cols": 8
+          },
+          "per_step_diagnostics": [
+            {
+              "step": 1,
+              "label": "standard",
+              "description": "fixed-effect (K=19) — skipped (B1 separation + B2 ordinal imbalance)",
+              "b1_status": "SKIP",
+              "b2_status": "SKIP"
+            },
+            {
+              "step": 6,
+              "label": "variational-advi",
+              "description": "ADVI meanfield",
+              "b1_status": "FAIL",
+              "b2_status": "FAIL"
+            },
+            {
+              "step": 7,
+              "label": "pathfinder",
+              "description": "Pathfinder (4 paths)",
+              "b1_status": "PATHFINDER",
+              "b2_status": "PATHFINDER",
+              "b1_rhat": NaN,
+              "b1_ess": NaN,
+              "b1_div": 0,
+              "b2_rhat": NaN,
+              "b2_ess": NaN,
+              "b2_div": 0
+            }
+          ],
+          "root_causes": [
+            "Singleton structure: 100% of complaints have exactly 1 observation, preventing complaint-level random intercepts",
+            "Ordinal tier imbalance: tier2 has only 8.3% of observations; asymmetric cutpoints create a posterior ridge that prevents MCMC convergence for B2 ordinal"
+          ],
+          "recommendations": [
+            "Consider per-dimension models (K=3-5 each) to reduce effective dimensionality",
+            "Approximate inference attempted: ADVI: B1=FAIL, B2=FAIL; Pathfinder: B1=PATHFINDER, B2=PATHFINDER; B1 resolved via pathfinder; B2 resolved via pathfinder",
+            "Consider stronger priors (N(0, 0.3)) to regularize coefficients for rare outcomes",
+            "Singleton structure (100% of complaints have 1 observation) prevents complaint-level random intercepts; fixed-effect models used instead",
+            "B1 logistic near-separation detected (4/19 dummy columns); MCMC steps were skipped for B1 — resolved via pathfinder",
+            "B2 ordinal tier imbalance detected (tier2 = 8.3% of obs); MCMC steps were skipped for B2 — resolved via pathfinder"
+          ],
+          "preflight": {
+            "N": 20000,
+            "K": 19,
+            "J": 20000,
+            "n_events": 1654,
+            "epp": 87.05263157894737,
+            "matrix_rank": 19,
+            "rank_deficient": false,
+            "condition_number": 14496.147303560096,
+            "ill_conditioned": false,
+            "sparse_cells": [
+              "geographic=rural|sev=low|tier=0 (n=4)",
+              "geographic=rural|sev=low|tier=2 (n=1)",
+              "geographic=rural|sev=medium|tier=1 (n=2)",
+              "geographic=rural|sev=medium|tier=2 (n=0)",
+              "geographic=rural|sev=high|tier=0 (n=3)",
+              "geographic=rural|sev=high|tier=1 (n=1)",
+              "geographic=rural|sev=high|tier=2 (n=0)",
+              "socioeconomic=high|sev=low|tier=0 (n=3)",
+              "socioeconomic=high|sev=low|tier=1 (n=4)",
+              "socioeconomic=high|sev=low|tier=2 (n=4)",
+              "socioeconomic=high|sev=medium|tier=0 (n=3)",
+              "socioeconomic=high|sev=medium|tier=1 (n=1)",
+              "socioeconomic=high|sev=medium|tier=2 (n=0)",
+              "socioeconomic=high|sev=high|tier=0 (n=0)",
+              "socioeconomic=high|sev=high|tier=1 (n=0)",
+              "socioeconomic=high|sev=high|tier=2 (n=0)"
+            ],
+            "n_sparse_cells": 16,
+            "tier_counts": {
+              "0": 7399,
+              "1": 10947,
+              "2": 1654
+            },
+            "tier2_rate": 0.0827,
+            "pct_singletons": 1.0,
+            "predicted_difficulty": "very_hard",
+            "recommendations": [
+              "100% singleton observations prevent complaint-level random intercepts; fixed-effect models used instead",
+              "16 cross-tab cells have <5 observations; some interaction effects may be unidentifiable",
+              "B1 logistic has complete separation in 4/19 dummy columns; MCMC will be skipped in favour of Pathfinder/ADVI for B1",
+              "B2 ordinal has severe tier imbalance (tier2 = 8.3% of obs); asymmetric cutpoints create a posterior ridge that MCMC cannot traverse. MCMC will be skipped for B2 in favour of Pathfinder/ADVI"
+            ],
+            "logistic_separation": {
+              "n_columns_checked": 19,
+              "n_separation_cells": 4,
+              "separation_ratio": 0.21052631578947367,
+              "has_complete_separation": true,
+              "skip_mcmc_b1": true,
+              "separation_cells": [
+                {
+                  "column": "geographic__rural",
+                  "n_total": 27,
+                  "n_pos": 1,
+                  "n_neg": 26,
+                  "minority_count": 1,
+                  "type": "near"
+                },
+                {
+                  "column": "geographic__rural__x__sev__high",
+                  "n_total": 4,
+                  "n_pos": 0,
+                  "n_neg": 4,
+                  "minority_count": 0,
+                  "type": "complete"
+                },
+                {
+                  "column": "geographic__rural__x__sev__medium",
+                  "n_total": 7,
+                  "n_pos": 0,
+                  "n_neg": 7,
+                  "minority_count": 0,
+                  "type": "complete"
+                },
+                {
+                  "column": "socioeconomic__high__x__sev__medium",
+                  "n_total": 4,
+                  "n_pos": 0,
+                  "n_neg": 4,
+                  "minority_count": 0,
+                  "type": "complete"
+                }
+              ]
+            },
+            "ordinal_imbalance": {
+              "tier_counts": {
+                "tier0": 7399,
+                "tier1": 10947,
+                "tier2": 1654
+              },
+              "tier_rates": {
+                "tier0": 0.36995,
+                "tier1": 0.54735,
+                "tier2": 0.0827
+              },
+              "min_tier_rate": 0.0827,
+              "min_tier_label": "tier2",
+              "skip_mcmc_b2": true
+            }
+          },
+          "final_resolution": {
+            "b1_status": "PATHFINDER",
+            "b1_method": "pathfinder logistic",
+            "b1_step": "pathfinder",
+            "b2_status": "PATHFINDER",
+            "b2_method": "pathfinder ordinal",
+            "b2_step": "pathfinder"
+          }
+        }
+      }
+    },
+    "gpt-5-mini": {
+      "monetary_severity": {
+        "n_obs": 6706,
+        "n_complaints": 6706,
+        "K": 20,
+        "col_names": [
+          "age__old",
+          "geographic__rural",
+          "geographic__suburban",
+          "education__college",
+          "socioeconomic__high",
+          "socioeconomic__middle",
+          "sev__high",
+          "sev__medium",
+          "age__old__x__sev__high",
+          "age__old__x__sev__medium",
+          "geographic__rural__x__sev__high",
+          "geographic__rural__x__sev__medium",
+          "geographic__suburban__x__sev__high",
+          "geographic__suburban__x__sev__medium",
+          "education__college__x__sev__high",
+          "education__college__x__sev__medium",
+          "socioeconomic__high__x__sev__high",
+          "socioeconomic__high__x__sev__medium",
+          "socioeconomic__middle__x__sev__high",
+          "socioeconomic__middle__x__sev__medium"
+        ],
+        "subset": "amount_present",
+        "pct_singletons": 1.0,
+        "use_random_intercept": false,
+        "preflight": {
+          "N": 6706,
+          "K": 20,
+          "J": 6706,
+          "n_events": 1703,
+          "epp": 85.15,
+          "matrix_rank": 20,
+          "rank_deficient": false,
+          "condition_number": 40610.70075739886,
+          "ill_conditioned": false,
+          "sparse_cells": [
+            "geographic=rural|sev=low|tier=1 (n=3)",
+            "geographic=rural|sev=low|tier=2 (n=3)",
+            "geographic=rural|sev=medium|tier=1 (n=1)",
+            "geographic=rural|sev=high|tier=2 (n=3)",
+            "socioeconomic=high|sev=low|tier=0 (n=2)",
+            "socioeconomic=high|sev=low|tier=1 (n=0)",
+            "socioeconomic=high|sev=low|tier=2 (n=0)",
+            "socioeconomic=high|sev=medium|tier=0 (n=1)",
+            "socioeconomic=high|sev=medium|tier=1 (n=2)",
+            "socioeconomic=high|sev=medium|tier=2 (n=2)",
+            "socioeconomic=high|sev=high|tier=1 (n=2)",
+            "socioeconomic=high|sev=high|tier=2 (n=2)"
+          ],
+          "n_sparse_cells": 12,
+          "tier_counts": {
+            "0": 2262,
+            "1": 2741,
+            "2": 1703
+          },
+          "tier2_rate": 0.25395168505815685,
+          "pct_singletons": 1.0,
+          "predicted_difficulty": "moderate",
+          "recommendations": [
+            "100% singleton observations prevent complaint-level random intercepts; fixed-effect models used instead",
+            "12 cross-tab cells have <5 observations; some interaction effects may be unidentifiable"
+          ],
+          "logistic_separation": {
+            "n_columns_checked": 20,
+            "n_separation_cells": 0,
+            "separation_ratio": 0.0,
+            "has_complete_separation": false,
+            "skip_mcmc_b1": false,
+            "separation_cells": []
+          },
+          "ordinal_imbalance": {
+            "tier_counts": {
+              "tier0": 2262,
+              "tier1": 2741,
+              "tier2": 1703
+            },
+            "tier_rates": {
+              "tier0": 0.33730987175663585,
+              "tier1": 0.4087384431852073,
+              "tier2": 0.25395168505815685
+            },
+            "min_tier_rate": 0.25395168505815685,
+            "min_tier_label": "tier2",
+            "skip_mcmc_b2": false
+          }
+        },
+        "logistic": {
+          "fit_id": "B1__gpt5mini__monetaryseverity__pathfinder",
+          "diagnostics": {
+            "max_rhat": NaN,
+            "min_ess_bulk": NaN,
+            "divergences": 0,
+            "treedepth_hits": 0,
+            "n_stuck_params": 0,
+            "stuck_params": [],
+            "diagnose_text": "Pathfinder approximate inference; no MCMC diagnostics."
+          },
+          "status": "PATHFINDER",
+          "amplification": {
+            "age": {
+              "A_mean": -0.023271943268762862,
+              "A_CrI_low": -0.04220811407202191,
+              "A_CrI_high": 0.007079389504372993,
+              "P_A_gt_0": 0.033,
+              "D_low_mean": 0.036679051881171126,
+              "D_high_mean": 0.013407108612408267
+            },
+            "geographic": {
+              "A_mean": -0.01758902266032112,
+              "A_CrI_low": -0.14989579455971086,
+              "A_CrI_high": 0.1140788462307104,
+              "P_A_gt_0": 0.183,
+              "D_low_mean": 0.0978935874297812,
+              "D_high_mean": 0.08030456476946009
+            },
+            "education": {
+              "A_mean": 0.005292603693442967,
+              "A_CrI_low": -0.012876299399141311,
+              "A_CrI_high": 0.02499029086412613,
+              "P_A_gt_0": 0.685,
+              "D_low_mean": 0.007577272601727087,
+              "D_high_mean": 0.012869876295170054
+            },
+            "socioeconomic": {
+              "A_mean": 0.018832442451880135,
+              "A_CrI_low": -0.10969231134479016,
+              "A_CrI_high": 0.09300806578651526,
+              "P_A_gt_0": 0.757,
+              "D_low_mean": 0.0606183582815007,
+              "D_high_mean": 0.07945080073338084
+            }
+          },
+          "method": "pathfinder logistic"
+        },
+        "ordinal": {
+          "fit_id": "B2__gpt5mini__monetaryseverity__pathfinder",
+          "diagnostics": {
+            "max_rhat": NaN,
+            "min_ess_bulk": NaN,
+            "divergences": 0,
+            "treedepth_hits": 0,
+            "n_stuck_params": 0,
+            "stuck_params": [],
+            "diagnose_text": "Pathfinder approximate inference; no MCMC diagnostics."
+          },
+          "status": "PATHFINDER",
+          "amplification": {
+            "age": {
+              "A_mean": 0.005742601526971514,
+              "A_CrI_low": -0.015492989295830317,
+              "A_CrI_high": 0.023661942968853156,
+              "P_A_gt_0": 0.718,
+              "D_low_mean": 0.0076756263815578865,
+              "D_high_mean": 0.0134182279085294
+            },
+            "geographic": {
+              "A_mean": 0.021950300772954404,
+              "A_CrI_low": -0.047173366417191054,
+              "A_CrI_high": 0.08069506866507349,
+              "P_A_gt_0": 0.806,
+              "D_low_mean": 0.04877304552187225,
+              "D_high_mean": 0.07072334629482666
+            },
+            "education": {
+              "A_mean": -0.009295726960771805,
+              "A_CrI_low": -0.022461876678563142,
+              "A_CrI_high": 0.013366826924016029,
+              "P_A_gt_0": 0.14,
+              "D_low_mean": 0.01655797008678202,
+              "D_high_mean": 0.007262243126010209
+            },
+            "socioeconomic": {
+              "A_mean": 0.020765626337864246,
+              "A_CrI_low": -0.03510385292553608,
+              "A_CrI_high": 0.0851766123416664,
+              "P_A_gt_0": 0.692,
+              "D_low_mean": 0.08940148443086829,
+              "D_high_mean": 0.11016711076873256
+            }
+          },
+          "method": "pathfinder ordinal",
+          "tier_probs": {
+            "low": {
+              "P_tier0": {
+                "mean": 0.41904222506737726,
+                "ci_low": 0.38906753617889944,
+                "ci_high": 0.44185992589113104
+              },
+              "P_tier1": {
+                "mean": 0.3859312892212649,
+                "ci_low": 0.3765118861761774,
+                "ci_high": 0.4003366685067277
+              },
+              "P_tier2": {
+                "mean": 0.19502648571135783,
+                "ci_low": 0.18162818793269153,
+                "ci_high": 0.21901198907429703
+              }
+            },
+            "high": {
+              "P_tier0": {
+                "mean": 0.4724705974102391,
+                "ci_low": 0.4173409213764733,
+                "ci_high": 0.49659282211235434
+              },
+              "P_tier1": {
+                "mean": 0.36292262699867145,
+                "ci_low": 0.3493967644829158,
+                "ci_high": 0.3908907368191689
+              },
+              "P_tier2": {
+                "mean": 0.1646067755910895,
+                "ci_low": 0.15314455700100324,
+                "ci_high": 0.19525875530718556
+              }
+            },
+            "medium": {
+              "P_tier0": {
+                "mean": 0.42346998130612074,
+                "ci_low": 0.3956897237385591,
+                "ci_high": 0.46511329117099753
+              },
+              "P_tier1": {
+                "mean": 0.3827440014821392,
+                "ci_low": 0.36532548378181345,
+                "ci_high": 0.3934224300380088
+              },
+              "P_tier2": {
+                "mean": 0.1937860172117401,
+                "ci_low": 0.16922578643278424,
+                "ci_high": 0.22275909077580697
+              }
+            }
+          }
+        },
+        "fallback_step_b1": "pathfinder",
+        "fallback_step_b2": "pathfinder",
+        "fallback_step": "pathfinder",
+        "postmortem": {
+          "model": "gpt-5-mini",
+          "severity_metric": "monetary_severity",
+          "data_summary": {
+            "N": 6706,
+            "K": 20,
+            "J": 6706,
+            "n_tier2": 1703,
+            "n_non_tier2": 5003,
+            "tier2_rate": 0.25395168505815685,
+            "events_per_param": 85.15,
+            "tier_distribution": {
+              "0": 2262,
+              "1": 2741,
+              "2": 1703
+            },
+            "severity_distribution": {
+              "high": 2865,
+              "medium": 2223,
+              "low": 1618
+            },
+            "pct_singletons": 1.0,
+            "use_random_intercept": false,
+            "col_names": [
+              "age__old",
+              "geographic__rural",
+              "geographic__suburban",
+              "education__college",
+              "socioeconomic__high",
+              "socioeconomic__middle",
+              "sev__high",
+              "sev__medium",
+              "age__old__x__sev__high",
+              "age__old__x__sev__medium",
+              "geographic__rural__x__sev__high",
+              "geographic__rural__x__sev__medium",
+              "geographic__suburban__x__sev__high",
+              "geographic__suburban__x__sev__medium",
+              "education__college__x__sev__high",
+              "education__college__x__sev__medium",
+              "socioeconomic__high__x__sev__high",
+              "socioeconomic__high__x__sev__medium",
+              "socioeconomic__middle__x__sev__high",
+              "socioeconomic__middle__x__sev__medium"
+            ]
+          },
+          "outcome_distribution": {
+            "high": {
+              "0": 941,
+              "1": 1257,
+              "2": 667,
+              "All": 2865
+            },
+            "low": {
+              "0": 548,
+              "1": 642,
+              "2": 428,
+              "All": 1618
+            },
+            "medium": {
+              "0": 773,
+              "1": 842,
+              "2": 608,
+              "All": 2223
+            },
+            "All": {
+              "0": 2262,
+              "1": 2741,
+              "2": 1703,
+              "All": 6706
+            }
+          },
+          "cross_tab_sparsity": {
+            "sparse_cells": [
+              "geographic=rural|sev=low|tier=1 (n=3)",
+              "geographic=rural|sev=low|tier=2 (n=3)",
+              "geographic=rural|sev=medium|tier=1 (n=1)",
+              "geographic=rural|sev=high|tier=2 (n=3)",
+              "socioeconomic=high|sev=low|tier=0 (n=2)",
+              "socioeconomic=high|sev=low|tier=1 (n=0)",
+              "socioeconomic=high|sev=low|tier=2 (n=0)",
+              "socioeconomic=high|sev=medium|tier=0 (n=1)",
+              "socioeconomic=high|sev=medium|tier=1 (n=2)",
+              "socioeconomic=high|sev=medium|tier=2 (n=2)",
+              "socioeconomic=high|sev=high|tier=1 (n=2)",
+              "socioeconomic=high|sev=high|tier=2 (n=2)"
+            ],
+            "n_sparse_cells": 12,
+            "total_cells": 90,
+            "sparsity_ratio": 0.13333333333333333
+          },
+          "design_matrix_diagnostics": {
+            "rank": 20,
+            "K": 20,
+            "rank_deficient": false,
+            "condition_number": 40610.70075739886,
+            "ill_conditioned": false,
+            "n_interaction_cols": 12,
+            "n_main_effect_cols": 8
+          },
+          "per_step_diagnostics": [
+            {
+              "step": 1,
+              "label": "standard",
+              "description": "fixed-effect (K=20)",
+              "b1_status": "FAIL",
+              "b2_status": "FAIL",
+              "b1_rhat": 1.121804836023394,
+              "b1_ess": 21.551184015428905,
+              "b1_div": 0,
+              "b2_rhat": 1.0807480754896777,
+              "b2_ess": 33.17399286542145,
+              "b2_div": 0
+            },
+            {
+              "step": 2,
+              "label": "category-RE",
+              "description": "category-RE(product_category, J=5)",
+              "b1_status": "FAIL",
+              "b2_status": "FAIL",
+              "b1_rhat": 1.2367177936204345,
+              "b1_ess": 12.369968007551552,
+              "b1_div": 0,
+              "b2_rhat": 1.1363056502344264,
+              "b2_ess": 19.346783662134875,
+              "b2_div": 0
+            },
+            {
+              "step": 3,
+              "label": "per-dimension",
+              "description": "per-dimension models",
+              "b1_status": "FAIL",
+              "b2_status": "FAIL"
+            },
+            {
+              "step": "3.5",
+              "label": "main-effects-only",
+              "description": "main-effects-only (K=8)",
+              "b1_status": "FAIL",
+              "b2_status": "FAIL",
+              "b1_rhat": 1.0629738368481183,
+              "b1_ess": 42.892576700332235,
+              "b1_div": 0,
+              "b2_rhat": 1.4740166325936754,
+              "b2_ess": 7.6781649837364405,
+              "b2_div": 0
+            },
+            {
+              "step": 4,
+              "label": "flex-prior",
+              "description": "flex priors + relaxed gate",
+              "b1_status": "FAIL",
+              "b2_status": "FAIL",
+              "b1_rhat": 1.121804836023394,
+              "b1_ess": 21.551184015428905,
+              "b1_div": 0,
+              "b2_rhat": 1.0807480754896777,
+              "b2_ess": 33.17399286542145,
+              "b2_div": 0
+            },
+            {
+              "step": 5,
+              "label": "aggressive-sampler",
+              "description": "aggressive sampler + relaxed gate",
+              "b1_status": "FAIL",
+              "b2_status": "FAIL",
+              "b1_rhat": 1.121804836023394,
+              "b1_ess": 21.551184015428905,
+              "b1_div": 0,
+              "b2_rhat": 1.0807480754896777,
+              "b2_ess": 33.17399286542145,
+              "b2_div": 0
+            },
+            {
+              "step": 6,
+              "label": "variational-advi",
+              "description": "ADVI meanfield",
+              "b1_status": "FAIL",
+              "b2_status": "FAIL"
+            },
+            {
+              "step": 7,
+              "label": "pathfinder",
+              "description": "Pathfinder (4 paths)",
+              "b1_status": "PATHFINDER",
+              "b2_status": "PATHFINDER",
+              "b1_rhat": NaN,
+              "b1_ess": NaN,
+              "b1_div": 0,
+              "b2_rhat": NaN,
+              "b2_ess": NaN,
+              "b2_div": 0
+            }
+          ],
+          "root_causes": [
+            "Singleton structure: 100% of complaints have exactly 1 observation, preventing complaint-level random intercepts"
+          ],
+          "recommendations": [
+            "Per-dimension models were attempted (B1=FAIL, B2=FAIL)",
+            "Approximate inference attempted: ADVI: B1=FAIL, B2=FAIL; Pathfinder: B1=PATHFINDER, B2=PATHFINDER; B1 resolved via pathfinder; B2 resolved via pathfinder",
+            "Singleton structure (100% of complaints have 1 observation) prevents complaint-level random intercepts; fixed-effect models used instead"
+          ],
+          "preflight": {
+            "N": 6706,
+            "K": 20,
+            "J": 6706,
+            "n_events": 1703,
+            "epp": 85.15,
+            "matrix_rank": 20,
+            "rank_deficient": false,
+            "condition_number": 40610.70075739886,
+            "ill_conditioned": false,
+            "sparse_cells": [
+              "geographic=rural|sev=low|tier=1 (n=3)",
+              "geographic=rural|sev=low|tier=2 (n=3)",
+              "geographic=rural|sev=medium|tier=1 (n=1)",
+              "geographic=rural|sev=high|tier=2 (n=3)",
+              "socioeconomic=high|sev=low|tier=0 (n=2)",
+              "socioeconomic=high|sev=low|tier=1 (n=0)",
+              "socioeconomic=high|sev=low|tier=2 (n=0)",
+              "socioeconomic=high|sev=medium|tier=0 (n=1)",
+              "socioeconomic=high|sev=medium|tier=1 (n=2)",
+              "socioeconomic=high|sev=medium|tier=2 (n=2)",
+              "socioeconomic=high|sev=high|tier=1 (n=2)",
+              "socioeconomic=high|sev=high|tier=2 (n=2)"
+            ],
+            "n_sparse_cells": 12,
+            "tier_counts": {
+              "0": 2262,
+              "1": 2741,
+              "2": 1703
+            },
+            "tier2_rate": 0.25395168505815685,
+            "pct_singletons": 1.0,
+            "predicted_difficulty": "moderate",
+            "recommendations": [
+              "100% singleton observations prevent complaint-level random intercepts; fixed-effect models used instead",
+              "12 cross-tab cells have <5 observations; some interaction effects may be unidentifiable"
+            ],
+            "logistic_separation": {
+              "n_columns_checked": 20,
+              "n_separation_cells": 0,
+              "separation_ratio": 0.0,
+              "has_complete_separation": false,
+              "skip_mcmc_b1": false,
+              "separation_cells": []
+            },
+            "ordinal_imbalance": {
+              "tier_counts": {
+                "tier0": 2262,
+                "tier1": 2741,
+                "tier2": 1703
+              },
+              "tier_rates": {
+                "tier0": 0.33730987175663585,
+                "tier1": 0.4087384431852073,
+                "tier2": 0.25395168505815685
+              },
+              "min_tier_rate": 0.25395168505815685,
+              "min_tier_label": "tier2",
+              "skip_mcmc_b2": false
+            }
+          },
+          "final_resolution": {
+            "b1_status": "PATHFINDER",
+            "b1_method": "pathfinder logistic",
+            "b1_step": "pathfinder",
+            "b2_status": "PATHFINDER",
+            "b2_method": "pathfinder ordinal",
+            "b2_step": "pathfinder"
+          }
+        }
+      },
+      "issue_severity": {
+        "n_obs": 20000,
+        "n_complaints": 20000,
+        "K": 20,
+        "col_names": [
+          "age__old",
+          "geographic__rural",
+          "geographic__suburban",
+          "education__college",
+          "socioeconomic__high",
+          "socioeconomic__middle",
+          "sev__high",
+          "sev__medium",
+          "age__old__x__sev__high",
+          "age__old__x__sev__medium",
+          "geographic__rural__x__sev__high",
+          "geographic__rural__x__sev__medium",
+          "geographic__suburban__x__sev__high",
+          "geographic__suburban__x__sev__medium",
+          "education__college__x__sev__high",
+          "education__college__x__sev__medium",
+          "socioeconomic__high__x__sev__high",
+          "socioeconomic__high__x__sev__medium",
+          "socioeconomic__middle__x__sev__high",
+          "socioeconomic__middle__x__sev__medium"
+        ],
+        "subset": "all",
+        "pct_singletons": 1.0,
+        "use_random_intercept": false,
+        "preflight": {
+          "N": 20000,
+          "K": 20,
+          "J": 20000,
+          "n_events": 2569,
+          "epp": 128.45,
+          "matrix_rank": 20,
+          "rank_deficient": false,
+          "condition_number": 67974.20497800769,
+          "ill_conditioned": false,
+          "sparse_cells": [
+            "geographic=rural|sev=medium|tier=2 (n=3)",
+            "geographic=rural|sev=high|tier=2 (n=3)",
+            "socioeconomic=high|sev=medium|tier=1 (n=2)",
+            "socioeconomic=high|sev=medium|tier=2 (n=0)",
+            "socioeconomic=high|sev=high|tier=0 (n=0)",
+            "socioeconomic=high|sev=high|tier=1 (n=0)",
+            "socioeconomic=high|sev=high|tier=2 (n=1)"
+          ],
+          "n_sparse_cells": 7,
+          "tier_counts": {
+            "0": 6944,
+            "1": 10487,
+            "2": 2569
+          },
+          "tier2_rate": 0.12845,
+          "pct_singletons": 1.0,
+          "predicted_difficulty": "hard",
+          "recommendations": [
+            "100% singleton observations prevent complaint-level random intercepts; fixed-effect models used instead",
+            "7 cross-tab cells have <5 observations; some interaction effects may be unidentifiable",
+            "B1 logistic has complete separation in 2/20 dummy columns; MCMC will be skipped in favour of Pathfinder/ADVI for B1"
+          ],
+          "logistic_separation": {
+            "n_columns_checked": 20,
+            "n_separation_cells": 2,
+            "separation_ratio": 0.1,
+            "has_complete_separation": true,
+            "skip_mcmc_b1": true,
+            "separation_cells": [
+              {
+                "column": "socioeconomic__high__x__sev__high",
+                "n_total": 1,
+                "n_pos": 1,
+                "n_neg": 0,
+                "minority_count": 0,
+                "type": "complete"
+              },
+              {
+                "column": "socioeconomic__high__x__sev__medium",
+                "n_total": 7,
+                "n_pos": 0,
+                "n_neg": 7,
+                "minority_count": 0,
+                "type": "complete"
+              }
+            ]
+          },
+          "ordinal_imbalance": {
+            "tier_counts": {
+              "tier0": 6944,
+              "tier1": 10487,
+              "tier2": 2569
+            },
+            "tier_rates": {
+              "tier0": 0.3472,
+              "tier1": 0.52435,
+              "tier2": 0.12845
+            },
+            "min_tier_rate": 0.12845,
+            "min_tier_label": "tier2",
+            "skip_mcmc_b2": false
+          }
+        },
+        "b1_skip_mcmc": true,
+        "logistic": {
+          "fit_id": "B1__gpt5mini__issueseverity__pathfinder",
+          "diagnostics": {
+            "max_rhat": NaN,
+            "min_ess_bulk": NaN,
+            "divergences": 0,
+            "treedepth_hits": 0,
+            "n_stuck_params": 0,
+            "stuck_params": [],
+            "diagnose_text": "Pathfinder approximate inference; no MCMC diagnostics."
+          },
+          "status": "PATHFINDER",
+          "amplification": {
+            "age": {
+              "A_mean": -0.02551429877017852,
+              "A_CrI_low": -0.04679436461002004,
+              "A_CrI_high": -0.0026186055114655465,
+              "P_A_gt_0": 0.009,
+              "D_low_mean": 0.03780491757501323,
+              "D_high_mean": 0.012290618804834716
+            },
+            "geographic": {
+              "A_mean": 0.008923945262447518,
+              "A_CrI_low": -0.11659861120710348,
+              "A_CrI_high": 0.09132062424121346,
+              "P_A_gt_0": 0.488,
+              "D_low_mean": 0.06733131618024617,
+              "D_high_mean": 0.07625526144269368
+            },
+            "education": {
+              "A_mean": -0.024290121380936086,
+              "A_CrI_low": -0.038304674414679135,
+              "A_CrI_high": -0.00021307103061603272,
+              "P_A_gt_0": 0.005,
+              "D_low_mean": 0.045295447773340526,
+              "D_high_mean": 0.021005326392404433
+            },
+            "socioeconomic": {
+              "A_mean": 0.06634293649737559,
+              "A_CrI_low": -0.1392326469058593,
+              "A_CrI_high": 0.356202846158062,
+              "P_A_gt_0": 0.648,
+              "D_low_mean": 0.15878398112805764,
+              "D_high_mean": 0.22512691762543321
+            }
+          },
+          "method": "pathfinder logistic"
+        },
+        "ordinal": {
+          "method": "per-dimension ordinal",
+          "amplification": {
+            "age": {
+              "A_mean": 0.02853326728852236,
+              "A_CrI_low": 0.005737168326312767,
+              "A_CrI_high": 0.05011240408541431,
+              "P_A_gt_0": 0.9925,
+              "D_low_mean": 0.00867110677738485,
+              "D_high_mean": 0.0372043740659072
+            }
+          },
+          "tier_probs": {
+            "low": {
+              "P_tier0": {
+                "mean": 0.3699075255411923,
+                "ci_low": 0.3610327855006769,
+                "ci_high": 0.3786664909058299
+              },
+              "P_tier1": {
+                "mean": 0.5143803837441323,
+                "ci_low": 0.5067527728955167,
+                "ci_high": 0.5220772451888815
+              },
+              "P_tier2": {
+                "mean": 0.11571209071467532,
+                "ci_low": 0.11072674275574831,
+                "ci_high": 0.12105769775144108
+              }
+            },
+            "high": {
+              "P_tier0": {
+                "mean": 0.26275786645641347,
+                "ci_low": 0.24780193450296364,
+                "ci_high": 0.2774156411924004
+              },
+              "P_tier1": {
+                "mean": 0.5585698455943691,
+                "ci_low": 0.5501006091073161,
+                "ci_high": 0.5672527850151035
+              },
+              "P_tier2": {
+                "mean": 0.17867228794921744,
+                "ci_low": 0.16813268957305785,
+                "ci_high": 0.18985505197229505
+              }
+            },
+            "medium": {
+              "P_tier0": {
+                "mean": 0.34540277531309244,
+                "ci_low": 0.3332385064167229,
+                "ci_high": 0.3579800034661089
+              },
+              "P_tier1": {
+                "mean": 0.5275564574671953,
+                "ci_low": 0.51870378599775,
+                "ci_high": 0.5361433545503375
+              },
+              "P_tier2": {
+                "mean": 0.12704076721971236,
+                "ci_low": 0.12026334025778586,
+                "ci_high": 0.1340662691762584
+              }
+            }
+          },
+          "per_dim_fits": {
+            "age": {
+              "fit_id": "gpt5mini__issueseverity__dim_age__B2",
+              "diagnostics": {
+                "max_rhat": 1.0029041181778224,
+                "min_ess_bulk": 1482.0828721610224,
+                "divergences": 0,
+                "treedepth_hits": 0,
+                "n_stuck_params": 2,
+                "stuck_params": [
+                  "stepsize__",
+                  "divergent__"
+                ]
+              },
+              "status": "OK",
+              "amplification": {
+                "age": {
+                  "A_mean": 0.02853326728852236,
+                  "A_CrI_low": 0.005737168326312767,
+                  "A_CrI_high": 0.05011240408541431,
+                  "P_A_gt_0": 0.9925,
+                  "D_low_mean": 0.00867110677738485,
+                  "D_high_mean": 0.0372043740659072
+                }
+              },
+              "tier_probs": {
+                "low": {
+                  "P_tier0": {
+                    "mean": 0.3699075255411923,
+                    "ci_low": 0.3610327855006769,
+                    "ci_high": 0.3786664909058299
+                  },
+                  "P_tier1": {
+                    "mean": 0.5143803837441323,
+                    "ci_low": 0.5067527728955167,
+                    "ci_high": 0.5220772451888815
+                  },
+                  "P_tier2": {
+                    "mean": 0.11571209071467532,
+                    "ci_low": 0.11072674275574831,
+                    "ci_high": 0.12105769775144108
+                  }
+                },
+                "high": {
+                  "P_tier0": {
+                    "mean": 0.26275786645641347,
+                    "ci_low": 0.24780193450296364,
+                    "ci_high": 0.2774156411924004
+                  },
+                  "P_tier1": {
+                    "mean": 0.5585698455943691,
+                    "ci_low": 0.5501006091073161,
+                    "ci_high": 0.5672527850151035
+                  },
+                  "P_tier2": {
+                    "mean": 0.17867228794921744,
+                    "ci_low": 0.16813268957305785,
+                    "ci_high": 0.18985505197229505
+                  }
+                },
+                "medium": {
+                  "P_tier0": {
+                    "mean": 0.34540277531309244,
+                    "ci_low": 0.3332385064167229,
+                    "ci_high": 0.3579800034661089
+                  },
+                  "P_tier1": {
+                    "mean": 0.5275564574671953,
+                    "ci_low": 0.51870378599775,
+                    "ci_high": 0.5361433545503375
+                  },
+                  "P_tier2": {
+                    "mean": 0.12704076721971236,
+                    "ci_low": 0.12026334025778586,
+                    "ci_high": 0.1340662691762584
+                  }
+                }
+              },
+              "method": "per-dim(age) ordinal"
+            }
+          },
+          "partial": true,
+          "dimensions_succeeded": [
+            "age"
+          ],
+          "dimensions_failed": [
+            "geographic",
+            "education",
+            "socioeconomic"
+          ],
+          "status": "WARN"
+        },
+        "fallback_step_b1": "pathfinder",
+        "fallback_step_b2": "per-dimension (partial)",
+        "fallback_step": "pathfinder",
+        "postmortem": {
+          "model": "gpt-5-mini",
+          "severity_metric": "issue_severity",
+          "data_summary": {
+            "N": 20000,
+            "K": 20,
+            "J": 20000,
+            "n_tier2": 2569,
+            "n_non_tier2": 17431,
+            "tier2_rate": 0.12845,
+            "events_per_param": 128.45,
+            "tier_distribution": {
+              "0": 6944,
+              "1": 10487,
+              "2": 2569
+            },
+            "severity_distribution": {
+              "low": 11078,
+              "medium": 5919,
+              "high": 3003
+            },
+            "pct_singletons": 1.0,
+            "use_random_intercept": false,
+            "col_names": [
+              "age__old",
+              "geographic__rural",
+              "geographic__suburban",
+              "education__college",
+              "socioeconomic__high",
+              "socioeconomic__middle",
+              "sev__high",
+              "sev__medium",
+              "age__old__x__sev__high",
+              "age__old__x__sev__medium",
+              "geographic__rural__x__sev__high",
+              "geographic__rural__x__sev__medium",
+              "geographic__suburban__x__sev__high",
+              "geographic__suburban__x__sev__medium",
+              "education__college__x__sev__high",
+              "education__college__x__sev__medium",
+              "socioeconomic__high__x__sev__high",
+              "socioeconomic__high__x__sev__medium",
+              "socioeconomic__middle__x__sev__high",
+              "socioeconomic__middle__x__sev__medium"
+            ]
+          },
+          "outcome_distribution": {
+            "high": {
+              "0": 789,
+              "1": 1633,
+              "2": 581,
+              "All": 3003
+            },
+            "low": {
+              "0": 4298,
+              "1": 5277,
+              "2": 1503,
+              "All": 11078
+            },
+            "medium": {
+              "0": 1857,
+              "1": 3577,
+              "2": 485,
+              "All": 5919
+            },
+            "All": {
+              "0": 6944,
+              "1": 10487,
+              "2": 2569,
+              "All": 20000
+            }
+          },
+          "cross_tab_sparsity": {
+            "sparse_cells": [
+              "geographic=rural|sev=medium|tier=2 (n=3)",
+              "geographic=rural|sev=high|tier=2 (n=3)",
+              "socioeconomic=high|sev=medium|tier=1 (n=2)",
+              "socioeconomic=high|sev=medium|tier=2 (n=0)",
+              "socioeconomic=high|sev=high|tier=0 (n=0)",
+              "socioeconomic=high|sev=high|tier=1 (n=0)",
+              "socioeconomic=high|sev=high|tier=2 (n=1)"
+            ],
+            "n_sparse_cells": 7,
+            "total_cells": 90,
+            "sparsity_ratio": 0.07777777777777778
+          },
+          "design_matrix_diagnostics": {
+            "rank": 20,
+            "K": 20,
+            "rank_deficient": false,
+            "condition_number": 67974.20497800769,
+            "ill_conditioned": false,
+            "n_interaction_cols": 12,
+            "n_main_effect_cols": 8
+          },
+          "per_step_diagnostics": [
+            {
+              "step": 1,
+              "label": "standard",
+              "description": "fixed-effect (K=20)",
+              "b1_status": "N/A",
+              "b2_status": "FAIL",
+              "b2_rhat": 1.620030720126559,
+              "b2_ess": 6.6646184636853665,
+              "b2_div": 0
+            },
+            {
+              "step": 2,
+              "label": "category-RE",
+              "description": "category-RE(product_category, J=5)",
+              "b1_status": "N/A",
+              "b2_status": "FAIL",
+              "b2_rhat": 1.0237990012420153,
+              "b2_ess": 241.27971391009424,
+              "b2_div": 0
+            },
+            {
+              "step": 3,
+              "label": "per-dimension (partial)",
+              "description": "per-dimension models",
+              "b1_status": "FAIL",
+              "b2_status": "WARN"
+            },
+            {
+              "step": 6,
+              "label": "variational-advi",
+              "description": "ADVI meanfield",
+              "b1_status": "FAIL",
+              "b2_status": "N/A"
+            },
+            {
+              "step": 7,
+              "label": "pathfinder",
+              "description": "Pathfinder (4 paths)",
+              "b1_status": "PATHFINDER",
+              "b2_status": "N/A",
+              "b1_rhat": NaN,
+              "b1_ess": NaN,
+              "b1_div": 0
+            }
+          ],
+          "root_causes": [
+            "Singleton structure: 100% of complaints have exactly 1 observation, preventing complaint-level random intercepts"
+          ],
+          "recommendations": [
+            "Per-dimension models were attempted (B1=FAIL, B2=WARN)",
+            "Approximate inference attempted: ADVI: B1=FAIL, B2=N/A; Pathfinder: B1=PATHFINDER, B2=N/A; B1 resolved via pathfinder",
+            "Singleton structure (100% of complaints have 1 observation) prevents complaint-level random intercepts; fixed-effect models used instead",
+            "B1 logistic near-separation detected (2/20 dummy columns); MCMC steps were skipped for B1 — resolved via pathfinder"
+          ],
+          "preflight": {
+            "N": 20000,
+            "K": 20,
+            "J": 20000,
+            "n_events": 2569,
+            "epp": 128.45,
+            "matrix_rank": 20,
+            "rank_deficient": false,
+            "condition_number": 67974.20497800769,
+            "ill_conditioned": false,
+            "sparse_cells": [
+              "geographic=rural|sev=medium|tier=2 (n=3)",
+              "geographic=rural|sev=high|tier=2 (n=3)",
+              "socioeconomic=high|sev=medium|tier=1 (n=2)",
+              "socioeconomic=high|sev=medium|tier=2 (n=0)",
+              "socioeconomic=high|sev=high|tier=0 (n=0)",
+              "socioeconomic=high|sev=high|tier=1 (n=0)",
+              "socioeconomic=high|sev=high|tier=2 (n=1)"
+            ],
+            "n_sparse_cells": 7,
+            "tier_counts": {
+              "0": 6944,
+              "1": 10487,
+              "2": 2569
+            },
+            "tier2_rate": 0.12845,
+            "pct_singletons": 1.0,
+            "predicted_difficulty": "hard",
+            "recommendations": [
+              "100% singleton observations prevent complaint-level random intercepts; fixed-effect models used instead",
+              "7 cross-tab cells have <5 observations; some interaction effects may be unidentifiable",
+              "B1 logistic has complete separation in 2/20 dummy columns; MCMC will be skipped in favour of Pathfinder/ADVI for B1"
+            ],
+            "logistic_separation": {
+              "n_columns_checked": 20,
+              "n_separation_cells": 2,
+              "separation_ratio": 0.1,
+              "has_complete_separation": true,
+              "skip_mcmc_b1": true,
+              "separation_cells": [
+                {
+                  "column": "socioeconomic__high__x__sev__high",
+                  "n_total": 1,
+                  "n_pos": 1,
+                  "n_neg": 0,
+                  "minority_count": 0,
+                  "type": "complete"
+                },
+                {
+                  "column": "socioeconomic__high__x__sev__medium",
+                  "n_total": 7,
+                  "n_pos": 0,
+                  "n_neg": 7,
+                  "minority_count": 0,
+                  "type": "complete"
+                }
+              ]
+            },
+            "ordinal_imbalance": {
+              "tier_counts": {
+                "tier0": 6944,
+                "tier1": 10487,
+                "tier2": 2569
+              },
+              "tier_rates": {
+                "tier0": 0.3472,
+                "tier1": 0.52435,
+                "tier2": 0.12845
+              },
+              "min_tier_rate": 0.12845,
+              "min_tier_label": "tier2",
+              "skip_mcmc_b2": false
+            }
+          },
+          "final_resolution": {
+            "b1_status": "PATHFINDER",
+            "b1_method": "pathfinder logistic",
+            "b1_step": "pathfinder",
+            "b2_status": "WARN",
+            "b2_method": "per-dimension ordinal",
+            "b2_step": "per-dimension (partial)"
+          }
+        }
+      }
+    }
+  },
+  "created_at": "2026-02-16T16:11:43.785572+00:00"
+}

@@ -1381,8 +1381,8 @@ class TableGenerator:
             r"\begin{tabular}{@{}l r ll rr rr cc@{}}",
             r"\toprule",
             r"Subset & Ret."
-            r" & $\sigma\;P(T{=}2)$$^{b}$ [CI] (pp)"
-            r" & $\sigma\;\bar{\tau}$$^{b}$ [CI]"
+            r" & $\sigma_{Y_2}$$^{b}$ [CI] (pp)"
+            r" & $\sigma_E$$^{b}$ [CI]"
             r" & $\Delta_{90\text{-}10}$$^{b}$ (pp)"
             r" & $\Delta_{90\text{-}10}$$^{b}$"
             r" & $\Delta_{\max}$$^{b}$ (pp)"
@@ -1411,7 +1411,8 @@ class TableGenerator:
             r" NO\_NUM = no numeric mutations.\\"
         )
         tex_lines.append(
-            r"$^{b}$ $\sigma$: SD of persona-level estimates."
+            r"$^{b}$ $\sigma_E$: SD of persona-level mean tier;"
+            r" $\sigma_{Y_2}$: SD of persona-level Tier-2 rate."
             r" 95\% CI (log-scale bootstrap;"
             r" complaint-level resampling)."
             r" $\Delta_{90\text{-}10}$: 90th--10th percentile spread (descriptive)."
@@ -1419,7 +1420,7 @@ class TableGenerator:
         )
         tex_lines.append(
             r"$^{c}$ $p_W$: GEE omnibus Wald test, exchangeable working correlation."
-            r" $Y_2 = P(T{=}2)$; $\bar{\tau}$ = mean tier."
+            r" $Y_2 = \mathbf{1}[T{=}2]$; $\bar{\tau}$ = mean tier."
         )
         tex_lines.append(r"}")
         tex_lines.append(r"\end{table}")
@@ -1434,9 +1435,9 @@ class TableGenerator:
         # --- Markdown + CSV ---
         df = pd.DataFrame(md_rows, columns=[
             "Subset", "Retention",
-            "SD P(T=2) [95% CI, log-scale bootstrap] (pp)", "SD mean tier [95% CI, log-scale bootstrap]",
-            "Q90-Q10 P(T=2) (pp)", "Q90-Q10 mean tier",
-            "Max-Min P(T=2) (pp)", "Max-Min mean tier",
+            "SD Y2 [95% CI, log-scale bootstrap] (pp)", "SD mean tier [95% CI, log-scale bootstrap]",
+            "Q90-Q10 Y2 (pp)", "Q90-Q10 mean tier",
+            "Max-Min Y2 (pp)", "Max-Min mean tier",
             "p_W (tier2)", "p_W (mean tier)",
         ])
         md_name = _build_filename(
@@ -1503,7 +1504,7 @@ class TableGenerator:
                 h["sd_persona_mean_tier"] if h is not None else None
             )
 
-            # Secondary: SD of P(T=2)
+            # Secondary: SD of Y2
             dp_full = f["sd_persona_p_tier2"]
             dp_hf = (
                 h["sd_persona_p_tier2"] if h is not None else None
@@ -1588,18 +1589,18 @@ class TableGenerator:
             r"\small",
             r"\caption{Primary and secondary endpoint dispersion summary"
             r" (matched-guise panel).",
-            r"$\sigma\,E[T]$: SD of persona-level mean tier (tier units)"
+            r"$\sigma_E$: SD of persona-level mean tier (tier units)"
             r" across 36 guises.",
-            r"$\sigma\,P(T{=}2)$: SD of persona-level Tier-2 rate"
+            r"$\sigma_{Y_2}$: SD of persona-level Tier-2 rate"
             r" (percentage points, pp).",
             r"FULL: all pairs; HF: high-fidelity pairs only.",
-            r"Primary endpoint: $\sigma\,E[T]$."
-            r" Secondary endpoint: $\sigma\,P(T{=}2)$.}",
+            r"Primary endpoint: $\sigma_E$."
+            r" Secondary endpoint: $\sigma_{Y_2}$.}",
             r"\label{tab:endpoint_summary}",
             r"\begin{tabular}{@{}l cc cc cc l@{}}",
             r"\toprule",
-            r"& \multicolumn{2}{c}{$\sigma\,E[T]$}",
-            r"& \multicolumn{2}{c}{$\sigma\,P(T{=}2)$ (pp)}"
+            r"& \multicolumn{2}{c}{$\sigma_E$}",
+            r"& \multicolumn{2}{c}{$\sigma_{Y_2}$ (pp)}"
             r" & & & \\",
             r"\cmidrule(lr){2-3} \cmidrule(lr){4-5}",
             r"Model & FULL & HF & FULL & HF"
@@ -1633,10 +1634,10 @@ class TableGenerator:
         tex_lines.append(
             r"$^{c}$~\textit{HF direction} (heuristic descriptor):"
             r" Let $r_E = \sigma_E^{\mathrm{HF}} / \sigma_E^{\mathrm{FULL}}$"
-            r" and $r_P = \sigma_P^{\mathrm{HF}} / \sigma_P^{\mathrm{FULL}}$,"
+            r" and $r_{Y_2} = \sigma_{Y_2}^{\mathrm{HF}} / \sigma_{Y_2}^{\mathrm{FULL}}$,"
             r" where $\sigma_E$ is the SD of persona-level mean tier and"
-            r" $\sigma_P$ the SD of persona-level Tier-2 rate."
-            r" Define $\bar{r} = \tfrac{1}{2}(r_E + r_P)$."
+            r" $\sigma_{Y_2}$ the SD of persona-level Tier-2 rate."
+            r" Define $\bar{r} = \tfrac{1}{2}(r_E + r_{Y_2})$."
             r" \emph{Stable}: $0.9 \le \bar{r} \le 1.1$;"
             r" \emph{amplified}: $\bar{r} > 1.1$;"
             r" \emph{attenuated}: $\bar{r} < 0.9$."
@@ -1660,7 +1661,7 @@ class TableGenerator:
         # --- Markdown + CSV ---
         df = pd.DataFrame(md_rows, columns=[
             "Model", "SD E[T] FULL", "SD E[T] HF",
-            "SD P(T=2) FULL (pp)", "SD P(T=2) HF (pp)",
+            "SD Y2 FULL (pp)", "SD Y2 HF (pp)",
             "p_ord (Friedman on T)", "p_Y2 (GEE Wald on Y2)",
             "HF direction",
         ])

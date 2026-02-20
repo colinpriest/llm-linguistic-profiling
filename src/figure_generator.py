@@ -491,8 +491,18 @@ class FigureGenerator:
 
             x = np.arange(len(labels))
             w = 0.3
-            ax.bar(x - w/2, baseline, w, label="Baseline", color="#555555")
-            ax.bar(x + w/2, neutralised, w, label="Neutralised", color="#aaaaaa")
+            bars_b = ax.bar(x - w/2, baseline, w, label="Baseline", color="#555555")
+            bars_n = ax.bar(x + w/2, neutralised, w, label="Neutralised", color="#aaaaaa")
+            for bar in bars_b:
+                h = bar.get_height()
+                if h > 0:
+                    ax.text(bar.get_x() + bar.get_width() / 2, h,
+                            f"{h:.2f}", ha="center", va="bottom", fontsize=9)
+            for bar in bars_n:
+                h = bar.get_height()
+                if h > 0:
+                    ax.text(bar.get_x() + bar.get_width() / 2, h,
+                            f"{h:.2f}", ha="center", va="bottom", fontsize=9)
             ax.set_xticks(x)
             ax.set_xticklabels(labels)
             ax.set_ylabel("SD of persona-level rates")
@@ -1913,32 +1923,33 @@ class FigureGenerator:
                 ax.set_title(model)
                 continue
 
-            # Plot primary endpoint (ordered tier)
-            ax.errorbar(
+            color_primary = _GRAYS[0]
+            color_secondary = _GRAYS[2]
+
+            # Plot primary endpoint on left axis (tier units)
+            line_p = ax.errorbar(
                 x_vals, y_primary,
                 yerr=[yerr_lo_primary, yerr_hi_primary],
-                fmt="o-", color=_GRAYS[0], linewidth=1.5, markersize=6,
+                fmt="o-", color=color_primary, linewidth=1.5, markersize=6,
                 capsize=4, capthick=1.2,
-                label=r"$\sigma\;\bar{\tau}$",
-            )
-            # Plot secondary endpoint (threshold summary)
-            ax.errorbar(
-                x_vals, y_secondary,
-                yerr=[yerr_lo_secondary, yerr_hi_secondary],
-                fmt="s--", color=_GRAYS[2], linewidth=1.5, markersize=6,
-                capsize=4, capthick=1.2,
-                label=r"$\sigma\;P(T{=}2)$",
+                label=r"$\sigma_E$ (tier units)",
             )
 
-            # Annotate HF point
+            # Secondary endpoint on right axis (pp)
+            ax2 = ax.twinx()
+            line_s = ax2.errorbar(
+                x_vals, y_secondary,
+                yerr=[yerr_lo_secondary, yerr_hi_secondary],
+                fmt="s--", color=color_secondary, linewidth=1.5, markersize=6,
+                capsize=4, capthick=1.2,
+                label=r"$\sigma_{Y_2}$ (pp)",
+            )
+
+            # Annotate HF point (use left-axis coords for positioning)
             hf_idx = subset_order.index("HF")
             if hf_idx in x_vals:
-                # Place annotation above the higher of the two endpoints at HF
                 hf_pos = x_vals.index(hf_idx)
-                y_top = max(
-                    y_primary[hf_pos] + yerr_hi_primary[hf_pos],
-                    y_secondary[hf_pos] + yerr_hi_secondary[hf_pos],
-                )
+                y_top = y_primary[hf_pos] + yerr_hi_primary[hf_pos]
                 ax.annotate(
                     "rewrite-fidelity\nfiltered",
                     xy=(hf_idx, y_top),
@@ -1950,9 +1961,18 @@ class FigureGenerator:
 
             ax.set_xticks(range(len(subset_order)))
             ax.set_xticklabels(subset_labels, fontsize=9)
-            ax.set_ylabel("Persona SD", fontsize=9)
+            ax.set_ylabel(r"$\sigma_E$ (tier units)", fontsize=9,
+                          color=color_primary)
+            ax2.set_ylabel(r"$\sigma_{Y_2}$ (pp)", fontsize=9,
+                           color=color_secondary)
+            ax.tick_params(axis="y", labelcolor=color_primary)
+            ax2.tick_params(axis="y", labelcolor=color_secondary)
             ax.set_title(model, fontsize=10)
-            ax.legend(loc="upper right", fontsize=8)
+
+            # Unified legend from both axes
+            handles = [line_p, line_s]
+            labels = [h.get_label() for h in handles]
+            ax.legend(handles, labels, loc="upper right", fontsize=8)
 
         fig.tight_layout(rect=[0, 0, 1, 0.93])
 
@@ -1974,10 +1994,10 @@ class FigureGenerator:
                 "Robustness ladder dispersion. Each panel shows one model. "
                 "Lines trace persona SD across increasingly "
                 "restrictive data subsets (FULL -> NO_NUM -> NO_POL -> HF). "
-                "Circles (solid line): primary endpoint "
-                "sigma mean tier. "
-                "Squares (dashed line): secondary endpoint "
-                "sigma P(T=2). "
+                "Circles (solid line, left axis): primary endpoint "
+                "sigma_E (tier units). "
+                "Squares (dashed line, right axis): secondary endpoint "
+                "sigma Y2 (percentage points). "
                 "Whiskers show log-scale bootstrap 95% CI "
                 "(normal on log(SD), back-transformed; complaint-level resampling). "
                 "The HF subset includes only high-fidelity rewrite pairs."
