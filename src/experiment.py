@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import random
 import shutil
 from collections import defaultdict
@@ -89,8 +90,14 @@ logger = logging.getLogger(__name__)
 
 
 def _pfmt(p: float) -> str:
-    """Format p-value: 3 dp, < 0.001 for smaller."""
-    return "< 0.001" if p < 0.001 else f"{p:.3f}"
+    """Format p-value: 3 dp, < 0.001 for smaller, N/E for non-estimable."""
+    try:
+        pf = float(p)
+    except (TypeError, ValueError):
+        return "N/E"
+    if math.isnan(pf):
+        return "N/E"
+    return "< 0.001" if pf < 0.001 else f"{pf:.3f}"
 
 
 # ---------------------------------------------------------------------------

@@ -83,6 +83,7 @@ class ModelFitResults:
     metrics: Dict[str, float]  # r2, rmse, cv_score
     shap_values: Optional[np.ndarray] = None
     shap_base_value: Optional[float] = None
+    shap_feature_names: Optional[List[str]] = None
     model_object: Any = None  # fitted model for prediction
     coefficients: Optional[pd.DataFrame] = None  # for mixed-effects
     partial_dependence: Optional[Dict[str, Any]] = None  # PDP data for top features
@@ -1210,10 +1211,16 @@ def generate_shap_waterfall_data(
     abs_shap = np.abs(shap_values)
     top_indices = np.argsort(abs_shap)[-top_k:][::-1]
 
+    def _safe_float(v: Any) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return float("nan")
+
     return {
         "base_value": base_value,
         "features": [feature_names[i] for i in top_indices],
-        "feature_values": [float(feature_values[i]) for i in top_indices],
+        "feature_values": [_safe_float(feature_values[i]) for i in top_indices],
         "shap_values": [float(shap_values[i]) for i in top_indices],
         "prediction": base_value + np.sum(shap_values),
     }
@@ -1712,12 +1719,12 @@ def select_supporting_examples(
                     issue = ""
                     snippet = ""
 
-                # Generate SHAP explanation
+                # Generate SHAP explanation (slice to feature columns only)
                 shap_data = generate_shap_waterfall_data(
                     shap_values[idx],
                     shap_base_value,
                     feature_names,
-                    feature_df.iloc[idx].values,
+                    feature_df[feature_names].iloc[idx].values,
                 )
 
                 # Generate interpretation
@@ -1937,6 +1944,7 @@ class MitigationAnalyzer:
             )
             lgb_result.shap_values = shap_vals
             lgb_result.shap_base_value = base_val
+            lgb_result.shap_feature_names = feat_names
 
         results.append(lgb_result)
 
@@ -2042,6 +2050,7 @@ class MitigationAnalyzer:
             )
             lgb_result.shap_values = shap_vals
             lgb_result.shap_base_value = base_val
+            lgb_result.shap_feature_names = feat_names
 
         results.append(lgb_result)
 
@@ -2136,19 +2145,23 @@ class MitigationAnalyzer:
                 model,
             )
 
-            # Need to align feature_df with SHAP values
-            # For now, select based on available data
+            # Reconcile recomputed feature columns with stored SHAP feature names
             exclude_cols = ["case_id", "tier_original", "tier_neutralized", "tier_delta",
                            "dispersion_delta", "tier_variance", "tier_range", "tier_mean", "n_distinct_tiers"]
             feature_cols = [c for c in feature_df.columns if c not in exclude_cols]
             valid_cols = [c for c in feature_cols if feature_df[c].isna().mean() < 0.5]
 
-            if valid_cols and len(feature_df) == len(lgb_result.shap_values):
+            shap_feature_names = lgb_result.shap_feature_names or valid_cols
+            common_cols = [c for c in shap_feature_names if c in valid_cols]
+            shap_indices = [shap_feature_names.index(c) for c in common_cols]
+            aligned_shap = lgb_result.shap_values[:, shap_indices] if shap_indices else lgb_result.shap_values
+
+            if common_cols and len(feature_df) == lgb_result.shap_values.shape[0]:
                 neut_examples = select_supporting_examples(
                     feature_df,
-                    lgb_result.shap_values,
+                    aligned_shap,
                     lgb_result.shap_base_value or 0.0,
-                    valid_cols,
+                    common_cols,
                     "tier_delta",
                     self.complaints_df,
                     n_examples=n_neut,
@@ -2175,12 +2188,18 @@ class MitigationAnalyzer:
             ]
             feature_cols = [c for c in feature_cols if c in feature_df.columns]
 
-            if feature_cols and len(feature_df) == len(lgb_causal.shap_values):
+            # Reconcile recomputed feature columns with stored SHAP feature names
+            shap_feature_names = lgb_causal.shap_feature_names or feature_cols
+            common_cols = [c for c in shap_feature_names if c in feature_cols]
+            shap_indices = [shap_feature_names.index(c) for c in common_cols]
+            aligned_shap = lgb_causal.shap_values[:, shap_indices] if shap_indices else lgb_causal.shap_values
+
+            if common_cols and len(feature_df) == lgb_causal.shap_values.shape[0]:
                 causal_examples = select_supporting_examples(
                     feature_df,
-                    lgb_causal.shap_values,
+                    aligned_shap,
                     lgb_causal.shap_base_value or 0.0,
-                    feature_cols,
+                    common_cols,
                     "tier_delta",
                     self.complaints_df,
                     n_examples=n_causal,
