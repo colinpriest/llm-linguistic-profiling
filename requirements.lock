@@ -47,6 +47,7 @@ nltk==3.9.2
 numba==0.63.1
 numpy==2.3.5
 openai==2.16.0
+openpyxl==3.1.5
 packaging==25.0
 pandas==3.0.0
 patsy==1.0.2
@@ -59,6 +60,7 @@ pydantic==2.12.5
 pydantic_core==2.41.5
 Pygments==2.19.2
 pyparsing==3.3.2
+PyYAML==6.0.3
 pyphen==0.17.2
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1

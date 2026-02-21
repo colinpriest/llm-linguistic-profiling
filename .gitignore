@@ -42,6 +42,9 @@ robustness_out/
 **/cmdstanpy_cache/
 **/.cmdstanpy/
 
+# Reproducibility subset (regenerable)
+reproducibility/
+
 # Run artifacts (regenerable)
 artifacts/runs/
 
