@@ -153,6 +153,7 @@ class Experiment:
         clear_bayes_cache: bool = False,
         clear_exec_cache: bool = False,
         verbose: bool = False,
+        suppress_commentary: bool = False,
         api_key: str = "",
         timestamp: Optional[str] = None,
     ) -> None:
@@ -178,6 +179,7 @@ class Experiment:
         self.seed = seed
         self.skip_steps = skip_steps or set()
         self.verbose = verbose
+        self.suppress_commentary = suppress_commentary
 
         # Cache
         self.cache_dir = cache_dir
@@ -341,7 +343,8 @@ class Experiment:
             self._run_robustness_subsets()
 
         # Executive summary (runs after robustness so all data is available)
-        self._generate_executive_summary()
+        if not self.suppress_commentary:
+            self._generate_executive_summary()
 
         # NOTE: paper bundle is generated externally (llm_fairness_experiment.py)
         # AFTER the reporter and worked-examples have written their files,
@@ -1089,7 +1092,7 @@ class Experiment:
             step3_stats_by_model[model] = model_stats
 
         # Cross-model GPT-5.2 commentary
-        if step3_stats_by_model:
+        if step3_stats_by_model and not self.suppress_commentary:
             self._step3_commentary(step3_stats_by_model)
 
     def _step3_commentary(self, step3_stats: Dict[str, Dict[str, Any]]) -> None:
@@ -2436,17 +2439,37 @@ class Experiment:
         # IPW robustness for monetary severity (pre-registered)
         if persona_dec_sev is not None and len(persona_dec_sev) > 0:
             try:
-                from src.ipw_robustness import ipw_amplification_analysis
-                logger.info("Running IPW robustness analysis for monetary severity...")
-                ipw_result = ipw_amplification_analysis(
+                from src.ipw_robustness import (
+                    ipw_amplification_analysis,
+                    preflight_ipw_amplification,
+                )
+
+                # Layer 2 pre-flight: scan all model×dim combos before expensive bootstrap
+                logger.info("Running IPW pre-flight checks...")
+                ipw_preflight = preflight_ipw_amplification(
                     decisions_df=persona_dec_sev,
                     complaints_df=severity_df,
                     models=self.models,
-                    n_boot=1000,
-                    seed=self.seed,
                 )
-                self.analysis_results.setdefault("severity", {})["ipw_robustness"] = ipw_result
-                logger.info("IPW robustness analysis complete")
+                self.analysis_results.setdefault("severity", {})["ipw_preflight"] = ipw_preflight
+
+                if not ipw_preflight["feasible"]:
+                    logger.warning(
+                        "IPW preflight: NO feasible model×dim combinations — "
+                        "skipping bootstrap analysis. Warnings: %s",
+                        "; ".join(ipw_preflight["warnings"]),
+                    )
+                else:
+                    logger.info("Running IPW robustness analysis for monetary severity...")
+                    ipw_result = ipw_amplification_analysis(
+                        decisions_df=persona_dec_sev,
+                        complaints_df=severity_df,
+                        models=self.models,
+                        n_boot=1000,
+                        seed=self.seed,
+                    )
+                    self.analysis_results.setdefault("severity", {})["ipw_robustness"] = ipw_result
+                    logger.info("IPW robustness analysis complete")
             except Exception as e:
                 logger.critical("IPW robustness analysis failed: %s", e)
                 raise RuntimeError(
@@ -3276,15 +3299,16 @@ class Experiment:
                         logger.info("    %s: mean length=%.0f chars", persona, length)
 
             # --- LLM Commentary ---
-            logger.info("── GPT-5.2 Commentary ──")
-            results_text = self._format_results_for_commentary(model, mr)
-            commentary = self._get_llm_commentary(model, results_text)
-            if commentary:
-                logger.info("  %s", commentary)
-                # Store for dashboard
-                mr["gpt_commentary"] = commentary
-            else:
-                logger.info("  (commentary unavailable)")
+            if not self.suppress_commentary:
+                logger.info("── GPT-5.2 Commentary ──")
+                results_text = self._format_results_for_commentary(model, mr)
+                commentary = self._get_llm_commentary(model, results_text)
+                if commentary:
+                    logger.info("  %s", commentary)
+                    # Store for dashboard
+                    mr["gpt_commentary"] = commentary
+                else:
+                    logger.info("  (commentary unavailable)")
 
         # NOTE: Executive summary generation is deferred to _generate_executive_summary()
         # which runs after _run_robustness_subsets() so that robustness data is available.

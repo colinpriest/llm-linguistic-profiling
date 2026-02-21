@@ -1158,7 +1158,7 @@ def _dimension_gap_analysis(
             y_star = np.log(boot_sd + _eps)
             se_y = float(np.std(y_star, ddof=1))
             sd_ci_lo = max(0.0, float(np.exp(y_hat - 1.96 * se_y) - _eps))
-            sd_ci_hi = float(np.exp(y_hat + 1.96 * se_y) - _eps)
+            sd_ci_hi = min(1.0, float(np.exp(y_hat + 1.96 * se_y) - _eps))
         else:
             sd_ci_lo = sd_ci_hi = 0.0
 
@@ -1203,7 +1203,7 @@ def _dimension_gap_analysis(
             y_star = np.log(boot_sd_full + _eps)
             se_y = float(np.std(y_star, ddof=1))
             sd_ci_lo = max(0.0, float(np.exp(y_hat - 1.96 * se_y) - _eps))
-            sd_ci_hi = float(np.exp(y_hat + 1.96 * se_y) - _eps)
+            sd_ci_hi = min(1.0, float(np.exp(y_hat + 1.96 * se_y) - _eps))
         else:
             sd_ci_lo = sd_ci_hi = 0.0
 

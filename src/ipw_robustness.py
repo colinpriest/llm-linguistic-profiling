@@ -201,6 +201,83 @@ def _weighted_dim_bias_at_level(
 
 
 # ------------------------------------------------------------------
+# Pre-flight check for interaction tests
+# ------------------------------------------------------------------
+
+def _preflight_interaction_check(
+    df_fit: pd.DataFrame,
+    weight_col: str,
+) -> Optional[str]:
+    """Validate data feasibility before WLS interaction fit.
+
+    Runs five checks in order on the already-filtered ``df_fit``
+    (which must have columns ``dim_level``, ``severity``, ``tier``,
+    and *weight_col*).
+
+    Returns
+    -------
+    None if all checks pass, otherwise a diagnostic string describing
+    the first failure encountered.
+    """
+    n_dim = df_fit["dim_level"].nunique()
+    n_sev = df_fit["severity"].nunique()
+
+    # 1. At least two levels in each factor
+    if n_dim < 2 or n_sev < 2:
+        return (
+            f"single-level factor after cell filter "
+            f"(dim={n_dim}, sev={n_sev})"
+        )
+
+    # 2. Positive interaction degrees of freedom
+    interaction_df = (n_dim - 1) * (n_sev - 1)
+    if interaction_df < 1:
+        return (
+            f"zero interaction degrees of freedom "
+            f"(dim_levels={n_dim}, sev_levels={n_sev})"
+        )
+
+    # 3. Residual degrees of freedom (model is not saturated)
+    n_obs = len(df_fit)
+    n_params = n_dim * n_sev  # full factorial cell count
+    if n_obs - n_params < 1:
+        return (
+            f"saturated model — no residual df for F-test "
+            f"(n_obs={n_obs}, n_cells={n_params})"
+        )
+
+    # 4. No singleton cells (destabilise WLS)
+    cell_counts = df_fit.groupby(["dim_level", "severity"]).size()
+    min_cell = int(cell_counts.min())
+    if min_cell < 2:
+        sparse_cells = cell_counts[cell_counts < 2]
+        return (
+            f"singleton cells destabilise WLS "
+            f"(min_cell={min_cell}, sparse={list(sparse_cells.index)})"
+        )
+
+    # 5. Design matrix rank (catches collinearity that zeros out constraint matrix)
+    try:
+        import patsy
+        y, X = patsy.dmatrices(
+            "tier ~ C(dim_level) + C(severity) + C(dim_level):C(severity)",
+            data=df_fit,
+            return_type="dataframe",
+        )
+        rank = np.linalg.matrix_rank(X.values)
+        ncol = X.shape[1]
+        if rank < ncol:
+            return (
+                f"rank-deficient design matrix "
+                f"(rank={rank}, ncol={ncol})"
+            )
+    except Exception as e:
+        return f"design matrix construction failed: {e}"
+
+    return None
+
+
+# ------------------------------------------------------------------
 # Weighted interaction test
 # ------------------------------------------------------------------
 
@@ -223,6 +300,15 @@ def _weighted_interaction_test(
         if len(complete) < 2:
             return {"error": "insufficient complete cells"}
         df_fit = df_fit[df_fit["dim_level"].isin(complete)]
+
+        # Pre-flight check — replaces opaque constraint-matrix errors
+        preflight_reason = _preflight_interaction_check(df_fit, weight_col)
+        if preflight_reason is not None:
+            logger.info(
+                "Interaction test skipped (%s × %s): %s",
+                dimension, severity_metric, preflight_reason,
+            )
+            return {"error": f"preflight: {preflight_reason}"}
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -255,6 +341,138 @@ def _weighted_interaction_test(
     except Exception as e:
         logger.warning("Weighted interaction test failed: %s", e)
         return {"error": str(e)}
+
+
+# ------------------------------------------------------------------
+# Top-level pre-flight diagnostic
+# ------------------------------------------------------------------
+
+def preflight_ipw_amplification(
+    decisions_df: pd.DataFrame,
+    complaints_df: pd.DataFrame,
+    models: List[str],
+    dimensions: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Scan every model x dimension combination for interaction-test feasibility.
+
+    Runs *before* the expensive bootstrap to surface data issues early.
+    Uses the same propensity-weight pipeline as the real analysis so the
+    diagnostic is faithful.
+
+    Returns
+    -------
+    Dict with keys:
+        feasible : bool — True if at least one model × dim pair can run
+        warnings : List[str] — human-readable warning messages
+        details  : Dict[model][dim] -> {feasible, reason, n_obs, n_dim, n_sev, min_cell}
+    """
+    if dimensions is None:
+        dimensions = ["age", "geographic", "education", "socioeconomic"]
+
+    severity_metric = "monetary_severity"
+
+    # Fit propensity model (same as the real analysis)
+    propensity_result = fit_propensity_model(complaints_df)
+    propensity_map = dict(zip(
+        propensity_result["case_ids"],
+        propensity_result["weights_stabilized"],
+    ))
+
+    details: Dict[str, Dict[str, Any]] = {}
+    warn_messages: List[str] = []
+    any_feasible = False
+
+    for model in models:
+        model_df = decisions_df[
+            (decisions_df["model"] == model)
+            & (decisions_df[severity_metric].isin(SEVERITY_LEVELS))
+        ].copy()
+
+        details[model] = {}
+
+        if len(model_df) < 30:
+            for dim in dimensions:
+                details[model][dim] = {
+                    "feasible": False,
+                    "reason": f"insufficient M=1 observations (n={len(model_df)})",
+                    "n_obs": len(model_df),
+                }
+            warn_messages.append(
+                f"{model}: only {len(model_df)} M=1 rows — entire model skipped"
+            )
+            continue
+
+        model_df["ipw_weight"] = model_df["case_id"].map(propensity_map).fillna(1.0)
+
+        for dim in dimensions:
+            if dim not in model_df.columns:
+                details[model][dim] = {
+                    "feasible": False,
+                    "reason": f"column '{dim}' not present",
+                    "n_obs": len(model_df),
+                }
+                warn_messages.append(f"{model}/{dim}: column missing")
+                continue
+
+            # Replicate the same rename + complete-cell filter as the real test
+            df_fit = model_df.rename(
+                columns={severity_metric: "severity", dim: "dim_level"},
+            ).copy()
+
+            cc = df_fit.groupby(["dim_level", "severity"]).size().unstack(fill_value=0)
+            complete = cc.index[cc.min(axis=1) > 0]
+            df_fit = df_fit[df_fit["dim_level"].isin(complete)]
+
+            n_dim = df_fit["dim_level"].nunique()
+            n_sev = df_fit["severity"].nunique()
+            cell_counts = df_fit.groupby(["dim_level", "severity"]).size()
+            min_cell = int(cell_counts.min()) if len(cell_counts) > 0 else 0
+
+            if len(complete) < 2:
+                reason = (
+                    f"insufficient complete cells after filter "
+                    f"(complete={len(complete)})"
+                )
+                details[model][dim] = {
+                    "feasible": False,
+                    "reason": reason,
+                    "n_obs": len(df_fit),
+                    "n_dim": n_dim,
+                    "n_sev": n_sev,
+                    "min_cell": min_cell,
+                }
+                warn_messages.append(f"{model}/{dim}: {reason}")
+                continue
+
+            # Run the same 5-check preflight
+            reason = _preflight_interaction_check(df_fit, "ipw_weight")
+            is_ok = reason is None
+            if is_ok:
+                any_feasible = True
+
+            details[model][dim] = {
+                "feasible": is_ok,
+                "reason": reason,
+                "n_obs": len(df_fit),
+                "n_dim": n_dim,
+                "n_sev": n_sev,
+                "min_cell": min_cell,
+            }
+            if not is_ok:
+                warn_messages.append(f"{model}/{dim}: {reason}")
+
+    if warn_messages:
+        for msg in warn_messages:
+            logger.warning("IPW preflight: %s", msg)
+    else:
+        logger.info("IPW preflight: all %d model×dim combinations feasible",
+                     len(models) * len(dimensions))
+
+    return {
+        "feasible": any_feasible,
+        "warnings": warn_messages,
+        "details": details,
+    }
 
 
 # ------------------------------------------------------------------

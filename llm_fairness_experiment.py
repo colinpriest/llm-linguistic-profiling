@@ -190,6 +190,10 @@ def parse_args() -> argparse.Namespace:
         help="Clear only executive summary cache (regenerate summaries without re-running LLM calls)",
     )
     parser.add_argument(
+        "--suppress-commentary", action="store_true", default=False,
+        help="Suppress GPT-5.2 generated commentary from console output",
+    )
+    parser.add_argument(
         "--models", nargs="+", default=["gpt-4o-mini", "gpt-5-mini"],
         help='Models to test (default: ["gpt-4o-mini", "gpt-5-mini"])',
     )
@@ -303,10 +307,12 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
-        args.num_complaints = 10
+        args.num_complaints = 100
         args.causal_sample_pct = 0.1
         args.threads = 4
         args.seed = 42
+        args.suppress_commentary = True
+        args.clear_analysis_cache = True
         api_key = "cache-only"
     else:
         # Validate API key
@@ -370,6 +376,7 @@ def main() -> None:
         clear_bayes_cache=args.clear_bayes_cache,
         clear_exec_cache=args.clear_exec_cache,
         verbose=args.verbose,
+        suppress_commentary=args.suppress_commentary,
         api_key=api_key,
         timestamp=run_timestamp,
     )

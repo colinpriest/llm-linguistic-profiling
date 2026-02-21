@@ -129,6 +129,12 @@ class NEValue:
         """Allow NEValue to be used where float is expected (returns NaN)."""
         return float("nan")
 
+    def __format__(self, format_spec: str) -> str:
+        """Allow NEValue in f-strings with numeric format specs (e.g. :.2f)."""
+        if not format_spec:
+            return repr(self)
+        return "N/E"
+
     def __repr__(self) -> str:
         return f"NE({self.code.value})"
 

@@ -44,6 +44,7 @@ robustness_out/
 
 # Reproducibility subset (regenerable)
 reproducibility/
+reproducibility.zip
 
 # Run artifacts (regenerable)
 artifacts/runs/

@@ -366,13 +366,13 @@ class FigureGenerator:
                 dd = dim_sev.get("issue_severity", {}).get(model, {}).get(dim, {})
                 if dd and not dd.get("error"):
                     amp = dd.get("amplification", {})
-                    bias_high = amp.get("bias_high", float("nan"))
-                    bias_low = amp.get("bias_low", float("nan"))
+                    bias_high = float(amp.get("bias_high", float("nan")))
+                    bias_low = float(amp.get("bias_low", float("nan")))
                     if np.isfinite(bias_high) and np.isfinite(bias_low):
                         dims_plotted.append(dim.capitalize())
                         gaps.append(bias_high - bias_low)
-                        ci_los.append(amp.get("ci_lower", float("nan")))
-                        ci_his.append(amp.get("ci_upper", float("nan")))
+                        ci_los.append(float(amp.get("ci_lower", float("nan"))))
+                        ci_his.append(float(amp.get("ci_upper", float("nan"))))
 
             if dims_plotted:
                 y = range(len(dims_plotted))
@@ -475,13 +475,13 @@ class FigureGenerator:
             mitigation = model_r.get("mitigation", {})
             vc = _resolve_variance_change(mitigation)
 
-            baseline_sd = vc.get("baseline_sd", float("nan"))
-            neutralised_sd = vc.get("neutralized_sd", float("nan"))
+            baseline_sd = float(vc.get("baseline_sd", float("nan")))
+            neutralised_sd = float(vc.get("neutralized_sd", float("nan")))
 
             proc_mit = model_r.get("process_mitigation", {})
             proc_vc = _resolve_variance_change(proc_mit)
-            proc_base = proc_vc.get("baseline_sd", float("nan"))
-            proc_neut = proc_vc.get("neutralized_sd", float("nan"))
+            proc_base = float(proc_vc.get("baseline_sd", float("nan")))
+            proc_neut = float(proc_vc.get("neutralized_sd", float("nan")))
 
             labels = ["Tier 2\nDisparity", "Friction\nDisparity"]
             baseline = [baseline_sd if np.isfinite(baseline_sd) else 0,
@@ -569,8 +569,8 @@ class FigureGenerator:
             ax_b.set_ylabel("Proportion")
             chars = miss_diag.get("complaint_characteristics", {})
             tier_test = chars.get("tier_distribution", {})
-            chi2 = tier_test.get("chi2", float("nan"))
-            p_val = tier_test.get("p_value", float("nan"))
+            chi2 = float(tier_test.get("chi2", float("nan")))
+            p_val = float(tier_test.get("p_value", float("nan")))
             if np.isfinite(chi2):
                 sig = "***" if p_val < 0.001 else "**" if p_val < 0.01 else "*" if p_val < 0.05 else "ns"
                 p_str = "< 0.001" if p_val < 0.001 else f"{p_val:.3f}"
@@ -937,8 +937,8 @@ class FigureGenerator:
                 for dim in DIMENSIONS:
                     dd = dims_data.get(dim, {})
                     if dd:
-                        uw = dd.get("unweighted", {}).get("A", float("nan"))
-                        w = dd.get("weighted", {}).get("A", float("nan"))
+                        uw = float(dd.get("unweighted", {}).get("A", float("nan")))
+                        w = float(dd.get("weighted", {}).get("A", float("nan")))
                         if np.isfinite(uw) and np.isfinite(w):
                             dims_plotted.append(dim[:4].capitalize())
                             uw_vals.append(uw)
