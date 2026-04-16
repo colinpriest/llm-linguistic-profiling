@@ -1841,6 +1841,7 @@ class FigureGenerator:
     def _fig_robustness_ladder_visibility(self) -> Optional[Tuple[Path, Path]]:
         """Robustness ladder: effect sizes across data subsets with BCa CIs."""
         import matplotlib.pyplot as plt
+        from matplotlib.ticker import FuncFormatter
 
         rob = self.ar.get("robustness_subsets", {})
         if not rob or rob.get("skipped"):
@@ -1878,13 +1879,13 @@ class FigureGenerator:
 
         fig, axes = plt.subplots(
             1, max(n_models, 1),
-            figsize=(5 * max(n_models, 1), 4.8),
+            figsize=(7.0 * max(n_models, 1), 4.8),
             squeeze=False,
         )
-        fig.suptitle(
-            "Robustness Ladder: Effect Visibility Across Data Subsets",
-            fontsize=12, fontweight="bold",
-        )
+        # Generous spacing so the right ylabel of one panel doesn't
+        # collide with the left ylabel of the next panel.
+        fig.subplots_adjust(left=0.08, right=0.94, top=0.88, bottom=0.12,
+                            wspace=0.55)
 
         for i, model in enumerate(self.models):
             ax = axes[0, i]
@@ -1912,10 +1913,21 @@ class FigureGenerator:
                 yerr_lo_primary.append(max(0, val_m - r["ci_lower_sd_persona_mean_tier"]))
                 yerr_hi_primary.append(max(0, r["ci_upper_sd_persona_mean_tier"] - val_m))
 
-                val_p = r["sd_persona_p_tier2"]
-                y_secondary.append(val_p)
-                yerr_lo_secondary.append(max(0, val_p - r["ci_lower_sd_persona_p_tier2"]))
-                yerr_hi_secondary.append(max(0, r["ci_upper_sd_persona_p_tier2"] - val_p))
+                # Convert to percentage points for display consistency with label.
+                val_p_pp = float(r["sd_persona_p_tier2"]) * 100.0
+                y_secondary.append(val_p_pp)
+                yerr_lo_secondary.append(
+                    max(
+                        0.0,
+                        float(r["sd_persona_p_tier2"] - r["ci_lower_sd_persona_p_tier2"]) * 100.0,
+                    )
+                )
+                yerr_hi_secondary.append(
+                    max(
+                        0.0,
+                        float(r["ci_upper_sd_persona_p_tier2"] - r["sd_persona_p_tier2"]) * 100.0,
+                    )
+                )
 
             if not x_vals:
                 ax.text(0.5, 0.5, "No data", ha="center", va="center",
@@ -1945,36 +1957,54 @@ class FigureGenerator:
                 label=r"$\sigma_{Y_2}$ (pp)",
             )
 
-            # Annotate HF point (use left-axis coords for positioning)
+            ax.set_xticks(range(len(subset_order)))
+            ax.set_xticklabels(subset_labels, fontsize=9)
+            ax.set_xlim(-0.25, len(subset_order) - 0.75)
+            ax.set_ylim(bottom=0.0)
+            ax2.set_ylim(bottom=0.0)
+
+            # Annotate the HF point. Text sits in the lower-right of the
+            # panel (well clear of the upper-left legend) with an arrow
+            # pointing up to the HF marker.
             hf_idx = subset_order.index("HF")
             if hf_idx in x_vals:
                 hf_pos = x_vals.index(hf_idx)
-                y_top = y_primary[hf_pos] + yerr_hi_primary[hf_pos]
+                y_tip = y_primary[hf_pos] - yerr_lo_primary[hf_pos]
                 ax.annotate(
                     "rewrite-fidelity\nfiltered",
-                    xy=(hf_idx, y_top),
-                    xytext=(hf_idx - 0.8, y_top + 0.015),
-                    fontsize=7, ha="center",
-                    arrowprops=dict(arrowstyle="->", color="#666666", lw=0.8),
+                    xy=(hf_idx, y_tip),
+                    xycoords="data",
+                    xytext=(0.72, 0.12),
+                    textcoords="axes fraction",
+                    fontsize=7, ha="center", va="bottom",
+                    arrowprops=dict(
+                        arrowstyle="->", color="#666666", lw=0.8,
+                        shrinkA=2, shrinkB=4,
+                    ),
                     color="#333333",
                 )
-
-            ax.set_xticks(range(len(subset_order)))
-            ax.set_xticklabels(subset_labels, fontsize=9)
             ax.set_ylabel(r"$\sigma_E$ (tier units)", fontsize=9,
                           color=color_primary)
             ax2.set_ylabel(r"$\sigma_{Y_2}$ (pp)", fontsize=9,
                            color=color_secondary)
+            ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{y:.3f}"))
+            ax2.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{y:.1f}"))
             ax.tick_params(axis="y", labelcolor=color_primary)
             ax2.tick_params(axis="y", labelcolor=color_secondary)
+            ax.grid(axis="y", linestyle=":", linewidth=0.8, alpha=0.5, zorder=0)
             ax.set_title(model, fontsize=10)
 
-            # Unified legend from both axes
-            handles = [line_p, line_s]
-            labels = [h.get_label() for h in handles]
-            ax.legend(handles, labels, loc="upper right", fontsize=8)
+            # Unified legend from both axes — placed upper-left so it
+            # doesn't collide with the HF annotation on the right.
+            handles = [line_p.lines[0], line_s.lines[0]]
+            labels = [line_p.get_label(), line_s.get_label()]
+            ax.legend(handles, labels, loc="upper left", fontsize=8,
+                      framealpha=0.9)
 
-        fig.tight_layout(rect=[0, 0, 1, 0.93])
+        fig.suptitle(
+            "Robustness Ladder: Effect Visibility Across Data Subsets",
+            fontsize=12, fontweight="bold", y=1.02,
+        )
 
         meta = self._base_metadata()
         meta["figure_number"] = "11"

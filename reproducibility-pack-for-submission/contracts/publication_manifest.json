@@ -1,0 +1,15 @@
+{
+  "description": "Expected counts for publication validation gate. Update these values based on your experiment run.",
+  "expected_counts": [
+    {
+      "panel_id": "panel12_ipw_robustness_monetary",
+      "model": "gpt-4o-mini",
+      "model_obs": 6706
+    },
+    {
+      "panel_id": "panel12_ipw_robustness_monetary",
+      "model": "gpt-5-mini",
+      "model_obs": 6706
+    }
+  ]
+}
