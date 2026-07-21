@@ -52,6 +52,7 @@ code-review/
 # Reproducibility subset (regenerable)
 reproducibility/
 reproducibility.zip
+reproducibility-pack-for-submission.zip
 
 # Run artifacts (regenerable)
 artifacts/runs/
