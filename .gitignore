@@ -34,6 +34,13 @@ robustness_out/
 *.swp
 *.swo
 
+# AI assistant config and reviews
+CLAUDE.md
+.claude/
+.codex/
+.cursor/
+code-review/
+
 # Stan / CmdStan compiled artifacts
 **/*.exe
 **/*.dll
