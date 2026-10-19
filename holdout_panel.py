@@ -75,7 +75,18 @@ def make_client(models: List[str], threads: int) -> LLMClient:
     # Identical to Experiment.__init__ so cache keys and call settings match the frozen run
     config = LLMConfig(api_key=key, models=models, temperature=0.0, max_tokens=16384,
                        timeout=120, max_retries=3, retry_delay=1.0)
-    return LLMClient(config, ResponseCache("./cache"), max_workers=threads)
+    client = LLMClient(config, ResponseCache("./cache"), max_workers=threads)
+    # Build the response schemas once in the main thread.  Otherwise dozens of worker threads
+    # trigger pydantic/instructor's lazy imports and schema generation simultaneously, which
+    # deadlocked on the import lock and crashed under memory pressure (19 Oct).
+    try:
+        from instructor.processing.schema import generate_openai_schema
+        for schema in (PersonaRewriteResponse, RemedyDecisionResponse):
+            schema.model_json_schema()
+            generate_openai_schema(schema)
+    except Exception as e:  # warm-up is best-effort
+        logger.warning("Schema warm-up skipped: %s", e)
+    return client
 
 
 def rewrite(llm: LLMClient, sample: pd.DataFrame, model: str) -> pd.DataFrame:
