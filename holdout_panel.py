@@ -76,6 +76,10 @@ def make_client(models: List[str], threads: int) -> LLMClient:
     config = LLMConfig(api_key=key, models=models, temperature=0.0, max_tokens=16384,
                        timeout=120, max_retries=3, retry_delay=1.0)
     client = LLMClient(config, ResponseCache("./cache"), max_workers=threads)
+    # LLMClient's breaker aborts a whole batch once more than 6 requests have failed in total,
+    # so transient DNS failures on this memory-starved machine killed 36k-request batches.
+    # Disable it here; failures are recorded per request and retried on the next run.
+    client.CIRCUIT_BREAKER_WINDOW = 10 ** 9
     # Build the response schemas once in the main thread.  Otherwise dozens of worker threads
     # trigger pydantic/instructor's lazy imports and schema generation simultaneously, which
     # deadlocked on the import lock and crashed under memory pressure (19 Oct).
@@ -182,6 +186,10 @@ def main() -> None:
     usage["wall_s"] = round(time.time() - t0, 1)
     (out / f"usage_{tag}.json").write_text(json.dumps(usage, indent=2, default=str), encoding="utf-8")
     logger.info("Usage: %s", json.dumps(usage, default=str))
+    n_failed = int(rw.text.isna().sum()) + (0 if args.no_decisions else int(dec.tier.isna().sum()))
+    if n_failed:
+        logger.warning("%d requests failed; exiting non-zero so a rerun retries them (successes are cached)", n_failed)
+        raise SystemExit(3)
 
 
 if __name__ == "__main__":
