@@ -125,12 +125,24 @@ def main() -> None:
     ap.add_argument("--no-decisions", action="store_true", help="skip GPT remedy decisions on the rewrites")
     ap.add_argument("--threads", type=int, default=50)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--merge", action="store_true", help="merge per-model output files and exit")
     ap.add_argument("--out", default="holdout_out")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    if args.merge:
+        n = args.limit_complaints or args.n_complaints
+        for kind in ("rewrites", "decisions", "usage"):
+            parts = [out / f"{kind}_n{n}_{m}.{'json' if kind == 'usage' else 'csv'}" for m in MODELS]
+            if kind == "usage":
+                merged = {m: json.loads(p.read_text(encoding="utf-8")) for m, p in zip(MODELS, parts) if p.exists()}
+                (out / f"usage_n{n}.json").write_text(json.dumps(merged, indent=2), encoding="utf-8")
+            elif all(p.exists() for p in parts):
+                pd.concat([pd.read_csv(p) for p in parts], ignore_index=True).to_csv(out / f"{kind}_n{n}.csv", index=False)
+                logger.info("Merged %s -> %s", [p.name for p in parts], f"{kind}_n{n}.csv")
+        return
     sample = draw_sample(args.n_complaints, args.seed)
     sample.to_csv(out / "holdout_sample_full.csv", index=False)
     if args.limit_complaints:
@@ -143,7 +155,8 @@ def main() -> None:
     if args.dry_run:
         return
 
-    tag = f"n{len(sample)}"
+    # Per-model runs (e.g. one process per model in parallel) get their own files; merge with --merge
+    tag = f"n{len(sample)}" + ("" if list(args.models) == MODELS else "_" + "_".join(args.models))
     llm = make_client(args.models, args.threads)
     t0 = time.time()
     rw = pd.concat([rewrite(llm, sample, m) for m in args.models], ignore_index=True)
