@@ -1,0 +1,9 @@
+{
+  "texts": 73000,
+  "unique_texts_scored": 69745,
+  "input_tokens_in_panel": 278840736,
+  "cost_usd_panel": 11.711310912,
+  "jev_models": [
+    "jev-1.13.0"
+  ]
+}
