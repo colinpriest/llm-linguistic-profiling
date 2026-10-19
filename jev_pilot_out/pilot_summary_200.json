@@ -1,0 +1,435 @@
+{
+  "n_complaints": 200,
+  "n_texts_scored": 15000,
+  "jev_model_versions": [
+    "jev-1.13.0"
+  ],
+  "feasibility": {
+    "input_tokens_total": 29982556,
+    "input_tokens_per_text": 1998.8370666666667,
+    "cost_usd": 1.2592673520000002,
+    "latency_p50_s": 0.2997513000154868,
+    "latency_p95_s": 0.3847566699827439,
+    "projected_cost_full_2000_usd": 12.592673520000002
+  },
+  "order_sensitivity": {
+    "argmax_agreement_fwd_vs_rev": 0.9142666666666667,
+    "mean_abs_diff_e_tier": 0.06162666666666667,
+    "mean_e_tier_fwd": 0.5461686666666667,
+    "mean_e_tier_rev": 0.6016126666666666
+  },
+  "original_tier_distribution_jev_argmax": {
+    "0": 0.57,
+    "1": 0.335,
+    "2": 0.095
+  },
+  "original_mean_probs_jev": {
+    "p0_fwd": 0.53335,
+    "p1_fwd": 0.36460000000000004,
+    "p2_fwd": 0.10195
+  },
+  "original_agreement_with_gpt": {
+    "gpt-4o-mini": {
+      "n": 200,
+      "gpt_tier_distribution": {
+        "0": 0.305,
+        "1": 0.595,
+        "2": 0.1
+      },
+      "exact_agreement": 0.585,
+      "kappa": 0.327744704977119,
+      "spearman_gpt_tier_vs_jev_e_tier": 0.6225845830817994
+    },
+    "gpt-5-mini": {
+      "n": 200,
+      "gpt_tier_distribution": {
+        "0": 0.29,
+        "1": 0.565,
+        "2": 0.145
+      },
+      "exact_agreement": 0.65,
+      "kappa": 0.4458956700704505,
+      "spearman_gpt_tier_vs_jev_e_tier": 0.7047045763715937
+    }
+  },
+  "guise_dispersion_by_rewrite_model": {
+    "gpt-4o-mini": {
+      "jev_e_tier": {
+        "sd_persona_means": 0.011836324236373857,
+        "perm_p": 0.0004997501249375312,
+        "n_complaints": 200
+      },
+      "jev_argmax_fwd": {
+        "sd_persona_means": 0.023095299459908656,
+        "perm_p": 0.03248375812093953,
+        "n_complaints": 200
+      },
+      "jev_median_tier": {
+        "sd_persona_means": 0.024356805378660973,
+        "perm_p": 0.0004997501249375312,
+        "n_complaints": 200
+      },
+      "jev_p_cum2": {
+        "sd_persona_means": 0.003206675514788304,
+        "perm_p": 0.02948525737131434,
+        "n_complaints": 200
+      },
+      "jev_argmax_tier2": {
+        "sd_persona_means": 0.008062257748298551,
+        "perm_p": 0.36431784107946025,
+        "n_complaints": 200
+      },
+      "gpt-4o-mini_tier": {
+        "sd_persona_means": 0.0380997021194038,
+        "perm_p": 0.0004997501249375312,
+        "n_complaints": 200
+      },
+      "gpt-4o-mini_tier2": {
+        "sd_persona_means": 0.015344586967603565,
+        "perm_p": 0.0009995002498750624,
+        "n_complaints": 200
+      },
+      "dimension_gaps": {
+        "age": {
+          "jev_levels": {
+            "old": 0.5256,
+            "young": 0.5112
+          },
+          "jev_gap": 0.01443888888888889,
+          "gpt_levels": {
+            "old": 0.7678,
+            "young": 0.76
+          },
+          "gpt_gap": 0.007777777777777772
+        },
+        "geo": {
+          "jev_levels": {
+            "rural": 0.5171,
+            "suburban": 0.5184,
+            "urban": 0.5197
+          },
+          "jev_gap": 0.0026291666666666824,
+          "gpt_levels": {
+            "rural": 0.7517,
+            "suburban": 0.7667,
+            "urban": 0.7733
+          },
+          "gpt_gap": 0.021666666666666612
+        },
+        "edu": {
+          "jev_levels": {
+            "college": 0.5236,
+            "high_school": 0.5132
+          },
+          "jev_gap": 0.010361111111111154,
+          "gpt_levels": {
+            "college": 0.7886,
+            "high_school": 0.7392
+          },
+          "gpt_gap": 0.04944444444444451
+        },
+        "ses": {
+          "jev_levels": {
+            "high": 0.5236,
+            "low": 0.512,
+            "middle": 0.5196
+          },
+          "jev_gap": 0.011545833333333255,
+          "gpt_levels": {
+            "high": 0.7871,
+            "low": 0.7446,
+            "middle": 0.76
+          },
+          "gpt_gap": 0.04249999999999998
+        }
+      }
+    },
+    "gpt-5-mini": {
+      "jev_e_tier": {
+        "sd_persona_means": 0.005779853488558887,
+        "perm_p": 0.00849575212393803,
+        "n_complaints": 200
+      },
+      "jev_argmax_fwd": {
+        "sd_persona_means": 0.017477309552855945,
+        "perm_p": 0.38780609695152424,
+        "n_complaints": 200
+      },
+      "jev_median_tier": {
+        "sd_persona_means": 0.015157244587723186,
+        "perm_p": 0.25337331334332835,
+        "n_complaints": 200
+      },
+      "jev_p_cum2": {
+        "sd_persona_means": 0.002364937329281383,
+        "perm_p": 0.015992003998001,
+        "n_complaints": 200
+      },
+      "jev_argmax_tier2": {
+        "sd_persona_means": 0.007837638128197258,
+        "perm_p": 0.19990004997501248,
+        "n_complaints": 200
+      },
+      "gpt-5-mini_tier": {
+        "sd_persona_means": 0.023095299459908635,
+        "perm_p": 0.4237881059470265,
+        "n_complaints": 200
+      },
+      "gpt-5-mini_tier2": {
+        "sd_persona_means": 0.013389020614513707,
+        "perm_p": 0.1969015492253873,
+        "n_complaints": 200
+      },
+      "dimension_gaps": {
+        "age": {
+          "jev_levels": {
+            "old": 0.5704,
+            "young": 0.5693
+          },
+          "jev_gap": 0.001100000000000101,
+          "gpt_levels": {
+            "old": 0.8333,
+            "young": 0.8275
+          },
+          "gpt_gap": 0.005833333333333357
+        },
+        "geo": {
+          "jev_levels": {
+            "rural": 0.5702,
+            "suburban": 0.5702,
+            "urban": 0.5692
+          },
+          "jev_gap": 0.000983333333333336,
+          "gpt_levels": {
+            "rural": 0.8358,
+            "suburban": 0.8238,
+            "urban": 0.8317
+          },
+          "gpt_gap": 0.012083333333333335
+        },
+        "edu": {
+          "jev_levels": {
+            "college": 0.5724,
+            "high_school": 0.5672
+          },
+          "jev_gap": 0.0051944444444446125,
+          "gpt_levels": {
+            "college": 0.8267,
+            "high_school": 0.8342
+          },
+          "gpt_gap": 0.007499999999999951
+        },
+        "ses": {
+          "jev_levels": {
+            "high": 0.5725,
+            "low": 0.5689,
+            "middle": 0.5681
+          },
+          "jev_gap": 0.004370833333333324,
+          "gpt_levels": {
+            "high": 0.8288,
+            "low": 0.8225,
+            "middle": 0.84
+          },
+          "gpt_gap": 0.01749999999999996
+        }
+      }
+    }
+  },
+  "manipulation_check": {
+    "gpt-4o-mini": {
+      "age": {
+        "chance": 0.5,
+        "argmax_matches_target": 0.64125,
+        "mean_p_target": 0.6275722222222223,
+        "mean_p_by_target_level": {
+          "young": {
+            "young": 0.8331444444444445,
+            "old": 0.16685555555555556
+          },
+          "old": {
+            "young": 0.5780000000000001,
+            "old": 0.422
+          }
+        }
+      },
+      "geo": {
+        "chance": 0.3333333333333333,
+        "argmax_matches_target": 0.3408333333333333,
+        "mean_p_target": 0.3387791666666667,
+        "mean_p_by_target_level": {
+          "urban": {
+            "urban": 0.32676666666666665,
+            "suburban": 0.6543708333333333,
+            "rural": 0.018833333333333334
+          },
+          "suburban": {
+            "urban": 0.31224166666666664,
+            "suburban": 0.6676541666666667,
+            "rural": 0.020075000000000003
+          },
+          "rural": {
+            "urban": 0.2994166666666666,
+            "suburban": 0.6786333333333332,
+            "rural": 0.021916666666666668
+          }
+        }
+      },
+      "edu": {
+        "chance": 0.5,
+        "argmax_matches_target": 0.5981944444444445,
+        "mean_p_target": 0.5868763888888889,
+        "mean_p_by_target_level": {
+          "high_school": {
+            "high_school": 0.32852222222222216,
+            "college": 0.6714777777777778
+          },
+          "college": {
+            "high_school": 0.15476944444444446,
+            "college": 0.8452305555555555
+          }
+        }
+      },
+      "ses": {
+        "chance": 0.3333333333333333,
+        "argmax_matches_target": 0.36138888888888887,
+        "mean_p_target": 0.3664263888888889,
+        "mean_p_by_target_level": {
+          "low": {
+            "low": 0.25030416666666666,
+            "middle": 0.7173125000000001,
+            "high": 0.0323625
+          },
+          "middle": {
+            "low": 0.19122916666666667,
+            "middle": 0.7528583333333333,
+            "high": 0.0559
+          },
+          "high": {
+            "low": 0.14549166666666669,
+            "middle": 0.7583541666666667,
+            "high": 0.09611666666666667
+          }
+        }
+      }
+    },
+    "gpt-5-mini": {
+      "age": {
+        "chance": 0.5,
+        "argmax_matches_target": 0.54,
+        "mean_p_target": 0.5278388888888889,
+        "mean_p_by_target_level": {
+          "young": {
+            "young": 0.6591944444444444,
+            "old": 0.3408055555555556
+          },
+          "old": {
+            "young": 0.6035166666666666,
+            "old": 0.3964833333333333
+          }
+        }
+      },
+      "geo": {
+        "chance": 0.3333333333333333,
+        "argmax_matches_target": 0.3351388888888889,
+        "mean_p_target": 0.3365319444444444,
+        "mean_p_by_target_level": {
+          "urban": {
+            "urban": 0.35744166666666666,
+            "suburban": 0.6142916666666668,
+            "rural": 0.028212500000000005
+          },
+          "suburban": {
+            "urban": 0.35395,
+            "suburban": 0.61795,
+            "rural": 0.02805416666666667
+          },
+          "rural": {
+            "urban": 0.3501791666666667,
+            "suburban": 0.6155916666666666,
+            "rural": 0.03420416666666667
+          }
+        }
+      },
+      "edu": {
+        "chance": 0.5,
+        "argmax_matches_target": 0.5334722222222222,
+        "mean_p_target": 0.5280888888888888,
+        "mean_p_by_target_level": {
+          "high_school": {
+            "high_school": 0.297925,
+            "college": 0.7020750000000001
+          },
+          "college": {
+            "high_school": 0.24174722222222222,
+            "college": 0.7582527777777778
+          }
+        }
+      },
+      "ses": {
+        "chance": 0.3333333333333333,
+        "argmax_matches_target": 0.33694444444444444,
+        "mean_p_target": 0.3422,
+        "mean_p_by_target_level": {
+          "low": {
+            "low": 0.2639208333333334,
+            "middle": 0.670975,
+            "high": 0.06505833333333333
+          },
+          "middle": {
+            "low": 0.24559166666666665,
+            "middle": 0.6819166666666666,
+            "high": 0.07246250000000001
+          },
+          "high": {
+            "low": 0.22720833333333332,
+            "middle": 0.6919958333333334,
+            "high": 0.08076249999999999
+          }
+        }
+      }
+    }
+  },
+  "persona_entropy_normalised": {
+    "original": {
+      "age": 0.7490874090941004,
+      "geo": 0.6197340934980055,
+      "edu": 0.5185172786417493,
+      "ses": 0.45085391962286225
+    },
+    "neutralized_by_gpt-4o-mini": {
+      "age": 0.8076388674076846,
+      "geo": 0.5806237069683075,
+      "edu": 0.21651893032872213,
+      "ses": 0.42562671952278974
+    },
+    "neutralized_by_gpt-5-mini": {
+      "age": 0.8093901247802678,
+      "geo": 0.5934205747297113,
+      "edu": 0.3083354203414762,
+      "ses": 0.43989628664066915
+    },
+    "guise_by_gpt-4o-mini": {
+      "age": 0.6098649604843329,
+      "geo": 0.5640087273045851,
+      "edu": 0.5105335595119948,
+      "ses": 0.40625131722360575
+    },
+    "guise_by_gpt-5-mini": {
+      "age": 0.7388174316435744,
+      "geo": 0.5990730861419649,
+      "edu": 0.5244196092220595,
+      "ses": 0.4445408748219587
+    }
+  },
+  "uncertainty_vs_sensitivity": {
+    "gpt-4o-mini": {
+      "spearman_orig_entropy_vs_guise_sd": 0.7021710594055934,
+      "n": 200
+    },
+    "gpt-5-mini": {
+      "spearman_orig_entropy_vs_guise_sd": 0.722129799930907,
+      "n": 200
+    }
+  }
+}

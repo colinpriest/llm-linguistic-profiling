@@ -1,0 +1,3314 @@
+{
+  "n_complaints": 2000,
+  "n_personas": 36,
+  "n_boot": 1000,
+  "n_perm": 1000,
+  "q1_hidden_variation": {
+    "gpt-4o-mini": {
+      "complaints_argmax_constant_across_36": 0.644,
+      "mean_pairwise_tv_all": 0.07308202380952376,
+      "mean_pairwise_tv_same_argmax_pairs": 0.06320209074557025,
+      "share_pairs_same_argmax": 0.9023134920634921,
+      "share_same_argmax_pairs_tv_gt_0.10": 0.2030257319148749,
+      "share_same_argmax_pairs_tv_gt_0.20": 0.031197582932761023,
+      "share_pairs_mean_invisible": 0.0014357142857142856,
+      "in_argmax_constant_complaints": {
+        "mean_pairwise_tv": 0.05706235211475897,
+        "mean_range_p2": 0.06417701863354038,
+        "mean_range_entropy": 0.2664213130527745,
+        "share_with_p2_range_gt_0.10": 0.25854037267080743
+      },
+      "baseline_order_reversal_tv_same_text": 0.05544895833333334,
+      "gpt_complaints_tier_constant_across_36": 0.493
+    },
+    "gpt-5-mini": {
+      "complaints_argmax_constant_across_36": 0.724,
+      "mean_pairwise_tv_all": 0.04911504761904761,
+      "mean_pairwise_tv_same_argmax_pairs": 0.04438607012285568,
+      "share_pairs_same_argmax": 0.9336674603174603,
+      "share_same_argmax_pairs_tv_gt_0.10": 0.09492605113305526,
+      "share_same_argmax_pairs_tv_gt_0.20": 0.008738368322224781,
+      "share_pairs_mean_invisible": 0.00035634920634920633,
+      "in_argmax_constant_complaints": {
+        "mean_pairwise_tv": 0.04059707423485049,
+        "mean_range_p2": 0.05240331491712707,
+        "mean_range_entropy": 0.18971621931709895,
+        "share_with_p2_range_gt_0.10": 0.22168508287292818
+      },
+      "baseline_order_reversal_tv_same_text": 0.0546638888888889,
+      "gpt_complaints_tier_constant_across_36": 0.359
+    }
+  },
+  "q1_paraphrase_vs_style": {
+    "cross_bank_tv_same_persona": 0.09095527777777779,
+    "cross_bank_tv_different_persona": 0.09162201984126986,
+    "cross_bank_tv_one_dim_changed": {
+      "age": 0.09152902777777777,
+      "geo": 0.09100590277777779,
+      "edu": 0.09146152777777777,
+      "ses": 0.09117388888888889
+    }
+  },
+  "q1_policies": {
+    "gpt-4o-mini": {
+      "argmax_monetary_rate": 0.06891666666666667,
+      "p2_threshold_equal_budget": 0.43,
+      "gpt_monetary_rate": 0.10027777777777777,
+      "p2_threshold_gpt_budget": 0.33,
+      "refer_top10pct_auto_monetary_rate": 0.046454918665308514,
+      "refer_top20pct_auto_monetary_rate": 0.026039223860892524,
+      "continuous": {
+        "p2": {
+          "mean": 0.0891623611111111,
+          "within_var": 0.001329849246031746,
+          "between_var": 0.02846186335912941,
+          "within_share": 0.044638227538532346,
+          "persona_sd": 0.001744264677700332,
+          "persona_perm_p": 0.000999000999000999,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": -0.00058,
+                "old": 0.00058
+              },
+              "gap": 0.00116,
+              "contrast": "old-young",
+              "contrast_ci95": [
+                -3e-05,
+                0.00235
+              ],
+              "gap_boot_median": 0.00115
+            },
+            "geo": {
+              "level_effects": {
+                "urban": 0.00011,
+                "suburban": -0.00016,
+                "rural": 6e-05
+              },
+              "gap": 0.00027,
+              "contrast": "urban-suburban",
+              "contrast_ci95": [
+                -0.00027,
+                0.00075
+              ],
+              "gap_boot_median": 0.00039
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00046,
+                "college": 0.00046
+              },
+              "gap": 0.00093,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                1e-05,
+                0.00187
+              ],
+              "gap_boot_median": 0.00093
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00055,
+                "middle": -1e-05,
+                "high": 0.00057
+              },
+              "gap": 0.00112,
+              "contrast": "high-low",
+              "contrast_ci95": [
+                0.00014,
+                0.00212
+              ],
+              "gap_boot_median": 0.00112
+            }
+          }
+        },
+        "entropy": {
+          "mean": 0.5383989168796193,
+          "within_var": 0.004577404610038172,
+          "between_var": 0.05047578083820927,
+          "within_share": 0.08314513633986076,
+          "persona_sd": 0.0018724381096710797,
+          "persona_perm_p": 0.017982017982017984,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": -0.00044,
+                "old": 0.00044
+              },
+              "gap": 0.00088,
+              "contrast": "old-young",
+              "contrast_ci95": [
+                -0.00153,
+                0.00328
+              ],
+              "gap_boot_median": 0.0011
+            },
+            "geo": {
+              "level_effects": {
+                "urban": 0.00028,
+                "suburban": -0.00048,
+                "rural": 0.0002
+              },
+              "gap": 0.00076,
+              "contrast": "urban-suburban",
+              "contrast_ci95": [
+                -0.00013,
+                0.0017
+              ],
+              "gap_boot_median": 0.00099
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00014,
+                "college": 0.00014
+              },
+              "gap": 0.00029,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                -0.00152,
+                0.00189
+              ],
+              "gap_boot_median": 0.00062
+            },
+            "ses": {
+              "level_effects": {
+                "low": 5e-05,
+                "middle": 0.00041,
+                "high": -0.00046
+              },
+              "gap": 0.00087,
+              "contrast": "middle-high",
+              "contrast_ci95": [
+                -0.00047,
+                0.0022
+              ],
+              "gap_boot_median": 0.00113
+            }
+          }
+        },
+        "max_prob": {
+          "mean": 0.7221075,
+          "within_var": 0.0035693016666666667,
+          "between_var": 0.0221980836429789,
+          "within_share": 0.13852013402890986,
+          "persona_sd": 0.00162877934136473,
+          "persona_perm_p": 0.03796203796203796,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": 0.00082,
+                "old": -0.00082
+              },
+              "gap": 0.00163,
+              "contrast": "young-old",
+              "contrast_ci95": [
+                -0.00052,
+                0.00376
+              ],
+              "gap_boot_median": 0.00164
+            },
+            "geo": {
+              "level_effects": {
+                "urban": -0.00024,
+                "suburban": 0.00034,
+                "rural": -0.0001
+              },
+              "gap": 0.00058,
+              "contrast": "suburban-urban",
+              "contrast_ci95": [
+                -0.00021,
+                0.00141
+              ],
+              "gap_boot_median": 0.00074
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": 0.00061,
+                "college": -0.00061
+              },
+              "gap": 0.00122,
+              "contrast": "high_school-college",
+              "contrast_ci95": [
+                -0.00019,
+                0.00267
+              ],
+              "gap_boot_median": 0.00122
+            },
+            "ses": {
+              "level_effects": {
+                "low": 0.00027,
+                "middle": -0.00012,
+                "high": -0.00016
+              },
+              "gap": 0.00043,
+              "contrast": "low-high",
+              "contrast_ci95": [
+                -0.00117,
+                0.00192
+              ],
+              "gap_boot_median": 0.00082
+            }
+          }
+        }
+      },
+      "rules": {
+        "monetary_argmax": {
+          "mean": 0.06891666666666667,
+          "within_var": 0.01252698412698413,
+          "between_var": 0.052014154453770105,
+          "within_share": 0.1940930141991576,
+          "persona_sd": 0.0044344431120813465,
+          "persona_perm_p": 0.000999000999000999,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": -0.00214,
+                "old": 0.00214
+              },
+              "gap": 0.00428,
+              "contrast": "old-young",
+              "contrast_ci95": [
+                0.00117,
+                0.00725
+              ],
+              "gap_boot_median": 0.00435
+            },
+            "geo": {
+              "level_effects": {
+                "urban": -8e-05,
+                "suburban": 0.00063,
+                "rural": -0.00054
+              },
+              "gap": 0.00117,
+              "contrast": "suburban-rural",
+              "contrast_ci95": [
+                -0.00067,
+                0.00296
+              ],
+              "gap_boot_median": 0.00158
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00164,
+                "college": 0.00164
+              },
+              "gap": 0.00328,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                0.00097,
+                0.00556
+              ],
+              "gap_boot_median": 0.00321
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00175,
+                "middle": 0.00037,
+                "high": 0.00137
+              },
+              "gap": 0.00312,
+              "contrast": "high-low",
+              "contrast_ci95": [
+                0.00062,
+                0.00563
+              ],
+              "gap_boot_median": 0.00317
+            }
+          }
+        },
+        "monetary_p2_threshold_equal_budget": {
+          "mean": 0.06940277777777777,
+          "within_var": 0.013001190476190477,
+          "between_var": 0.051971971904161945,
+          "within_share": 0.20010093398381323,
+          "persona_sd": 0.003920312386321936,
+          "persona_perm_p": 0.000999000999000999,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": -0.00179,
+                "old": 0.00179
+              },
+              "gap": 0.00358,
+              "contrast": "old-young",
+              "contrast_ci95": [
+                0.00061,
+                0.00658
+              ],
+              "gap_boot_median": 0.00353
+            },
+            "geo": {
+              "level_effects": {
+                "urban": -0.00053,
+                "suburban": 0.00047,
+                "rural": 6e-05
+              },
+              "gap": 0.001,
+              "contrast": "suburban-urban",
+              "contrast_ci95": [
+                -0.00096,
+                0.00308
+              ],
+              "gap_boot_median": 0.00138
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00087,
+                "college": 0.00088
+              },
+              "gap": 0.00175,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                -0.00061,
+                0.00392
+              ],
+              "gap_boot_median": 0.00175
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00086,
+                "middle": 0.00031,
+                "high": 0.00056
+              },
+              "gap": 0.00142,
+              "contrast": "high-low",
+              "contrast_ci95": [
+                -0.00117,
+                0.00379
+              ],
+              "gap_boot_median": 0.00179
+            }
+          }
+        },
+        "monetary_p2_threshold_gpt_budget": {
+          "mean": 0.102,
+          "within_var": 0.018203968253968257,
+          "between_var": 0.07393466486329585,
+          "within_share": 0.19757150326725825,
+          "persona_sd": 0.00442396073348629,
+          "persona_perm_p": 0.000999000999000999,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": -0.00192,
+                "old": 0.00192
+              },
+              "gap": 0.00383,
+              "contrast": "old-young",
+              "contrast_ci95": [
+                0.00011,
+                0.00753
+              ],
+              "gap_boot_median": 0.00381
+            },
+            "geo": {
+              "level_effects": {
+                "urban": 0.0,
+                "suburban": -0.00096,
+                "rural": 0.00096
+              },
+              "gap": 0.00192,
+              "contrast": "rural-suburban",
+              "contrast_ci95": [
+                -4e-05,
+                0.004
+              ],
+              "gap_boot_median": 0.00217
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00153,
+                "college": 0.00153
+              },
+              "gap": 0.00306,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                0.00011,
+                0.00606
+              ],
+              "gap_boot_median": 0.00308
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00146,
+                "middle": -0.0,
+                "high": 0.00146
+              },
+              "gap": 0.00292,
+              "contrast": "high-low",
+              "contrast_ci95": [
+                -0.00046,
+                0.00617
+              ],
+              "gap_boot_median": 0.00296
+            }
+          }
+        },
+        "gpt_monetary": {
+          "mean": 0.10027777777777777,
+          "within_var": 0.021250000000000005,
+          "between_var": 0.06959722145023128,
+          "within_share": 0.23390919018520961,
+          "persona_sd": 0.007164839191141741,
+          "persona_perm_p": 0.000999000999000999,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": -0.00236,
+                "old": 0.00236
+              },
+              "gap": 0.00472,
+              "contrast": "old-young",
+              "contrast_ci95": [
+                0.00078,
+                0.00858
+              ],
+              "gap_boot_median": 0.00489
+            },
+            "geo": {
+              "level_effects": {
+                "urban": 0.00231,
+                "suburban": -0.00069,
+                "rural": -0.00161
+              },
+              "gap": 0.00392,
+              "contrast": "urban-rural",
+              "contrast_ci95": [
+                0.00138,
+                0.00642
+              ],
+              "gap_boot_median": 0.00404
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00358,
+                "college": 0.00358
+              },
+              "gap": 0.00717,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                0.00419,
+                0.01036
+              ],
+              "gap_boot_median": 0.00708
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00449,
+                "middle": -0.00153,
+                "high": 0.00601
+              },
+              "gap": 0.0105,
+              "contrast": "high-low",
+              "contrast_ci95": [
+                0.007,
+                0.01421
+              ],
+              "gap_boot_median": 0.01054
+            }
+          }
+        },
+        "any_action_argmax": {
+          "mean": 0.36068055555555556,
+          "within_var": 0.04615674603174604,
+          "between_var": 0.1858083823933572,
+          "within_share": 0.19898140011441032,
+          "persona_sd": 0.013601550740253203,
+          "persona_perm_p": 0.000999000999000999,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": -0.00996,
+                "old": 0.00996
+              },
+              "gap": 0.01992,
+              "contrast": "old-young",
+              "contrast_ci95": [
+                0.01413,
+                0.02608
+              ],
+              "gap_boot_median": 0.01972
+            },
+            "geo": {
+              "level_effects": {
+                "urban": -0.00076,
+                "suburban": 0.00032,
+                "rural": 0.00044
+              },
+              "gap": 0.00121,
+              "contrast": "rural-urban",
+              "contrast_ci95": [
+                -0.00242,
+                0.00504
+              ],
+              "gap_boot_median": 0.00235
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00404,
+                "college": 0.00404
+              },
+              "gap": 0.00808,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                0.00342,
+                0.01272
+              ],
+              "gap_boot_median": 0.00801
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00468,
+                "middle": 0.00178,
+                "high": 0.0029
+              },
+              "gap": 0.00758,
+              "contrast": "high-low",
+              "contrast_ci95": [
+                0.00262,
+                0.01242
+              ],
+              "gap_boot_median": 0.00792
+            }
+          }
+        },
+        "any_action_p0_threshold_equal_budget": {
+          "mean": 0.3674722222222222,
+          "within_var": 0.04622142857142857,
+          "between_var": 0.18759268445951371,
+          "within_share": 0.19768451088028105,
+          "persona_sd": 0.01297742239674321,
+          "persona_perm_p": 0.000999000999000999,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": -0.00892,
+                "old": 0.00892
+              },
+              "gap": 0.01783,
+              "contrast": "old-young",
+              "contrast_ci95": [
+                0.01203,
+                0.02392
+              ],
+              "gap_boot_median": 0.01786
+            },
+            "geo": {
+              "level_effects": {
+                "urban": -0.00085,
+                "suburban": -0.00043,
+                "rural": 0.00128
+              },
+              "gap": 0.00213,
+              "contrast": "rural-urban",
+              "contrast_ci95": [
+                -0.00154,
+                0.00567
+              ],
+              "gap_boot_median": 0.00271
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00364,
+                "college": 0.00364
+              },
+              "gap": 0.00728,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                0.0028,
+                0.01194
+              ],
+              "gap_boot_median": 0.00719
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00335,
+                "middle": 0.00078,
+                "high": 0.00257
+              },
+              "gap": 0.00592,
+              "contrast": "high-low",
+              "contrast_ci95": [
+                0.00133,
+                0.01079
+              ],
+              "gap_boot_median": 0.00598
+            }
+          }
+        },
+        "gpt_any_action": {
+          "mean": 0.6416805555555556,
+          "within_var": 0.055217857142857145,
+          "between_var": 0.1763307577785807,
+          "within_share": 0.2384719820569517,
+          "persona_sd": 0.021702584697212507,
+          "persona_perm_p": 0.000999000999000999,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": -0.00807,
+                "old": 0.00807
+              },
+              "gap": 0.01614,
+              "contrast": "old-young",
+              "contrast_ci95": [
+                0.00986,
+                0.02247
+              ],
+              "gap_boot_median": 0.01611
+            },
+            "geo": {
+              "level_effects": {
+                "urban": 0.0049,
+                "suburban": 0.00111,
+                "rural": -0.00601
+              },
+              "gap": 0.01092,
+              "contrast": "urban-rural",
+              "contrast_ci95": [
+                0.00696,
+                0.01513
+              ],
+              "gap_boot_median": 0.01087
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.01465,
+                "college": 0.01465
+              },
+              "gap": 0.02931,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                0.02397,
+                0.03497
+              ],
+              "gap_boot_median": 0.02903
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.01281,
+                "middle": -0.00114,
+                "high": 0.01394
+              },
+              "gap": 0.02675,
+              "contrast": "high-low",
+              "contrast_ci95": [
+                0.02183,
+                0.03242
+              ],
+              "gap_boot_median": 0.02667
+            }
+          }
+        },
+        "refer_top10pct_entropy": {
+          "mean": 0.10008333333333333,
+          "within_var": 0.026150000000000003,
+          "between_var": 0.06467538630426325,
+          "within_share": 0.28791509801453546,
+          "persona_sd": 0.0037597492317592504,
+          "persona_perm_p": 0.34065934065934067,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": 0.00089,
+                "old": -0.00089
+              },
+              "gap": 0.00178,
+              "contrast": "young-old",
+              "contrast_ci95": [
+                -0.00311,
+                0.00625
+              ],
+              "gap_boot_median": 0.00214
+            },
+            "geo": {
+              "level_effects": {
+                "urban": 0.00108,
+                "suburban": -0.00092,
+                "rural": -0.00017
+              },
+              "gap": 0.002,
+              "contrast": "urban-suburban",
+              "contrast_ci95": [
+                -0.00054,
+                0.00458
+              ],
+              "gap_boot_median": 0.00229
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00047,
+                "college": 0.00047
+              },
+              "gap": 0.00094,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                -0.00264,
+                0.00408
+              ],
+              "gap_boot_median": 0.00128
+            },
+            "ses": {
+              "level_effects": {
+                "low": 0.00096,
+                "middle": -0.00092,
+                "high": -4e-05
+              },
+              "gap": 0.00187,
+              "contrast": "low-middle",
+              "contrast_ci95": [
+                -0.00113,
+                0.00483
+              ],
+              "gap_boot_median": 0.00254
+            }
+          }
+        },
+        "refer_top20pct_entropy": {
+          "mean": 0.20045833333333332,
+          "within_var": 0.033362301587301586,
+          "between_var": 0.12790317052816533,
+          "within_share": 0.2068781441535979,
+          "persona_sd": 0.004236533286274787,
+          "persona_perm_p": 0.35564435564435565,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": 0.00132,
+                "old": -0.00132
+              },
+              "gap": 0.00264,
+              "contrast": "young-old",
+              "contrast_ci95": [
+                -0.00231,
+                0.00781
+              ],
+              "gap_boot_median": 0.00256
+            },
+            "geo": {
+              "level_effects": {
+                "urban": 0.00117,
+                "suburban": -0.00075,
+                "rural": -0.00042
+              },
+              "gap": 0.00192,
+              "contrast": "urban-suburban",
+              "contrast_ci95": [
+                -0.00071,
+                0.00467
+              ],
+              "gap_boot_median": 0.00246
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00026,
+                "college": 0.00026
+              },
+              "gap": 0.00053,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                -0.00325,
+                0.0042
+              ],
+              "gap_boot_median": 0.00131
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00083,
+                "middle": 0.00154,
+                "high": -0.00071
+              },
+              "gap": 0.00238,
+              "contrast": "middle-low",
+              "contrast_ci95": [
+                -0.00113,
+                0.00617
+              ],
+              "gap_boot_median": 0.00325
+            }
+          }
+        }
+      }
+    },
+    "gpt-5-mini": {
+      "argmax_monetary_rate": 0.08319444444444445,
+      "p2_threshold_equal_budget": 0.42,
+      "gpt_monetary_rate": 0.14095833333333332,
+      "p2_threshold_gpt_budget": 0.28,
+      "refer_top10pct_auto_monetary_rate": 0.06161444667386942,
+      "refer_top20pct_auto_monetary_rate": 0.03922419780525073,
+      "continuous": {
+        "p2": {
+          "mean": 0.10347999999999997,
+          "within_var": 0.0007164830158730159,
+          "between_var": 0.034748986160981724,
+          "within_share": 0.02020227089905814,
+          "persona_sd": 0.0015472824102738577,
+          "persona_perm_p": 0.000999000999000999,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": -0.00027,
+                "old": 0.00027
+              },
+              "gap": 0.00054,
+              "contrast": "old-young",
+              "contrast_ci95": [
+                4e-05,
+                0.0011
+              ],
+              "gap_boot_median": 0.00056
+            },
+            "geo": {
+              "level_effects": {
+                "urban": 0.00015,
+                "suburban": 7e-05,
+                "rural": -0.00021
+              },
+              "gap": 0.00036,
+              "contrast": "urban-rural",
+              "contrast_ci95": [
+                -0.0001,
+                0.00087
+              ],
+              "gap_boot_median": 0.00043
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00096,
+                "college": 0.00096
+              },
+              "gap": 0.00192,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                0.00138,
+                0.00246
+              ],
+              "gap_boot_median": 0.0019
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00074,
+                "middle": -0.00052,
+                "high": 0.00126
+              },
+              "gap": 0.002,
+              "contrast": "high-low",
+              "contrast_ci95": [
+                0.00136,
+                0.00261
+              ],
+              "gap_boot_median": 0.00201
+            }
+          }
+        },
+        "entropy": {
+          "mean": 0.5533627804999574,
+          "within_var": 0.002187559877082349,
+          "between_var": 0.0515916018646395,
+          "within_share": 0.04067671949942725,
+          "persona_sd": 0.0011498823843172688,
+          "persona_perm_p": 0.1958041958041958,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": 0.00021,
+                "old": -0.00021
+              },
+              "gap": 0.00042,
+              "contrast": "young-old",
+              "contrast_ci95": [
+                -0.00047,
+                0.00132
+              ],
+              "gap_boot_median": 0.00045
+            },
+            "geo": {
+              "level_effects": {
+                "urban": -0.00032,
+                "suburban": -1e-05,
+                "rural": 0.00034
+              },
+              "gap": 0.00066,
+              "contrast": "rural-urban",
+              "contrast_ci95": [
+                -0.00019,
+                0.00147
+              ],
+              "gap_boot_median": 0.00075
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00039,
+                "college": 0.00039
+              },
+              "gap": 0.00079,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                -0.00012,
+                0.00175
+              ],
+              "gap_boot_median": 0.00077
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.0002,
+                "middle": -0.00053,
+                "high": 0.00072
+              },
+              "gap": 0.00125,
+              "contrast": "high-middle",
+              "contrast_ci95": [
+                0.00033,
+                0.00218
+              ],
+              "gap_boot_median": 0.0013
+            }
+          }
+        },
+        "max_prob": {
+          "mean": 0.7154330555555556,
+          "within_var": 0.0018316023809523809,
+          "between_var": 0.023735094361918615,
+          "within_share": 0.0716401653046205,
+          "persona_sd": 0.0009147976183503815,
+          "persona_perm_p": 0.6103896103896104,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": -0.00013,
+                "old": 0.00013
+              },
+              "gap": 0.00027,
+              "contrast": "old-young",
+              "contrast_ci95": [
+                -0.00057,
+                0.00104
+              ],
+              "gap_boot_median": 0.00035
+            },
+            "geo": {
+              "level_effects": {
+                "urban": 0.00011,
+                "suburban": -0.0,
+                "rural": -0.00011
+              },
+              "gap": 0.00022,
+              "contrast": "urban-rural",
+              "contrast_ci95": [
+                -0.00051,
+                0.00096
+              ],
+              "gap_boot_median": 0.00048
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": 4e-05,
+                "college": -4e-05
+              },
+              "gap": 7e-05,
+              "contrast": "high_school-college",
+              "contrast_ci95": [
+                -0.00077,
+                0.00087
+              ],
+              "gap_boot_median": 0.0003
+            },
+            "ses": {
+              "level_effects": {
+                "low": -2e-05,
+                "middle": 0.00041,
+                "high": -0.00038
+              },
+              "gap": 0.00079,
+              "contrast": "middle-high",
+              "contrast_ci95": [
+                -6e-05,
+                0.00156
+              ],
+              "gap_boot_median": 0.00087
+            }
+          }
+        }
+      },
+      "rules": {
+        "monetary_argmax": {
+          "mean": 0.08319444444444445,
+          "within_var": 0.0103,
+          "between_var": 0.06629238616221692,
+          "within_share": 0.13447811872821633,
+          "persona_sd": 0.0028542644230739,
+          "persona_perm_p": 0.013986013986013986,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": 0.0,
+                "old": 0.0
+              },
+              "gap": 0.0,
+              "contrast": "young-old",
+              "contrast_ci95": [
+                -0.00167,
+                0.00167
+              ],
+              "gap_boot_median": 0.00061
+            },
+            "geo": {
+              "level_effects": {
+                "urban": 0.00035,
+                "suburban": -0.00057,
+                "rural": 0.00022
+              },
+              "gap": 0.00092,
+              "contrast": "urban-suburban",
+              "contrast_ci95": [
+                -0.00092,
+                0.00262
+              ],
+              "gap_boot_median": 0.00142
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00078,
+                "college": 0.00078
+              },
+              "gap": 0.00156,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                -6e-05,
+                0.00328
+              ],
+              "gap_boot_median": 0.00156
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00132,
+                "middle": -0.00049,
+                "high": 0.00181
+              },
+              "gap": 0.00313,
+              "contrast": "high-low",
+              "contrast_ci95": [
+                0.00117,
+                0.00517
+              ],
+              "gap_boot_median": 0.00317
+            }
+          }
+        },
+        "monetary_p2_threshold_equal_budget": {
+          "mean": 0.08583333333333333,
+          "within_var": 0.011070634920634922,
+          "between_var": 0.06773672329992157,
+          "within_share": 0.14047717333261914,
+          "persona_sd": 0.0031825416617181006,
+          "persona_perm_p": 0.001998001998001998,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": -0.00069,
+                "old": 0.00069
+              },
+              "gap": 0.00139,
+              "contrast": "old-young",
+              "contrast_ci95": [
+                -0.00053,
+                0.0032
+              ],
+              "gap_boot_median": 0.00144
+            },
+            "geo": {
+              "level_effects": {
+                "urban": 0.00088,
+                "suburban": -0.00033,
+                "rural": -0.00054
+              },
+              "gap": 0.00142,
+              "contrast": "urban-rural",
+              "contrast_ci95": [
+                -0.00042,
+                0.00337
+              ],
+              "gap_boot_median": 0.00175
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00139,
+                "college": 0.00139
+              },
+              "gap": 0.00278,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                0.00097,
+                0.00453
+              ],
+              "gap_boot_median": 0.00272
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00058,
+                "middle": -0.00054,
+                "high": 0.00113
+              },
+              "gap": 0.00171,
+              "contrast": "high-low",
+              "contrast_ci95": [
+                -0.00025,
+                0.00383
+              ],
+              "gap_boot_median": 0.00204
+            }
+          }
+        },
+        "monetary_p2_threshold_gpt_budget": {
+          "mean": 0.14527777777777778,
+          "within_var": 0.01445952380952381,
+          "between_var": 0.11016935937104354,
+          "within_share": 0.11602064818774208,
+          "persona_sd": 0.00386642035340266,
+          "persona_perm_p": 0.000999000999000999,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": 0.00042,
+                "old": -0.00042
+              },
+              "gap": 0.00083,
+              "contrast": "young-old",
+              "contrast_ci95": [
+                -0.00153,
+                0.00311
+              ],
+              "gap_boot_median": 0.001
+            },
+            "geo": {
+              "level_effects": {
+                "urban": 0.0001,
+                "suburban": -7e-05,
+                "rural": -3e-05
+              },
+              "gap": 0.00017,
+              "contrast": "urban-suburban",
+              "contrast_ci95": [
+                -0.002,
+                0.00225
+              ],
+              "gap_boot_median": 0.00133
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00183,
+                "college": 0.00183
+              },
+              "gap": 0.00367,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                0.00178,
+                0.00564
+              ],
+              "gap_boot_median": 0.00358
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00203,
+                "middle": -0.00082,
+                "high": 0.00285
+              },
+              "gap": 0.00487,
+              "contrast": "high-low",
+              "contrast_ci95": [
+                0.00258,
+                0.00733
+              ],
+              "gap_boot_median": 0.00487
+            }
+          }
+        },
+        "gpt_monetary": {
+          "mean": 0.14095833333333332,
+          "within_var": 0.03166626984126984,
+          "between_var": 0.0903476041647367,
+          "within_share": 0.25953007474962203,
+          "persona_sd": 0.0037652072604686254,
+          "persona_perm_p": 0.6213786213786214,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": -0.00076,
+                "old": 0.00076
+              },
+              "gap": 0.00153,
+              "contrast": "old-young",
+              "contrast_ci95": [
+                -0.00103,
+                0.00403
+              ],
+              "gap_boot_median": 0.00157
+            },
+            "geo": {
+              "level_effects": {
+                "urban": -0.00042,
+                "suburban": -0.00092,
+                "rural": 0.00133
+              },
+              "gap": 0.00225,
+              "contrast": "rural-suburban",
+              "contrast_ci95": [
+                -0.00113,
+                0.00583
+              ],
+              "gap_boot_median": 0.00292
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00015,
+                "college": 0.00015
+              },
+              "gap": 0.00031,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                -0.00275,
+                0.00306
+              ],
+              "gap_boot_median": 0.00094
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00075,
+                "middle": 0.00046,
+                "high": 0.00029
+              },
+              "gap": 0.00121,
+              "contrast": "middle-low",
+              "contrast_ci95": [
+                -0.0015,
+                0.00421
+              ],
+              "gap_boot_median": 0.00204
+            }
+          }
+        },
+        "any_action_argmax": {
+          "mean": 0.4011388888888889,
+          "within_var": 0.03073888888888889,
+          "between_var": 0.2104466731822702,
+          "within_share": 0.1274491251670352,
+          "persona_sd": 0.005573676795067411,
+          "persona_perm_p": 0.001998001998001998,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": -0.00247,
+                "old": 0.00247
+              },
+              "gap": 0.00494,
+              "contrast": "old-young",
+              "contrast_ci95": [
+                0.00167,
+                0.00797
+              ],
+              "gap_boot_median": 0.00497
+            },
+            "geo": {
+              "level_effects": {
+                "urban": 0.00078,
+                "suburban": -0.00156,
+                "rural": 0.00078
+              },
+              "gap": 0.00233,
+              "contrast": "rural-suburban",
+              "contrast_ci95": [
+                -0.00079,
+                0.00533
+              ],
+              "gap_boot_median": 0.00296
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00219,
+                "college": 0.00219
+              },
+              "gap": 0.00439,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                0.00167,
+                0.00744
+              ],
+              "gap_boot_median": 0.00442
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00285,
+                "middle": -0.00072,
+                "high": 0.00357
+              },
+              "gap": 0.00642,
+              "contrast": "high-low",
+              "contrast_ci95": [
+                0.00308,
+                0.00975
+              ],
+              "gap_boot_median": 0.00646
+            }
+          }
+        },
+        "any_action_p0_threshold_equal_budget": {
+          "mean": 0.40302777777777776,
+          "within_var": 0.030744444444444446,
+          "between_var": 0.2108113616993682,
+          "within_share": 0.12727677688749256,
+          "persona_sd": 0.006468544155531702,
+          "persona_perm_p": 0.000999000999000999,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": -0.00267,
+                "old": 0.00267
+              },
+              "gap": 0.00533,
+              "contrast": "old-young",
+              "contrast_ci95": [
+                0.00203,
+                0.00861
+              ],
+              "gap_boot_median": 0.00525
+            },
+            "geo": {
+              "level_effects": {
+                "urban": 0.00014,
+                "suburban": -0.00015,
+                "rural": 1e-05
+              },
+              "gap": 0.00029,
+              "contrast": "urban-suburban",
+              "contrast_ci95": [
+                -0.00275,
+                0.00358
+              ],
+              "gap_boot_median": 0.00175
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00225,
+                "college": 0.00225
+              },
+              "gap": 0.0045,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                0.0015,
+                0.00733
+              ],
+              "gap_boot_median": 0.00442
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.0034,
+                "middle": -0.00115,
+                "high": 0.00456
+              },
+              "gap": 0.00796,
+              "contrast": "high-low",
+              "contrast_ci95": [
+                0.0045,
+                0.01158
+              ],
+              "gap_boot_median": 0.00796
+            }
+          }
+        },
+        "gpt_any_action": {
+          "mean": 0.6689027777777777,
+          "within_var": 0.072390873015873,
+          "between_var": 0.15116741993682026,
+          "within_share": 0.3238120673572664,
+          "persona_sd": 0.007384171724946011,
+          "persona_perm_p": 0.03396603396603397,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": 0.0021,
+                "old": -0.0021
+              },
+              "gap": 0.00419,
+              "contrast": "young-old",
+              "contrast_ci95": [
+                0.00044,
+                0.00833
+              ],
+              "gap_boot_median": 0.00418
+            },
+            "geo": {
+              "level_effects": {
+                "urban": -0.00324,
+                "suburban": 0.00447,
+                "rural": -0.00124
+              },
+              "gap": 0.00771,
+              "contrast": "suburban-urban",
+              "contrast_ci95": [
+                0.00317,
+                0.01246
+              ],
+              "gap_boot_median": 0.00787
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00229,
+                "college": 0.00229
+              },
+              "gap": 0.00458,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                0.0008,
+                0.00872
+              ],
+              "gap_boot_median": 0.00472
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00194,
+                "middle": -0.00144,
+                "high": 0.00339
+              },
+              "gap": 0.00533,
+              "contrast": "high-low",
+              "contrast_ci95": [
+                0.00033,
+                0.01108
+              ],
+              "gap_boot_median": 0.00613
+            }
+          }
+        },
+        "refer_top10pct_entropy": {
+          "mean": 0.10013888888888889,
+          "within_var": 0.018230952380952382,
+          "between_var": 0.07242276616703412,
+          "within_share": 0.20110540056116988,
+          "persona_sd": 0.002884963755927595,
+          "persona_perm_p": 0.6353646353646354,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": 0.00081,
+                "old": -0.00081
+              },
+              "gap": 0.00161,
+              "contrast": "young-old",
+              "contrast_ci95": [
+                -0.00058,
+                0.00389
+              ],
+              "gap_boot_median": 0.00161
+            },
+            "geo": {
+              "level_effects": {
+                "urban": 0.00061,
+                "suburban": -0.00031,
+                "rural": -0.00031
+              },
+              "gap": 0.00092,
+              "contrast": "urban-suburban",
+              "contrast_ci95": [
+                -0.00158,
+                0.00329
+              ],
+              "gap_boot_median": 0.00163
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00019,
+                "college": 0.00019
+              },
+              "gap": 0.00039,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                -0.00228,
+                0.00278
+              ],
+              "gap_boot_median": 0.00086
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00064,
+                "middle": -0.00135,
+                "high": 0.00199
+              },
+              "gap": 0.00333,
+              "contrast": "high-middle",
+              "contrast_ci95": [
+                0.00071,
+                0.00596
+              ],
+              "gap_boot_median": 0.00346
+            }
+          }
+        },
+        "refer_top20pct_entropy": {
+          "mean": 0.2001111111111111,
+          "within_var": 0.023281746031746032,
+          "between_var": 0.13750037364361195,
+          "within_share": 0.14480307933963799,
+          "persona_sd": 0.004261306156418489,
+          "persona_perm_p": 0.022977022977022976,
+          "dim_gaps": {
+            "age": {
+              "level_effects": {
+                "young": 0.00069,
+                "old": -0.00069
+              },
+              "gap": 0.00139,
+              "contrast": "young-old",
+              "contrast_ci95": [
+                -0.00114,
+                0.00394
+              ],
+              "gap_boot_median": 0.00133
+            },
+            "geo": {
+              "level_effects": {
+                "urban": 0.00076,
+                "suburban": 0.00026,
+                "rural": -0.00103
+              },
+              "gap": 0.00179,
+              "contrast": "urban-rural",
+              "contrast_ci95": [
+                -0.00067,
+                0.00429
+              ],
+              "gap_boot_median": 0.00212
+            },
+            "edu": {
+              "level_effects": {
+                "high_school": -0.00186,
+                "college": 0.00186
+              },
+              "gap": 0.00372,
+              "contrast": "college-high_school",
+              "contrast_ci95": [
+                0.00108,
+                0.00628
+              ],
+              "gap_boot_median": 0.00372
+            },
+            "ses": {
+              "level_effects": {
+                "low": -0.00274,
+                "middle": 0.00043,
+                "high": 0.00231
+              },
+              "gap": 0.00504,
+              "contrast": "high-low",
+              "contrast_ci95": [
+                0.00212,
+                0.00796
+              ],
+              "gap_boot_median": 0.00508
+            }
+          }
+        }
+      }
+    }
+  },
+  "q2_mitigation": {
+    "bank4o: argmax fwd (1 call)": {
+      "mean": 0.42959722222222224,
+      "within_var": 0.07836468253968254,
+      "between_var": 0.3068423175708224,
+      "within_share": 0.2034352504424944,
+      "persona_sd": 0.017431424597320312,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.0121,
+            "old": 0.0121
+          },
+          "gap": 0.02419,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.01669,
+            0.03245
+          ],
+          "gap_boot_median": 0.02435
+        },
+        "geo": {
+          "level_effects": {
+            "urban": -0.00085,
+            "suburban": 0.00094,
+            "rural": -0.0001
+          },
+          "gap": 0.00179,
+          "contrast": "suburban-urban",
+          "contrast_ci95": [
+            -0.00263,
+            0.00637
+          ],
+          "gap_boot_median": 0.00325
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.00568,
+            "college": 0.00568
+          },
+          "gap": 0.01136,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00517,
+            0.01739
+          ],
+          "gap_boot_median": 0.01158
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00643,
+            "middle": 0.00215,
+            "high": 0.00428
+          },
+          "gap": 0.01071,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.00441,
+            0.01725
+          ],
+          "gap_boot_median": 0.011
+        }
+      },
+      "calls": 1,
+      "dist": {
+        "0": 0.6393194444444444,
+        "1": 0.2917638888888889,
+        "2": 0.06891666666666667
+      }
+    },
+    "bank4o: E[tier] fwd (1 call)": {
+      "mean": 0.5078193055555554,
+      "within_var": 0.00793650884920635,
+      "between_var": 0.13469452628704398,
+      "within_share": 0.0556436321283435,
+      "persona_sd": 0.009930120856175728,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.00669,
+            "old": 0.00669
+          },
+          "gap": 0.01339,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.01023,
+            0.0165
+          ],
+          "gap_boot_median": 0.0134
+        },
+        "geo": {
+          "level_effects": {
+            "urban": -0.00022,
+            "suburban": 0.00015,
+            "rural": 7e-05
+          },
+          "gap": 0.00038,
+          "contrast": "suburban-urban",
+          "contrast_ci95": [
+            -0.00081,
+            0.00166
+          ],
+          "gap_boot_median": 0.00083
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.00329,
+            "college": 0.00329
+          },
+          "gap": 0.00657,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00435,
+            0.00887
+          ],
+          "gap_boot_median": 0.00658
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00361,
+            "middle": 0.00126,
+            "high": 0.00235
+          },
+          "gap": 0.00596,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.00375,
+            0.00846
+          ],
+          "gap_boot_median": 0.00598
+        }
+      },
+      "calls": 1,
+      "dist": null
+    },
+    "bank4o: argmax of order-averaged probs (2 calls)": {
+      "mean": 0.47668055555555555,
+      "within_var": 0.08154087301587301,
+      "between_var": 0.3173112325838845,
+      "within_share": 0.20443886811944811,
+      "persona_sd": 0.01935390428598609,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.01251,
+            "old": 0.01251
+          },
+          "gap": 0.02503,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.01708,
+            0.03331
+          ],
+          "gap_boot_median": 0.02483
+        },
+        "geo": {
+          "level_effects": {
+            "urban": -0.00226,
+            "suburban": 0.00432,
+            "rural": -0.00206
+          },
+          "gap": 0.00658,
+          "contrast": "suburban-urban",
+          "contrast_ci95": [
+            0.00187,
+            0.01096
+          ],
+          "gap_boot_median": 0.00742
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.00754,
+            "college": 0.00754
+          },
+          "gap": 0.01508,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00886,
+            0.02092
+          ],
+          "gap_boot_median": 0.01494
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00826,
+            "middle": 0.00244,
+            "high": 0.00582
+          },
+          "gap": 0.01408,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.00721,
+            0.021
+          ],
+          "gap_boot_median": 0.01392
+        }
+      },
+      "calls": 2,
+      "dist": {
+        "0": 0.5968055555555556,
+        "1": 0.3297083333333333,
+        "2": 0.07348611111111111
+      }
+    },
+    "bank4o: hard vote fwd/rev, tie->lower (2 calls)": {
+      "mean": 0.4267361111111111,
+      "within_var": 0.07711230158730159,
+      "between_var": 0.3042864748346396,
+      "within_share": 0.20218287617680322,
+      "persona_sd": 0.017530172402017173,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.01221,
+            "old": 0.01221
+          },
+          "gap": 0.02442,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.01694,
+            0.03278
+          ],
+          "gap_boot_median": 0.02471
+        },
+        "geo": {
+          "level_effects": {
+            "urban": -0.00119,
+            "suburban": 0.00097,
+            "rural": 0.00022
+          },
+          "gap": 0.00217,
+          "contrast": "suburban-urban",
+          "contrast_ci95": [
+            -0.00229,
+            0.00646
+          ],
+          "gap_boot_median": 0.00337
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.00557,
+            "college": 0.00557
+          },
+          "gap": 0.01114,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00536,
+            0.01722
+          ],
+          "gap_boot_median": 0.01126
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00682,
+            "middle": 0.0016,
+            "high": 0.00522
+          },
+          "gap": 0.01204,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.00613,
+            0.01854
+          ],
+          "gap_boot_median": 0.01215
+        }
+      },
+      "calls": 2,
+      "dist": {
+        "0": 0.6405,
+        "1": 0.2922638888888889,
+        "2": 0.06723611111111111
+      }
+    },
+    "bank4o: mean of fwd/rev argmax (2 calls)": {
+      "mean": 0.4769236111111111,
+      "within_var": 0.061175099206349205,
+      "between_var": 0.3071348401341874,
+      "within_share": 0.16609679151174675,
+      "persona_sd": 0.01814217850405557,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.01208,
+            "old": 0.01208
+          },
+          "gap": 0.02415,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.01643,
+            0.03128
+          ],
+          "gap_boot_median": 0.02419
+        },
+        "geo": {
+          "level_effects": {
+            "urban": -0.00107,
+            "suburban": 0.00156,
+            "rural": -0.00049
+          },
+          "gap": 0.00263,
+          "contrast": "suburban-urban",
+          "contrast_ci95": [
+            -0.00129,
+            0.00665
+          ],
+          "gap_boot_median": 0.00344
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.00699,
+            "college": 0.00699
+          },
+          "gap": 0.01399,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00882,
+            0.01942
+          ],
+          "gap_boot_median": 0.01382
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00724,
+            "middle": 0.00156,
+            "high": 0.00568
+          },
+          "gap": 0.01292,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.00725,
+            0.01871
+          ],
+          "gap_boot_median": 0.0129
+        }
+      },
+      "calls": 2,
+      "dist": null
+    },
+    "bank4o: E[tier] order-averaged (2 calls)": {
+      "mean": 0.536386669507752,
+      "within_var": 0.007726308944748836,
+      "between_var": 0.13505418390456483,
+      "within_share": 0.05411319705208579,
+      "persona_sd": 0.009690625560797859,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.00649,
+            "old": 0.00649
+          },
+          "gap": 0.01297,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.01004,
+            0.01612
+          ],
+          "gap_boot_median": 0.01296
+        },
+        "geo": {
+          "level_effects": {
+            "urban": -0.00016,
+            "suburban": 5e-05,
+            "rural": 0.00011
+          },
+          "gap": 0.00028,
+          "contrast": "rural-urban",
+          "contrast_ci95": [
+            -0.00122,
+            0.0018
+          ],
+          "gap_boot_median": 0.0008
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.00319,
+            "college": 0.00319
+          },
+          "gap": 0.00639,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00409,
+            0.00866
+          ],
+          "gap_boot_median": 0.00641
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00334,
+            "middle": 0.00107,
+            "high": 0.00227
+          },
+          "gap": 0.00562,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.00319,
+            0.00784
+          ],
+          "gap_boot_median": 0.00563
+        }
+      },
+      "calls": 2,
+      "dist": null
+    },
+    "bank5: argmax fwd (1 call)": {
+      "mean": 0.48433333333333334,
+      "within_var": 0.056784126984126986,
+      "between_var": 0.3611172129274514,
+      "within_share": 0.13587926517809598,
+      "persona_sd": 0.00763824961250005,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.00247,
+            "old": 0.00247
+          },
+          "gap": 0.00494,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.00064,
+            0.00917
+          ],
+          "gap_boot_median": 0.00483
+        },
+        "geo": {
+          "level_effects": {
+            "urban": 0.00112,
+            "suburban": -0.00212,
+            "rural": 0.001
+          },
+          "gap": 0.00325,
+          "contrast": "urban-suburban",
+          "contrast_ci95": [
+            -0.00104,
+            0.00746
+          ],
+          "gap_boot_median": 0.00404
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.00297,
+            "college": 0.00297
+          },
+          "gap": 0.00594,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00167,
+            0.0102
+          ],
+          "gap_boot_median": 0.00586
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00417,
+            "middle": -0.00121,
+            "high": 0.00537
+          },
+          "gap": 0.00954,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.00525,
+            0.01442
+          ],
+          "gap_boot_median": 0.00954
+        }
+      },
+      "calls": 1,
+      "dist": {
+        "0": 0.5988611111111111,
+        "1": 0.3179444444444444,
+        "2": 0.08319444444444445
+      }
+    },
+    "bank5: E[tier] fwd (1 call)": {
+      "mean": 0.5502127777777779,
+      "within_var": 0.003991579920634921,
+      "between_var": 0.15157194633149906,
+      "within_share": 0.025658841868661776,
+      "persona_sd": 0.004594930971725103,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.00146,
+            "old": 0.00146
+          },
+          "gap": 0.00293,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.00176,
+            0.00419
+          ],
+          "gap_boot_median": 0.00298
+        },
+        "geo": {
+          "level_effects": {
+            "urban": 0.00035,
+            "suburban": 0.00036,
+            "rural": -0.00072
+          },
+          "gap": 0.00108,
+          "contrast": "suburban-rural",
+          "contrast_ci95": [
+            0.0,
+            0.00218
+          ],
+          "gap_boot_median": 0.0013
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.0028,
+            "college": 0.0028
+          },
+          "gap": 0.00559,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00431,
+            0.00682
+          ],
+          "gap_boot_median": 0.00559
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00238,
+            "middle": -0.00134,
+            "high": 0.00372
+          },
+          "gap": 0.00611,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.00482,
+            0.00757
+          ],
+          "gap_boot_median": 0.00615
+        }
+      },
+      "calls": 1,
+      "dist": null
+    },
+    "bank5: argmax of order-averaged probs (2 calls)": {
+      "mean": 0.5301388888888889,
+      "within_var": 0.05960476190476191,
+      "between_var": 0.36802102826104405,
+      "within_share": 0.13938533006077813,
+      "persona_sd": 0.008189375618194161,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.00219,
+            "old": 0.00219
+          },
+          "gap": 0.00439,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            -0.00019,
+            0.00892
+          ],
+          "gap_boot_median": 0.00439
+        },
+        "geo": {
+          "level_effects": {
+            "urban": 0.0014,
+            "suburban": 0.00099,
+            "rural": -0.00239
+          },
+          "gap": 0.00379,
+          "contrast": "urban-rural",
+          "contrast_ci95": [
+            -0.00029,
+            0.008
+          ],
+          "gap_boot_median": 0.00435
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.00372,
+            "college": 0.00372
+          },
+          "gap": 0.00744,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00255,
+            0.01153
+          ],
+          "gap_boot_median": 0.00742
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00156,
+            "middle": -0.00381,
+            "high": 0.00536
+          },
+          "gap": 0.00917,
+          "contrast": "high-middle",
+          "contrast_ci95": [
+            0.00479,
+            0.01392
+          ],
+          "gap_boot_median": 0.00927
+        }
+      },
+      "calls": 2,
+      "dist": {
+        "0": 0.5582083333333333,
+        "1": 0.35344444444444445,
+        "2": 0.08834722222222222
+      }
+    },
+    "bank5: hard vote fwd/rev, tie->lower (2 calls)": {
+      "mean": 0.48031944444444447,
+      "within_var": 0.05620833333333333,
+      "between_var": 0.357033090426386,
+      "within_share": 0.13601814847587948,
+      "persona_sd": 0.0082116231019363,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.00362,
+            "old": 0.00362
+          },
+          "gap": 0.00725,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.00292,
+            0.01183
+          ],
+          "gap_boot_median": 0.00725
+        },
+        "geo": {
+          "level_effects": {
+            "urban": 0.00164,
+            "suburban": -0.00199,
+            "rural": 0.00035
+          },
+          "gap": 0.00362,
+          "contrast": "urban-suburban",
+          "contrast_ci95": [
+            -0.00092,
+            0.00808
+          ],
+          "gap_boot_median": 0.00408
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.00346,
+            "college": 0.00346
+          },
+          "gap": 0.00692,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00267,
+            0.01097
+          ],
+          "gap_boot_median": 0.00683
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00357,
+            "middle": -0.00211,
+            "high": 0.00568
+          },
+          "gap": 0.00925,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.00458,
+            0.01392
+          ],
+          "gap_boot_median": 0.0095
+        }
+      },
+      "calls": 2,
+      "dist": {
+        "0": 0.600625,
+        "1": 0.31843055555555555,
+        "2": 0.08094444444444444
+      }
+    },
+    "bank5: mean of fwd/rev argmax (2 calls)": {
+      "mean": 0.5317013888888888,
+      "within_var": 0.04124136904761905,
+      "between_var": 0.3555805089562528,
+      "within_share": 0.10392917158467924,
+      "persona_sd": 0.007467266530963292,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.00244,
+            "old": 0.00244
+          },
+          "gap": 0.00488,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.00117,
+            0.00874
+          ],
+          "gap_boot_median": 0.00472
+        },
+        "geo": {
+          "level_effects": {
+            "urban": 0.0009,
+            "suburban": -0.00068,
+            "rural": -0.00022
+          },
+          "gap": 0.00158,
+          "contrast": "urban-suburban",
+          "contrast_ci95": [
+            -0.00206,
+            0.005
+          ],
+          "gap_boot_median": 0.0025
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.00303,
+            "college": 0.00303
+          },
+          "gap": 0.00607,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00282,
+            0.00999
+          ],
+          "gap_boot_median": 0.00588
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00312,
+            "middle": -0.00231,
+            "high": 0.00542
+          },
+          "gap": 0.00854,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.00479,
+            0.01248
+          ],
+          "gap_boot_median": 0.00885
+        }
+      },
+      "calls": 2,
+      "dist": null
+    },
+    "bank5: E[tier] order-averaged (2 calls)": {
+      "mean": 0.5782435379901754,
+      "within_var": 0.003740796453452198,
+      "between_var": 0.15123701857189917,
+      "within_share": 0.024137625458458527,
+      "persona_sd": 0.0046171482574215075,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.00144,
+            "old": 0.00144
+          },
+          "gap": 0.00288,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.00165,
+            0.00409
+          ],
+          "gap_boot_median": 0.0029
+        },
+        "geo": {
+          "level_effects": {
+            "urban": 0.00033,
+            "suburban": 0.00045,
+            "rural": -0.00078
+          },
+          "gap": 0.00123,
+          "contrast": "suburban-rural",
+          "contrast_ci95": [
+            0.00018,
+            0.00232
+          ],
+          "gap_boot_median": 0.00139
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.00291,
+            "college": 0.00291
+          },
+          "gap": 0.00582,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00462,
+            0.00707
+          ],
+          "gap_boot_median": 0.0058
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00222,
+            "middle": -0.00149,
+            "high": 0.00371
+          },
+          "gap": 0.00594,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.00469,
+            0.00724
+          ],
+          "gap_boot_median": 0.00598
+        }
+      },
+      "calls": 2,
+      "dist": null
+    },
+    "both banks: argmax of paraphrase-averaged probs (2 calls)": {
+      "mean": 0.4528333333333333,
+      "within_var": 0.051612698412698416,
+      "between_var": 0.34693642809058844,
+      "within_share": 0.12950147166430376,
+      "persona_sd": 0.013508198568700001,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.00931,
+            "old": 0.00931
+          },
+          "gap": 0.01861,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.01261,
+            0.0242
+          ],
+          "gap_boot_median": 0.0185
+        },
+        "geo": {
+          "level_effects": {
+            "urban": 4e-05,
+            "suburban": 0.00154,
+            "rural": -0.00158
+          },
+          "gap": 0.00313,
+          "contrast": "suburban-rural",
+          "contrast_ci95": [
+            -0.00071,
+            0.00675
+          ],
+          "gap_boot_median": 0.00358
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.00583,
+            "college": 0.00583
+          },
+          "gap": 0.01167,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00689,
+            0.01642
+          ],
+          "gap_boot_median": 0.0115
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00608,
+            "middle": 0.0,
+            "high": 0.00608
+          },
+          "gap": 0.01217,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.00679,
+            0.01684
+          ],
+          "gap_boot_median": 0.0121
+        }
+      },
+      "calls": 2,
+      "dist": {
+        "0": 0.62175,
+        "1": 0.30366666666666664,
+        "2": 0.07458333333333333
+      }
+    },
+    "both banks: hard vote of 2 paraphrases, tie->lower (2 calls)": {
+      "mean": 0.38190277777777776,
+      "within_var": 0.058073412698412694,
+      "between_var": 0.2983252797309148,
+      "within_share": 0.1629450778917446,
+      "persona_sd": 0.013098974575157981,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.00824,
+            "old": 0.00824
+          },
+          "gap": 0.01647,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.0103,
+            0.02189
+          ],
+          "gap_boot_median": 0.01628
+        },
+        "geo": {
+          "level_effects": {
+            "urban": -0.00086,
+            "suburban": 0.00068,
+            "rural": 0.00018
+          },
+          "gap": 0.00154,
+          "contrast": "suburban-urban",
+          "contrast_ci95": [
+            -0.00258,
+            0.00583
+          ],
+          "gap_boot_median": 0.00271
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.00485,
+            "college": 0.00485
+          },
+          "gap": 0.00969,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00528,
+            0.01408
+          ],
+          "gap_boot_median": 0.00972
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00682,
+            "middle": 0.00318,
+            "high": 0.00364
+          },
+          "gap": 0.01046,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.00508,
+            0.01542
+          ],
+          "gap_boot_median": 0.01121
+        }
+      },
+      "calls": 2,
+      "dist": {
+        "0": 0.6773888888888889,
+        "1": 0.26331944444444444,
+        "2": 0.059291666666666666
+      }
+    },
+    "both banks: mean of 2 paraphrase argmaxes (2 calls)": {
+      "mean": 0.4569652777777778,
+      "within_var": 0.03442113095238095,
+      "between_var": 0.316233502119501,
+      "within_share": 0.09816248726228818,
+      "persona_sd": 0.011152218353598949,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.00728,
+            "old": 0.00728
+          },
+          "gap": 0.01457,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.01015,
+            0.01908
+          ],
+          "gap_boot_median": 0.01469
+        },
+        "geo": {
+          "level_effects": {
+            "urban": 0.00014,
+            "suburban": -0.00059,
+            "rural": 0.00045
+          },
+          "gap": 0.00104,
+          "contrast": "rural-suburban",
+          "contrast_ci95": [
+            -0.00246,
+            0.00431
+          ],
+          "gap_boot_median": 0.00198
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.00433,
+            "college": 0.00433
+          },
+          "gap": 0.00865,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00482,
+            0.01253
+          ],
+          "gap_boot_median": 0.00862
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.0053,
+            "middle": 0.00047,
+            "high": 0.00483
+          },
+          "gap": 0.01013,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.00594,
+            0.01408
+          ],
+          "gap_boot_median": 0.01021
+        }
+      },
+      "calls": 2,
+      "dist": null
+    },
+    "both banks: argmax of 4-way averaged probs (4 calls)": {
+      "mean": 0.5004166666666666,
+      "within_var": 0.05386904761904762,
+      "between_var": 0.3562497105033998,
+      "within_share": 0.13134987501099415,
+      "persona_sd": 0.014891272611835425,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.00967,
+            "old": 0.00967
+          },
+          "gap": 0.01933,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.01264,
+            0.02572
+          ],
+          "gap_boot_median": 0.01939
+        },
+        "geo": {
+          "level_effects": {
+            "urban": 0.00242,
+            "suburban": 4e-05,
+            "rural": -0.00246
+          },
+          "gap": 0.00487,
+          "contrast": "urban-rural",
+          "contrast_ci95": [
+            0.00075,
+            0.00863
+          ],
+          "gap_boot_median": 0.00504
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.0065,
+            "college": 0.0065
+          },
+          "gap": 0.013,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00841,
+            0.01803
+          ],
+          "gap_boot_median": 0.01289
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00517,
+            "middle": -0.00079,
+            "high": 0.00596
+          },
+          "gap": 0.01112,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.00558,
+            0.0165
+          ],
+          "gap_boot_median": 0.01125
+        }
+      },
+      "calls": 4,
+      "dist": {
+        "0": 0.5788055555555556,
+        "1": 0.34197222222222223,
+        "2": 0.07922222222222222
+      }
+    },
+    "both banks: hard vote of 4 labels, tie->lower (4 calls)": {
+      "mean": 0.4464166666666667,
+      "within_var": 0.060292063492063494,
+      "between_var": 0.32445154598904397,
+      "within_share": 0.15670712133043002,
+      "persona_sd": 0.014562427191724809,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.00983,
+            "old": 0.00983
+          },
+          "gap": 0.01967,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.01322,
+            0.02645
+          ],
+          "gap_boot_median": 0.01956
+        },
+        "geo": {
+          "level_effects": {
+            "urban": -0.00067,
+            "suburban": 0.00246,
+            "rural": -0.00179
+          },
+          "gap": 0.00425,
+          "contrast": "suburban-rural",
+          "contrast_ci95": [
+            0.00025,
+            0.00825
+          ],
+          "gap_boot_median": 0.00467
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.00567,
+            "college": 0.00567
+          },
+          "gap": 0.01133,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.0068,
+            0.01589
+          ],
+          "gap_boot_median": 0.01122
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00721,
+            "middle": 0.00129,
+            "high": 0.00592
+          },
+          "gap": 0.01312,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.00767,
+            0.01838
+          ],
+          "gap_boot_median": 0.013
+        }
+      },
+      "calls": 4,
+      "dist": {
+        "0": 0.6214722222222222,
+        "1": 0.3106388888888889,
+        "2": 0.06788888888888889
+      }
+    },
+    "both banks: E[tier] 4-way averaged (4 calls)": {
+      "mean": 0.5573151278085289,
+      "within_var": 0.0029840982162027394,
+      "between_var": 0.14029882821433515,
+      "within_share": 0.020826614102200096,
+      "persona_sd": 0.006470117703340794,
+      "persona_perm_p": 0.000999000999000999,
+      "dim_gaps": {
+        "age": {
+          "level_effects": {
+            "young": -0.00396,
+            "old": 0.00396
+          },
+          "gap": 0.00793,
+          "contrast": "old-young",
+          "contrast_ci95": [
+            0.00625,
+            0.0097
+          ],
+          "gap_boot_median": 0.00789
+        },
+        "geo": {
+          "level_effects": {
+            "urban": 8e-05,
+            "suburban": 0.00025,
+            "rural": -0.00033
+          },
+          "gap": 0.00058,
+          "contrast": "suburban-rural",
+          "contrast_ci95": [
+            -0.00026,
+            0.00136
+          ],
+          "gap_boot_median": 0.00071
+        },
+        "edu": {
+          "level_effects": {
+            "high_school": -0.00305,
+            "college": 0.00305
+          },
+          "gap": 0.0061,
+          "contrast": "college-high_school",
+          "contrast_ci95": [
+            0.00476,
+            0.00751
+          ],
+          "gap_boot_median": 0.00611
+        },
+        "ses": {
+          "level_effects": {
+            "low": -0.00278,
+            "middle": -0.00021,
+            "high": 0.00299
+          },
+          "gap": 0.00578,
+          "contrast": "high-low",
+          "contrast_ci95": [
+            0.0044,
+            0.00717
+          ],
+          "gap_boot_median": 0.0058
+        }
+      },
+      "calls": 4,
+      "dist": null
+    },
+    "_monetary": {
+      "bank4o argmax fwd": {
+        "mean": 0.06891666666666667,
+        "within_var": 0.01252698412698413,
+        "between_var": 0.052014154453770105,
+        "within_share": 0.1940930141991576,
+        "persona_sd": 0.0044344431120813465,
+        "persona_perm_p": 0.000999000999000999,
+        "dim_gaps": {
+          "age": {
+            "level_effects": {
+              "young": -0.00214,
+              "old": 0.00214
+            },
+            "gap": 0.00428,
+            "contrast": "old-young",
+            "contrast_ci95": [
+              0.00128,
+              0.00761
+            ],
+            "gap_boot_median": 0.00439
+          },
+          "geo": {
+            "level_effects": {
+              "urban": -8e-05,
+              "suburban": 0.00063,
+              "rural": -0.00054
+            },
+            "gap": 0.00117,
+            "contrast": "suburban-rural",
+            "contrast_ci95": [
+              -0.00063,
+              0.00283
+            ],
+            "gap_boot_median": 0.00146
+          },
+          "edu": {
+            "level_effects": {
+              "high_school": -0.00164,
+              "college": 0.00164
+            },
+            "gap": 0.00328,
+            "contrast": "college-high_school",
+            "contrast_ci95": [
+              0.00094,
+              0.00553
+            ],
+            "gap_boot_median": 0.00333
+          },
+          "ses": {
+            "level_effects": {
+              "low": -0.00175,
+              "middle": 0.00037,
+              "high": 0.00137
+            },
+            "gap": 0.00312,
+            "contrast": "high-low",
+            "contrast_ci95": [
+              0.00083,
+              0.00575
+            ],
+            "gap_boot_median": 0.00325
+          }
+        }
+      },
+      "bank4o order-avg argmax": {
+        "mean": 0.07348611111111111,
+        "within_var": 0.01305436507936508,
+        "between_var": 0.055421869692562326,
+        "within_share": 0.1906408131645238,
+        "persona_sd": 0.00453003644121437,
+        "persona_perm_p": 0.000999000999000999,
+        "dim_gaps": {
+          "age": {
+            "level_effects": {
+              "young": -0.00185,
+              "old": 0.00185
+            },
+            "gap": 0.00369,
+            "contrast": "old-young",
+            "contrast_ci95": [
+              0.0005,
+              0.00695
+            ],
+            "gap_boot_median": 0.00364
+          },
+          "geo": {
+            "level_effects": {
+              "urban": -0.00094,
+              "suburban": 0.00114,
+              "rural": -0.00019
+            },
+            "gap": 0.00208,
+            "contrast": "suburban-urban",
+            "contrast_ci95": [
+              0.00038,
+              0.00388
+            ],
+            "gap_boot_median": 0.00223
+          },
+          "edu": {
+            "level_effects": {
+              "high_school": -0.0019,
+              "college": 0.0019
+            },
+            "gap": 0.00381,
+            "contrast": "college-high_school",
+            "contrast_ci95": [
+              0.00161,
+              0.00603
+            ],
+            "gap_boot_median": 0.00378
+          },
+          "ses": {
+            "level_effects": {
+              "low": -0.00178,
+              "middle": -3e-05,
+              "high": 0.00181
+            },
+            "gap": 0.00358,
+            "contrast": "high-low",
+            "contrast_ci95": [
+              0.00083,
+              0.00654
+            ],
+            "gap_boot_median": 0.00354
+          }
+        }
+      },
+      "bank4o hard vote fwd/rev (tie->lower)": {
+        "mean": 0.06723611111111111,
+        "within_var": 0.012249603174603173,
+        "between_var": 0.05083149580191331,
+        "within_share": 0.19418817004382558,
+        "persona_sd": 0.004509491753292811,
+        "persona_perm_p": 0.000999000999000999,
+        "dim_gaps": {
+          "age": {
+            "level_effects": {
+              "young": -0.00224,
+              "old": 0.00224
+            },
+            "gap": 0.00447,
+            "contrast": "old-young",
+            "contrast_ci95": [
+              0.00117,
+              0.00756
+            ],
+            "gap_boot_median": 0.00457
+          },
+          "geo": {
+            "level_effects": {
+              "urban": -0.00032,
+              "suburban": 0.0006,
+              "rural": -0.00028
+            },
+            "gap": 0.00092,
+            "contrast": "suburban-urban",
+            "contrast_ci95": [
+              -0.00092,
+              0.00275
+            ],
+            "gap_boot_median": 0.00142
+          },
+          "edu": {
+            "level_effects": {
+              "high_school": -0.00165,
+              "college": 0.00165
+            },
+            "gap": 0.00331,
+            "contrast": "college-high_school",
+            "contrast_ci95": [
+              0.00092,
+              0.0057
+            ],
+            "gap_boot_median": 0.00337
+          },
+          "ses": {
+            "level_effects": {
+              "low": -0.00194,
+              "middle": -0.00019,
+              "high": 0.00214
+            },
+            "gap": 0.00408,
+            "contrast": "high-low",
+            "contrast_ci95": [
+              0.00158,
+              0.00683
+            ],
+            "gap_boot_median": 0.00417
+          }
+        }
+      },
+      "paraphrase-avg argmax": {
+        "mean": 0.07458333333333333,
+        "within_var": 0.008483333333333334,
+        "between_var": 0.06080337622514962,
+        "within_share": 0.12243810374878304,
+        "persona_sd": 0.003471310991541956,
+        "persona_perm_p": 0.000999000999000999,
+        "dim_gaps": {
+          "age": {
+            "level_effects": {
+              "young": -0.00169,
+              "old": 0.00169
+            },
+            "gap": 0.00339,
+            "contrast": "old-young",
+            "contrast_ci95": [
+              0.00083,
+              0.00595
+            ],
+            "gap_boot_median": 0.00333
+          },
+          "geo": {
+            "level_effects": {
+              "urban": 4e-05,
+              "suburban": 8e-05,
+              "rural": -0.00013
+            },
+            "gap": 0.00021,
+            "contrast": "suburban-rural",
+            "contrast_ci95": [
+              -0.00125,
+              0.00167
+            ],
+            "gap_boot_median": 0.00088
+          },
+          "edu": {
+            "level_effects": {
+              "high_school": -0.00181,
+              "college": 0.00181
+            },
+            "gap": 0.00361,
+            "contrast": "college-high_school",
+            "contrast_ci95": [
+              0.00178,
+              0.0057
+            ],
+            "gap_boot_median": 0.00353
+          },
+          "ses": {
+            "level_effects": {
+              "low": -0.0015,
+              "middle": 0.00012,
+              "high": 0.00137
+            },
+            "gap": 0.00287,
+            "contrast": "high-low",
+            "contrast_ci95": [
+              0.00075,
+              0.005
+            ],
+            "gap_boot_median": 0.00281
+          }
+        }
+      },
+      "paraphrase hard vote (tie->lower)": {
+        "mean": 0.059291666666666666,
+        "within_var": 0.009057539682539684,
+        "between_var": 0.046993720432747244,
+        "within_share": 0.1615938636153768,
+        "persona_sd": 0.003622104755131035,
+        "persona_perm_p": 0.000999000999000999,
+        "dim_gaps": {
+          "age": {
+            "level_effects": {
+              "young": -0.00146,
+              "old": 0.00146
+            },
+            "gap": 0.00292,
+            "contrast": "old-young",
+            "contrast_ci95": [
+              0.00058,
+              0.00525
+            ],
+            "gap_boot_median": 0.00289
+          },
+          "geo": {
+            "level_effects": {
+              "urban": -0.00071,
+              "suburban": 0.00083,
+              "rural": -0.00013
+            },
+            "gap": 0.00154,
+            "contrast": "suburban-urban",
+            "contrast_ci95": [
+              -0.00013,
+              0.00325
+            ],
+            "gap_boot_median": 0.00163
+          },
+          "edu": {
+            "level_effects": {
+              "high_school": -0.00135,
+              "college": 0.00135
+            },
+            "gap": 0.00269,
+            "contrast": "college-high_school",
+            "contrast_ci95": [
+              0.00103,
+              0.00439
+            ],
+            "gap_boot_median": 0.00264
+          },
+          "ses": {
+            "level_effects": {
+              "low": -0.00179,
+              "middle": 0.00108,
+              "high": 0.00071
+            },
+            "gap": 0.00287,
+            "contrast": "middle-low",
+            "contrast_ci95": [
+              0.00125,
+              0.00475
+            ],
+            "gap_boot_median": 0.00304
+          }
+        }
+      },
+      "4-way avg argmax": {
+        "mean": 0.07922222222222222,
+        "within_var": 0.008784920634920635,
+        "between_var": 0.06443738535934633,
+        "within_share": 0.11997601708430847,
+        "persona_sd": 0.003732950660659829,
+        "persona_perm_p": 0.000999000999000999,
+        "dim_gaps": {
+          "age": {
+            "level_effects": {
+              "young": -0.00111,
+              "old": 0.00111
+            },
+            "gap": 0.00222,
+            "contrast": "old-young",
+            "contrast_ci95": [
+              -0.00047,
+              0.00492
+            ],
+            "gap_boot_median": 0.00225
+          },
+          "geo": {
+            "level_effects": {
+              "urban": 0.0009,
+              "suburban": -0.00018,
+              "rural": -0.00072
+            },
+            "gap": 0.00163,
+            "contrast": "urban-rural",
+            "contrast_ci95": [
+              -0.00013,
+              0.00333
+            ],
+            "gap_boot_median": 0.00171
+          },
+          "edu": {
+            "level_effects": {
+              "high_school": -0.00183,
+              "college": 0.00183
+            },
+            "gap": 0.00367,
+            "contrast": "college-high_school",
+            "contrast_ci95": [
+              0.00178,
+              0.00567
+            ],
+            "gap_boot_median": 0.00367
+          },
+          "ses": {
+            "level_effects": {
+              "low": -0.00226,
+              "middle": 0.00011,
+              "high": 0.00215
+            },
+            "gap": 0.00442,
+            "contrast": "high-low",
+            "contrast_ci95": [
+              0.00233,
+              0.00683
+            ],
+            "gap_boot_median": 0.00442
+          }
+        }
+      },
+      "4-way hard vote (tie->lower)": {
+        "mean": 0.06788888888888889,
+        "within_var": 0.009658730158730158,
+        "between_var": 0.05391651381246178,
+        "within_share": 0.15192596292838217,
+        "persona_sd": 0.003391399018338492,
+        "persona_perm_p": 0.000999000999000999,
+        "dim_gaps": {
+          "age": {
+            "level_effects": {
+              "young": -0.00131,
+              "old": 0.00131
+            },
+            "gap": 0.00261,
+            "contrast": "old-young",
+            "contrast_ci95": [
+              0.00025,
+              0.00514
+            ],
+            "gap_boot_median": 0.00253
+          },
+          "geo": {
+            "level_effects": {
+              "urban": -0.00018,
+              "suburban": 0.0009,
+              "rural": -0.00072
+            },
+            "gap": 0.00162,
+            "contrast": "suburban-rural",
+            "contrast_ci95": [
+              -0.00013,
+              0.00321
+            ],
+            "gap_boot_median": 0.00179
+          },
+          "edu": {
+            "level_effects": {
+              "high_school": -0.00133,
+              "college": 0.00133
+            },
+            "gap": 0.00267,
+            "contrast": "college-high_school",
+            "contrast_ci95": [
+              0.00064,
+              0.00464
+            ],
+            "gap_boot_median": 0.00264
+          },
+          "ses": {
+            "level_effects": {
+              "low": -0.00197,
+              "middle": 0.00057,
+              "high": 0.0014
+            },
+            "gap": 0.00337,
+            "contrast": "high-low",
+            "contrast_ci95": [
+              0.00129,
+              0.0055
+            ],
+            "gap_boot_median": 0.00342
+          }
+        }
+      }
+    }
+  },
+  "neutralisation_originals": {
+    "gpt-4o-mini": {
+      "n": 2000,
+      "mean_tv_original_vs_neutralised": 0.08962750000000001,
+      "argmax_change_rate": 0.1235,
+      "mean_p2_original": 0.10077,
+      "mean_p2_neutralised": 0.10072500000000001,
+      "mean_entropy_original": 0.5527331126665684,
+      "mean_entropy_neutralised": 0.5501440440261829
+    },
+    "gpt-5-mini": {
+      "n": 2000,
+      "mean_tv_original_vs_neutralised": 0.0926825,
+      "argmax_change_rate": 0.138,
+      "mean_p2_original": 0.10077,
+      "mean_p2_neutralised": 0.116505,
+      "mean_entropy_original": 0.5527331126665684,
+      "mean_entropy_neutralised": 0.5614016491069649
+    }
+  }
+}
