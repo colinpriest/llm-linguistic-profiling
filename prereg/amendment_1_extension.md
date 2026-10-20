@@ -39,3 +39,13 @@ The extension to 4,000 was chosen for cost and time reasons. It was decided afte
 
 ## 4. Other analyses at n = 4,000
 H1–H5 are recomputed on n = 4,000 as secondary, descriptive updates. Their confirmatory status remains that recorded at n = 1,000.
+
+## 5. Status: not executed (20 Oct 2026, 10:52 am AEST)
+The extension was stopped after a materiality review, before any of complaints 1,001–4,000 were generated: both runs were still replaying the cached first 1,000 complaints, and no new API calls had been made.
+
+The review found every monetary disparity, for both systems, to be far below any materiality bound:
+- the largest pooled gap is 0.84 pp, for GPT-4o-mini by SES (AIR 0.917);
+- Jev's largest pooled gap is 0.40 pp;
+- all |Cohen's h| ≤ 0.03.
+
+Confirming a difference between two immaterial disparities, against a model scheduled for retirement, did not justify about $600. H6 is therefore reported as inconclusive at n = 1,000, together with exploratory and pooled estimates and the post hoc equivalence analysis in `prereg/materiality_analysis.py` (results: `prereg/materiality_results.json`).
