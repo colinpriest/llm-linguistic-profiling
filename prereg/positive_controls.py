@@ -205,9 +205,9 @@ def cmd_analyse():
     orig = outcomes_original()
     dec = pd.read_csv(OUT / "decisions.csv").pivot_table(index=["case_id", "edit"], columns="model", values="tier")
     dec.columns = [f"gpt_tier|{c}" for c in dec.columns]
-    js = pd.read_csv(OUT / "jev" / "scores.csv").drop_duplicates(["case_id", "persona_label"]).set_index(["case_id", "persona_label"])
+    js = pd.read_csv(OUT / "jev" / "scores.csv").drop_duplicates(["case_id", "persona_label"])
+    js = js.rename(columns={"persona_label": "edit"}).set_index(["case_id", "edit"])
     ed = dec.join(jev_outcomes(js).set_axis(js.index), how="outer").join(js[[f"{x}_E" for x in jattr.ATTRIBUTES]])
-    ed.index = ed.index.set_names(["case_id", "edit"])
     outcomes = ["gpt_tier|gpt-4o-mini", "gpt_tier|gpt-5-mini", "jev_e_tier", "jev_e_tier_6avg", "jev_argmax", "jev_p2"]
     for o in ("gpt-4o-mini", "gpt-5-mini"):
         orig[f"gpt_monetary|{o}"] = (orig[f"gpt_tier|{o}"] == 2).astype(float)
