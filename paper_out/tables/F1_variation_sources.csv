@@ -1,0 +1,5 @@
+comparison,mean_TV
+"Same text, scored twice (exploratory)",0.020579999999999998
+"Same text, option order reversed",0.057606666666666674
+"Two paraphrases, same persona",0.09065083333333335
+"Two paraphrases, different persona",0.09163351587301588

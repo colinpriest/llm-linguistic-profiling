@@ -1,0 +1,36 @@
+D:\dev\LLM-linguistic-profiling\prereg\attributes_descriptives.py:116: UserWarning: This pattern is interpreted as a regular expression, and has match groups. To actually get the groups, use str.extract.
+  d[th] = d.markers.str.contains(pat, regex=True)
+
+age: top contributions
+  argument_E           structure +0.0075 [+0.0036,+0.0117]
+  vocabulary_E         delivery  +0.0072 [-0.0036,+0.0178]
+  politeness_E         delivery  +0.0068 [-0.0006,+0.0140]
+  grammar_E            delivery  +0.0065 [-0.0016,+0.0144]
+  emotion_E            delivery  -0.0024 [-0.0062,+0.0014]
+  harm_E               content   -0.0022 [-0.0037,-0.0009]
+  entitlement_E        delivery  -0.0019 [-0.0048,+0.0006]
+
+edu: top contributions
+  argument_E           structure +0.0071 [+0.0034,+0.0110]
+  vocabulary_E         delivery  +0.0059 [-0.0032,+0.0147]
+  grammar_E            delivery  +0.0051 [-0.0010,+0.0118]
+  politeness_E         delivery  +0.0045 [+0.0001,+0.0091]
+  bank_error_E         content   +0.0028 [+0.0018,+0.0040]
+  chronology_E         structure +0.0011 [-0.0016,+0.0037]
+  coherence_E          structure +0.0010 [-0.0008,+0.0028]
+
+ses: top contributions
+  grammar_E            delivery  +0.0097 [+0.0026,+0.0165]
+  argument_E           structure +0.0073 [+0.0039,+0.0109]
+  bank_error_E         content   +0.0046 [+0.0031,+0.0062]
+  vocabulary_E         delivery  +0.0043 [-0.0059,+0.0139]
+  politeness_E         delivery  +0.0034 [-0.0005,+0.0074]
+  formality_E          delivery  -0.0022 [-0.0084,+0.0047]
+  chronology_E         structure +0.0013 [-0.0013,+0.0041]
+
+D3 certainty: {'legal_basis': 0.15, 'money_demand': 0.18, 'prior_attempts': 0.27, 'confidence': 0.3, 'rudeness': 0.31, 'formality': 0.35, 'vocabulary': 0.37, 'request_clarity': 0.38, 'emotion': 0.39, 'politeness': 0.4, 'evidence': 0.43, 'harm': 0.43, 'entitlement': 0.45, 'chronology': 0.5, 'coherence': 0.52, 'grammar': 0.53, 'bank_error': 0.54, 'argument': 0.57, 'concision': 0.65}
+
+D4 gpt-4o-mini markers by edu: {"college": {"formality/register": 0.91, "vocabulary/technical terms": 0.44, "legal/regulatory references": 0.35, "grammar/spelling/punctuation": 0.02, "structure/organisation": 0.73, "confidence/assertiveness": 0.97, "emotion/frustration": 0.48, "politeness": 0.28, "specific details/evidence": 0.94, "age cues": 0.01, "regional/dialect cues": 0.0}, "high_school": {"formality/register": 0.88, "vocabulary/technical terms": 0.31, "legal/regulatory references": 0.34, "grammar/spelling/punctuation": 0.02, "structure/organisation": 0.58, "confidence/assertiveness": 0.97, "emotion/frustration": 0.52, "politeness": 0.17, "specific details/evidence": 0.92, "age cues": 0.01, "regional/dialect cues": 0.0}}
+
+D4 gpt-5-mini markers by edu: {"college": {"formality/register": 0.97, "vocabulary/technical terms": 0.61, "legal/regulatory references": 0.6, "grammar/spelling/punctuation": 0.92, "structure/organisation": 0.74, "confidence/assertiveness": 0.99, "emotion/frustration": 0.4, "politeness": 0.25, "specific details/evidence": 0.51, "age cues": 0.01, "regional/dialect cues": 0.04}, "high_school": {"formality/register": 0.95, "vocabulary/technical terms": 0.6, "legal/regulatory references": 0.55, "grammar/spelling/punctuation": 0.92, "structure/organisation": 0.7, "confidence/assertiveness": 0.99, "emotion/frustration": 0.38, "politeness": 0.22, "specific details/evidence": 0.5, "age cues": 0.01, "regional/dialect cues": 0.05}}
+exit 0

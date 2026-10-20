@@ -1,0 +1,23 @@
+,Old − young,College − HS,High − low SES,Urban − rural
+vocabulary_E,1.118,0.926,0.968,0.147
+formality_E,1.377,0.684,0.661,0.07
+obj_fk_grade,0.903,0.982,1.015,0.246
+grammar_E,1.023,0.808,0.789,0.064
+politeness_E,0.88,0.59,0.479,-0.135
+emotion_E,-0.668,-0.243,-0.274,0.141
+rudeness_E,-0.611,-0.314,-0.158,0.156
+entitlement_E,-0.384,-0.101,0.078,0.233
+obj_sentence_len,0.28,0.264,0.241,-0.065
+confidence_E,-0.18,0.029,0.209,0.26
+obj_emotion_abs,0.022,0.06,0.058,-0.021
+argument_E,0.594,0.564,0.542,0.131
+chronology_E,0.761,0.429,0.414,-0.004
+concision_E,-0.314,-0.229,-0.262,0.036
+coherence_E,0.413,0.337,0.264,0.004
+request_clarity_E,0.093,0.084,0.053,0.044
+harm_E,-0.26,-0.071,-0.14,0.05
+bank_error_E,-0.035,0.108,0.174,0.123
+legal_basis_E,0.069,0.138,0.133,0.038
+evidence_E,0.087,0.091,0.119,0.015
+money_demand_E,-0.047,-0.063,-0.077,-0.01
+prior_attempts_E,0.027,-0.019,-0.034,0.008

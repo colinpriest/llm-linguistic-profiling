@@ -1,0 +1,1221 @@
+{
+  "D1_gelbach_by_attribute_gpt4o_tier": {
+    "age": {
+      "argument_E": {
+        "family": "structure",
+        "contribution": 0.007466588658112699,
+        "ci95": [
+          0.0035938174193275766,
+          0.011682513029350345
+        ]
+      },
+      "vocabulary_E": {
+        "family": "delivery",
+        "contribution": 0.007173168334584425,
+        "ci95": [
+          -0.0036468295739162607,
+          0.017812202174015412
+        ]
+      },
+      "politeness_E": {
+        "family": "delivery",
+        "contribution": 0.006770071739414464,
+        "ci95": [
+          -0.0006323353031339234,
+          0.013957894603807138
+        ]
+      },
+      "grammar_E": {
+        "family": "delivery",
+        "contribution": 0.006510423771335991,
+        "ci95": [
+          -0.0016016980555487754,
+          0.014433370569663845
+        ]
+      },
+      "emotion_E": {
+        "family": "delivery",
+        "contribution": -0.002372179125680804,
+        "ci95": [
+          -0.00620470235666547,
+          0.0013719970526076786
+        ]
+      },
+      "harm_E": {
+        "family": "content",
+        "contribution": -0.0021517394805148486,
+        "ci95": [
+          -0.0037295003817904367,
+          -0.0008672694921170582
+        ]
+      },
+      "entitlement_E": {
+        "family": "delivery",
+        "contribution": -0.0019266096325308694,
+        "ci95": [
+          -0.004844936396963694,
+          0.0006010491714749819
+        ]
+      },
+      "chronology_E": {
+        "family": "structure",
+        "contribution": 0.0018997048245539688,
+        "ci95": [
+          -0.0024628110255723434,
+          0.007047757194166033
+        ]
+      },
+      "coherence_E": {
+        "family": "structure",
+        "contribution": 0.0011820345637258687,
+        "ci95": [
+          -0.0010060105364025562,
+          0.0035073431897465978
+        ]
+      },
+      "bank_error_E": {
+        "family": "content",
+        "contribution": -0.0009015967863430551,
+        "ci95": [
+          -0.0022546288932652416,
+          0.0004499602125519528
+        ]
+      },
+      "formality_E": {
+        "family": "delivery",
+        "contribution": -0.0006410220731594308,
+        "ci95": [
+          -0.013099796768356367,
+          0.011346527356120142
+        ]
+      },
+      "request_clarity_E": {
+        "family": "structure",
+        "contribution": 0.0006003413595882919,
+        "ci95": [
+          0.00010704335414114693,
+          0.0012793190491860115
+        ]
+      },
+      "confidence_E": {
+        "family": "delivery",
+        "contribution": 0.00047711793217586964,
+        "ci95": [
+          -0.0006854590937106765,
+          0.001624671082162553
+        ]
+      },
+      "obj_fk_grade": {
+        "family": "delivery",
+        "contribution": 0.00031337741924358174,
+        "ci95": [
+          -0.007693283552475644,
+          0.008336973487341224
+        ]
+      },
+      "obj_sentence_len": {
+        "family": "delivery",
+        "contribution": -0.00025992333912858856,
+        "ci95": [
+          -0.0019732517139363632,
+          0.0014451119418646971
+        ]
+      },
+      "legal_basis_E": {
+        "family": "content",
+        "contribution": -0.0001793063101490264,
+        "ci95": [
+          -0.000530584465783122,
+          0.00011419683278867641
+        ]
+      },
+      "concision_E": {
+        "family": "structure",
+        "contribution": -0.00011459229437821861,
+        "ci95": [
+          -0.001715540001126238,
+          0.0016060287734233232
+        ]
+      },
+      "rudeness_E": {
+        "family": "delivery",
+        "contribution": -8.033474795207729e-05,
+        "ci95": [
+          -0.0038072978545337878,
+          0.003528502030556389
+        ]
+      },
+      "prior_attempts_E": {
+        "family": "content",
+        "contribution": 6.742299059328617e-05,
+        "ci95": [
+          -9.860170315057149e-05,
+          0.0003099138666123091
+        ]
+      },
+      "evidence_E": {
+        "family": "content",
+        "contribution": -2.7102718049181958e-05,
+        "ci95": [
+          -0.00044857686569883283,
+          0.00039613450554502113
+        ]
+      },
+      "obj_emotion_abs": {
+        "family": "delivery",
+        "contribution": 2.2954056936516595e-05,
+        "ci95": [
+          -8.575458433329095e-05,
+          0.0001725524696683986
+        ]
+      },
+      "money_demand_E": {
+        "family": "content",
+        "contribution": 1.0274630644826744e-05,
+        "ci95": [
+          -0.0002942121897376398,
+          0.00033194178954804596
+        ]
+      }
+    },
+    "edu": {
+      "argument_E": {
+        "family": "structure",
+        "contribution": 0.007087254528629747,
+        "ci95": [
+          0.0034404392607569477,
+          0.011011567816052984
+        ]
+      },
+      "vocabulary_E": {
+        "family": "delivery",
+        "contribution": 0.005941364049764543,
+        "ci95": [
+          -0.0031952247551844523,
+          0.014676818242357177
+        ]
+      },
+      "grammar_E": {
+        "family": "delivery",
+        "contribution": 0.005141108199468151,
+        "ci95": [
+          -0.0010054913370074713,
+          0.011779902143382351
+        ]
+      },
+      "politeness_E": {
+        "family": "delivery",
+        "contribution": 0.004541191244859801,
+        "ci95": [
+          8.362556736189552e-05,
+          0.009074069103948845
+        ]
+      },
+      "bank_error_E": {
+        "family": "content",
+        "contribution": 0.0027627693563091827,
+        "ci95": [
+          0.0018049740039256792,
+          0.004006223349933995
+        ]
+      },
+      "chronology_E": {
+        "family": "structure",
+        "contribution": 0.001071658015437326,
+        "ci95": [
+          -0.0015620286637174315,
+          0.003657891160838197
+        ]
+      },
+      "coherence_E": {
+        "family": "structure",
+        "contribution": 0.0009640225909868858,
+        "ci95": [
+          -0.0007846920437105262,
+          0.0027862950449613643
+        ]
+      },
+      "emotion_E": {
+        "family": "delivery",
+        "contribution": -0.0008645369294317033,
+        "ci95": [
+          -0.0022697190672977536,
+          0.0005221100329120097
+        ]
+      },
+      "harm_E": {
+        "family": "content",
+        "contribution": -0.0005864071576307167,
+        "ci95": [
+          -0.0011596925558516043,
+          -0.00019748319260101568
+        ]
+      },
+      "request_clarity_E": {
+        "family": "structure",
+        "contribution": 0.0005405256517749515,
+        "ci95": [
+          0.0001209936523118306,
+          0.0010834617609821633
+        ]
+      },
+      "entitlement_E": {
+        "family": "delivery",
+        "contribution": -0.0005091662031426416,
+        "ci95": [
+          -0.0012165262708874567,
+          0.0001634243786615097
+        ]
+      },
+      "legal_basis_E": {
+        "family": "content",
+        "contribution": -0.00035808479809506144,
+        "ci95": [
+          -0.0009329376234568004,
+          0.00022146107286196708
+        ]
+      },
+      "obj_fk_grade": {
+        "family": "delivery",
+        "contribution": 0.00034094834870448785,
+        "ci95": [
+          -0.008713934660030431,
+          0.00878969336356697
+        ]
+      },
+      "formality_E": {
+        "family": "delivery",
+        "contribution": -0.000318472811494296,
+        "ci95": [
+          -0.0061366428467555,
+          0.005891427503707172
+        ]
+      },
+      "obj_sentence_len": {
+        "family": "delivery",
+        "contribution": -0.00024487212628485045,
+        "ci95": [
+          -0.0017593848491470631,
+          0.0013295045949394727
+        ]
+      },
+      "concision_E": {
+        "family": "structure",
+        "contribution": -8.370137359568594e-05,
+        "ci95": [
+          -0.0012282159603835463,
+          0.001052295940966328
+        ]
+      },
+      "confidence_E": {
+        "family": "delivery",
+        "contribution": -7.755069177765708e-05,
+        "ci95": [
+          -0.00037148925133734565,
+          0.00012733504935917697
+        ]
+      },
+      "obj_emotion_abs": {
+        "family": "delivery",
+        "contribution": 6.1030440745959643e-05,
+        "ci95": [
+          -0.00015255777400677235,
+          0.00031113307170239625
+        ]
+      },
+      "prior_attempts_E": {
+        "family": "content",
+        "contribution": -4.6701029498562256e-05,
+        "ci95": [
+          -0.00019783070865822978,
+          7.875950945993115e-05
+        ]
+      },
+      "rudeness_E": {
+        "family": "delivery",
+        "contribution": -4.126017945672633e-05,
+        "ci95": [
+          -0.0019641970916985975,
+          0.0019777727600978254
+        ]
+      },
+      "evidence_E": {
+        "family": "content",
+        "contribution": -2.8135751470650766e-05,
+        "ci95": [
+          -0.00037406321190100136,
+          0.000389032944236033
+        ]
+      },
+      "money_demand_E": {
+        "family": "content",
+        "contribution": 1.3721928979020176e-05,
+        "ci95": [
+          -0.0003929923329071444,
+          0.0003389667918166494
+        ]
+      }
+    },
+    "ses": {
+      "grammar_E": {
+        "family": "delivery",
+        "contribution": 0.009728693038763536,
+        "ci95": [
+          0.002607995659149441,
+          0.016511820676671785
+        ]
+      },
+      "argument_E": {
+        "family": "structure",
+        "contribution": 0.007302031585358644,
+        "ci95": [
+          0.003949874470035156,
+          0.01089512219311357
+        ]
+      },
+      "bank_error_E": {
+        "family": "content",
+        "contribution": 0.004574787253685194,
+        "ci95": [
+          0.003100202167876373,
+          0.006197464166095827
+        ]
+      },
+      "vocabulary_E": {
+        "family": "delivery",
+        "contribution": 0.004272006521165062,
+        "ci95": [
+          -0.005884137301036792,
+          0.013889332663688917
+        ]
+      },
+      "politeness_E": {
+        "family": "delivery",
+        "contribution": 0.00339717778398638,
+        "ci95": [
+          -0.0005114080733442921,
+          0.007386368616700701
+        ]
+      },
+      "formality_E": {
+        "family": "delivery",
+        "contribution": -0.0021731556535791344,
+        "ci95": [
+          -0.008406268234404614,
+          0.004667274020825324
+        ]
+      },
+      "chronology_E": {
+        "family": "structure",
+        "contribution": 0.0013088987182321805,
+        "ci95": [
+          -0.0013329281915037895,
+          0.004097651319935601
+        ]
+      },
+      "obj_fk_grade": {
+        "family": "delivery",
+        "contribution": -0.0011543151366358636,
+        "ci95": [
+          -0.010771052389400688,
+          0.007629312817947056
+        ]
+      },
+      "harm_E": {
+        "family": "content",
+        "contribution": -0.00114160467056769,
+        "ci95": [
+          -0.0021007045387124055,
+          -0.0003260102234784156
+        ]
+      },
+      "emotion_E": {
+        "family": "delivery",
+        "contribution": -0.0011257375826079221,
+        "ci95": [
+          -0.0028320606433668723,
+          0.0005567320925011456
+        ]
+      },
+      "coherence_E": {
+        "family": "structure",
+        "contribution": 0.0008633663464634117,
+        "ci95": [
+          -0.0006842568651348733,
+          0.002508833049619268
+        ]
+      },
+      "confidence_E": {
+        "family": "delivery",
+        "contribution": -0.0008227316535308606,
+        "ci95": [
+          -0.0021360893940685593,
+          0.0005388687847595169
+        ]
+      },
+      "entitlement_E": {
+        "family": "delivery",
+        "contribution": 0.000432627721115481,
+        "ci95": [
+          -0.00013933452448324272,
+          0.0011283364538017472
+        ]
+      },
+      "obj_sentence_len": {
+        "family": "delivery",
+        "contribution": -0.000426903216061693,
+        "ci95": [
+          -0.001980391836576588,
+          0.001121619198894214
+        ]
+      },
+      "request_clarity_E": {
+        "family": "structure",
+        "contribution": 0.00028788571851985607,
+        "ci95": [
+          9.409478444652216e-07,
+          0.0007211211554940254
+        ]
+      },
+      "concision_E": {
+        "family": "structure",
+        "contribution": 0.00024309867055144984,
+        "ci95": [
+          -0.0012597220457903177,
+          0.0016145780860601616
+        ]
+      },
+      "legal_basis_E": {
+        "family": "content",
+        "contribution": -0.00014639154468501896,
+        "ci95": [
+          -0.0007866000181811687,
+          0.00044264324081345896
+        ]
+      },
+      "rudeness_E": {
+        "family": "delivery",
+        "contribution": -0.00014523032590016302,
+        "ci95": [
+          -0.0011673592849037982,
+          0.0008774468392478401
+        ]
+      },
+      "money_demand_E": {
+        "family": "content",
+        "contribution": 0.00013952556143122905,
+        "ci95": [
+          -0.0002719668872916259,
+          0.000597480598284178
+        ]
+      },
+      "evidence_E": {
+        "family": "content",
+        "contribution": -0.00013779776262609668,
+        "ci95": [
+          -0.000796514971284367,
+          0.0004719478566371035
+        ]
+      },
+      "prior_attempts_E": {
+        "family": "content",
+        "contribution": -5.5107261009397654e-05,
+        "ci95": [
+          -0.0002841379023926792,
+          0.0001236192650493138
+        ]
+      },
+      "obj_emotion_abs": {
+        "family": "delivery",
+        "contribution": 2.278482498178585e-05,
+        "ci95": [
+          -0.00021290255287553165,
+          0.000308118021710928
+        ]
+      }
+    }
+  },
+  "D2_persona_effects": {
+    "gpt-4o-mini": {
+      "vocabulary_E": {
+        "family": "delivery",
+        "eta2_persona": 0.7289413334153154,
+        "age:old-young_std": 1.1177549219162415,
+        "edu:college-high_school_std": 0.9258097119374582,
+        "ses:high-low_std": 0.9676287442511962,
+        "geo:urban-rural_std": 0.14738597937102166
+      },
+      "grammar_E": {
+        "family": "delivery",
+        "eta2_persona": 0.5450848457518536,
+        "age:old-young_std": 1.0230370680530825,
+        "edu:college-high_school_std": 0.8078651165663777,
+        "ses:high-low_std": 0.7885102150833146,
+        "geo:urban-rural_std": 0.06405772454211327
+      },
+      "formality_E": {
+        "family": "delivery",
+        "eta2_persona": 0.6992101137363477,
+        "age:old-young_std": 1.3768974531379163,
+        "edu:college-high_school_std": 0.6840706761920062,
+        "ses:high-low_std": 0.661476961464723,
+        "geo:urban-rural_std": 0.06959405448831799
+      },
+      "confidence_E": {
+        "family": "delivery",
+        "eta2_persona": 0.036278086732607365,
+        "age:old-young_std": -0.18036159757590806,
+        "edu:college-high_school_std": 0.029315952553692664,
+        "ses:high-low_std": 0.20921626327215775,
+        "geo:urban-rural_std": 0.26023615338960404
+      },
+      "politeness_E": {
+        "family": "delivery",
+        "eta2_persona": 0.3412219929725753,
+        "age:old-young_std": 0.8800461485024906,
+        "edu:college-high_school_std": 0.5903124838966357,
+        "ses:high-low_std": 0.4785061015419979,
+        "geo:urban-rural_std": -0.13495455217970645
+      },
+      "rudeness_E": {
+        "family": "delivery",
+        "eta2_persona": 0.14126456388531802,
+        "age:old-young_std": -0.6109391876327739,
+        "edu:college-high_school_std": -0.3137802901169658,
+        "ses:high-low_std": -0.15821131329002816,
+        "geo:urban-rural_std": 0.15604527782028438
+      },
+      "emotion_E": {
+        "family": "delivery",
+        "eta2_persona": 0.15702836774891113,
+        "age:old-young_std": -0.6677766862068647,
+        "edu:college-high_school_std": -0.24337015682726895,
+        "ses:high-low_std": -0.27422556174424406,
+        "geo:urban-rural_std": 0.14063258646372784
+      },
+      "entitlement_E": {
+        "family": "delivery",
+        "eta2_persona": 0.06619720407098993,
+        "age:old-young_std": -0.3839153495271523,
+        "edu:college-high_school_std": -0.10146150914349111,
+        "ses:high-low_std": 0.07802495333003023,
+        "geo:urban-rural_std": 0.2325781573811519
+      },
+      "coherence_E": {
+        "family": "structure",
+        "eta2_persona": 0.08599917293388007,
+        "age:old-young_std": 0.4131790799919819,
+        "edu:college-high_school_std": 0.336973198127177,
+        "ses:high-low_std": 0.26424676138314573,
+        "geo:urban-rural_std": 0.00411801380623346
+      },
+      "chronology_E": {
+        "family": "structure",
+        "eta2_persona": 0.2305750345727049,
+        "age:old-young_std": 0.7611942641391578,
+        "edu:college-high_school_std": 0.4294035178129026,
+        "ses:high-low_std": 0.4135517678426871,
+        "geo:urban-rural_std": -0.003946819800667497
+      },
+      "argument_E": {
+        "family": "structure",
+        "eta2_persona": 0.23085838413120727,
+        "age:old-young_std": 0.5937118973347798,
+        "edu:college-high_school_std": 0.56354883411401,
+        "ses:high-low_std": 0.5421861680067492,
+        "geo:urban-rural_std": 0.13148678433907243
+      },
+      "request_clarity_E": {
+        "family": "structure",
+        "eta2_persona": 0.005525509342894589,
+        "age:old-young_std": 0.09313260513837428,
+        "edu:college-high_school_std": 0.08385322998324936,
+        "ses:high-low_std": 0.05333034148141999,
+        "geo:urban-rural_std": 0.044470623461119574
+      },
+      "concision_E": {
+        "family": "structure",
+        "eta2_persona": 0.11808387569659584,
+        "age:old-young_std": -0.3140725004354777,
+        "edu:college-high_school_std": -0.22940722007291298,
+        "ses:high-low_std": -0.2619481072975821,
+        "geo:urban-rural_std": 0.035952493458421275
+      },
+      "evidence_E": {
+        "family": "content",
+        "eta2_persona": 0.007140719038330176,
+        "age:old-young_std": 0.08736279667374289,
+        "edu:college-high_school_std": 0.09069267261435826,
+        "ses:high-low_std": 0.11884655932256599,
+        "geo:urban-rural_std": 0.015188092943729834
+      },
+      "harm_E": {
+        "family": "content",
+        "eta2_persona": 0.02338254117985923,
+        "age:old-young_std": -0.2602344029644848,
+        "edu:college-high_school_std": -0.07092090745281354,
+        "ses:high-low_std": -0.14033709426029897,
+        "geo:urban-rural_std": 0.05044396830051936
+      },
+      "bank_error_E": {
+        "family": "content",
+        "eta2_persona": 0.011654274046598703,
+        "age:old-young_std": -0.03513529249502468,
+        "edu:college-high_school_std": 0.10766532323608287,
+        "ses:high-low_std": 0.17372222411386742,
+        "geo:urban-rural_std": 0.12321267877679593
+      },
+      "money_demand_E": {
+        "family": "content",
+        "eta2_persona": 0.0031608103999928878,
+        "age:old-young_std": -0.047404445599187404,
+        "edu:college-high_school_std": -0.06330937415537956,
+        "ses:high-low_std": -0.07732455336047014,
+        "geo:urban-rural_std": -0.009900402392208116
+      },
+      "legal_basis_E": {
+        "family": "content",
+        "eta2_persona": 0.010965077999828198,
+        "age:old-young_std": 0.06910383874580629,
+        "edu:college-high_school_std": 0.1380042572085321,
+        "ses:high-low_std": 0.13262346262382402,
+        "geo:urban-rural_std": 0.037905073071422477
+      },
+      "prior_attempts_E": {
+        "family": "content",
+        "eta2_persona": 0.0012736500871868232,
+        "age:old-young_std": 0.02691472631198577,
+        "edu:college-high_school_std": -0.01864268280560973,
+        "ses:high-low_std": -0.034012779571012085,
+        "geo:urban-rural_std": 0.007545063573648465
+      },
+      "obj_sentence_len": {
+        "family": "delivery",
+        "eta2_persona": 0.05206723108394733,
+        "age:old-young_std": 0.27977297374408316,
+        "edu:college-high_school_std": 0.2635723409348698,
+        "ses:high-low_std": 0.24079215477953841,
+        "geo:urban-rural_std": -0.06509789713470385
+      },
+      "obj_fk_grade": {
+        "family": "delivery",
+        "eta2_persona": 0.6719561137286622,
+        "age:old-young_std": 0.9028619903427502,
+        "edu:college-high_school_std": 0.9822957424897529,
+        "ses:high-low_std": 1.015072303370765,
+        "geo:urban-rural_std": 0.24605887911361962
+      },
+      "obj_emotion_abs": {
+        "family": "delivery",
+        "eta2_persona": 0.0028608783164482746,
+        "age:old-young_std": 0.022484880381578563,
+        "edu:college-high_school_std": 0.05978299015314554,
+        "ses:high-low_std": 0.057867823184026515,
+        "geo:urban-rural_std": -0.02112889126070375
+      }
+    },
+    "gpt-5-mini": {
+      "vocabulary_E": {
+        "family": "delivery",
+        "eta2_persona": 0.24123058792837285,
+        "age:old-young_std": 0.4143973302290762,
+        "edu:college-high_school_std": 0.6817069361806959,
+        "ses:high-low_std": 0.6077484777054969,
+        "geo:urban-rural_std": 0.12247175779340996
+      },
+      "grammar_E": {
+        "family": "delivery",
+        "eta2_persona": 0.06604932654366469,
+        "age:old-young_std": 0.24341487036495574,
+        "edu:college-high_school_std": 0.34494092058424586,
+        "ses:high-low_std": 0.3251512540291237,
+        "geo:urban-rural_std": 0.03665853343668192
+      },
+      "formality_E": {
+        "family": "delivery",
+        "eta2_persona": 0.2807465474387574,
+        "age:old-young_std": 0.6667377453120491,
+        "edu:college-high_school_std": 0.6265102940998187,
+        "ses:high-low_std": 0.5798630407951182,
+        "geo:urban-rural_std": 0.08179132726646018
+      },
+      "confidence_E": {
+        "family": "delivery",
+        "eta2_persona": 0.015238773086466446,
+        "age:old-young_std": 0.03675430059030742,
+        "edu:college-high_school_std": 0.1316981569177441,
+        "ses:high-low_std": 0.1978609684132121,
+        "geo:urban-rural_std": 0.08938539424471564
+      },
+      "politeness_E": {
+        "family": "delivery",
+        "eta2_persona": 0.07598795299224295,
+        "age:old-young_std": 0.36693876692474553,
+        "edu:college-high_school_std": 0.33003455534763465,
+        "ses:high-low_std": 0.14697389080881665,
+        "geo:urban-rural_std": -0.047518952743817525
+      },
+      "rudeness_E": {
+        "family": "delivery",
+        "eta2_persona": 0.01983181744504845,
+        "age:old-young_std": -0.17420417252057857,
+        "edu:college-high_school_std": -0.162053013036743,
+        "ses:high-low_std": -0.11001225251888536,
+        "geo:urban-rural_std": -0.005009335615024976
+      },
+      "emotion_E": {
+        "family": "delivery",
+        "eta2_persona": 0.07819278480704456,
+        "age:old-young_std": -0.31686360663311247,
+        "edu:college-high_school_std": -0.34975352131728416,
+        "ses:high-low_std": -0.3009039949708245,
+        "geo:urban-rural_std": -0.019122103458842875
+      },
+      "entitlement_E": {
+        "family": "delivery",
+        "eta2_persona": 0.006217691414976877,
+        "age:old-young_std": -0.08771569594854767,
+        "edu:college-high_school_std": -0.01511478437508187,
+        "ses:high-low_std": 0.07739935020080296,
+        "geo:urban-rural_std": 0.07346605757133139
+      },
+      "coherence_E": {
+        "family": "structure",
+        "eta2_persona": 0.032659103468634,
+        "age:old-young_std": 0.18772423214222847,
+        "edu:college-high_school_std": 0.2388725103903267,
+        "ses:high-low_std": 0.20136284236285956,
+        "geo:urban-rural_std": 0.0303120555098036
+      },
+      "chronology_E": {
+        "family": "structure",
+        "eta2_persona": 0.039246227061722025,
+        "age:old-young_std": 0.23295115270050265,
+        "edu:college-high_school_std": 0.2500115518087979,
+        "ses:high-low_std": 0.2139679838073709,
+        "geo:urban-rural_std": 0.008903427959504091
+      },
+      "argument_E": {
+        "family": "structure",
+        "eta2_persona": 0.024717207289987456,
+        "age:old-young_std": 0.06701882725381224,
+        "edu:college-high_school_std": 0.23441889034126062,
+        "ses:high-low_std": 0.17771749626026764,
+        "geo:urban-rural_std": 0.061672485804679794
+      },
+      "request_clarity_E": {
+        "family": "structure",
+        "eta2_persona": 0.0007751539552507075,
+        "age:old-young_std": 0.020256868977800865,
+        "edu:college-high_school_std": 0.002828113304182006,
+        "ses:high-low_std": -0.012016098632122447,
+        "geo:urban-rural_std": 0.024702013573129927
+      },
+      "concision_E": {
+        "family": "structure",
+        "eta2_persona": 0.009782586087695057,
+        "age:old-young_std": 0.09170149860055686,
+        "edu:college-high_school_std": 0.11339840024676137,
+        "ses:high-low_std": 0.13857871393559423,
+        "geo:urban-rural_std": 0.028845435349667124
+      },
+      "evidence_E": {
+        "family": "content",
+        "eta2_persona": 0.00306319038340183,
+        "age:old-young_std": -0.005895286665221792,
+        "edu:college-high_school_std": 0.06196367377052714,
+        "ses:high-low_std": 0.03726663356229456,
+        "geo:urban-rural_std": 0.014227642728655643
+      },
+      "harm_E": {
+        "family": "content",
+        "eta2_persona": 0.009210372863385632,
+        "age:old-young_std": -0.15224492760262207,
+        "edu:college-high_school_std": -0.05617426543368151,
+        "ses:high-low_std": -0.07282090247948277,
+        "geo:urban-rural_std": 0.022737822454272767
+      },
+      "bank_error_E": {
+        "family": "content",
+        "eta2_persona": 0.0026374487818909263,
+        "age:old-young_std": -0.01031225232694182,
+        "edu:college-high_school_std": 0.051848854329086085,
+        "ses:high-low_std": 0.04960973978000911,
+        "geo:urban-rural_std": 0.046158627447486694
+      },
+      "money_demand_E": {
+        "family": "content",
+        "eta2_persona": 0.0011770866063971935,
+        "age:old-young_std": -0.0032775992968901344,
+        "edu:college-high_school_std": -0.030729861615929395,
+        "ses:high-low_std": -0.021257031278096646,
+        "geo:urban-rural_std": -0.004205936669997724
+      },
+      "legal_basis_E": {
+        "family": "content",
+        "eta2_persona": 0.0013231136281996116,
+        "age:old-young_std": -0.04189261292320657,
+        "edu:college-high_school_std": -0.00596721735991758,
+        "ses:high-low_std": 0.013826851478479054,
+        "geo:urban-rural_std": 0.03724550886669787
+      },
+      "prior_attempts_E": {
+        "family": "content",
+        "eta2_persona": 0.0013608614874032576,
+        "age:old-young_std": -0.0028052524019571462,
+        "edu:college-high_school_std": -0.009074267159382246,
+        "ses:high-low_std": -0.05055380913104331,
+        "geo:urban-rural_std": 0.02806240166887336
+      },
+      "obj_sentence_len": {
+        "family": "delivery",
+        "eta2_persona": 0.02079165861071599,
+        "age:old-young_std": -0.06530330132868842,
+        "edu:college-high_school_std": 0.23136299499273602,
+        "ses:high-low_std": 0.14484453840958147,
+        "geo:urban-rural_std": 0.013446744452761603
+      },
+      "obj_fk_grade": {
+        "family": "delivery",
+        "eta2_persona": 0.14208454374259308,
+        "age:old-young_std": 0.12589327917114088,
+        "edu:college-high_school_std": 0.5865963686578356,
+        "ses:high-low_std": 0.4768435851374642,
+        "geo:urban-rural_std": 0.08865681534126488
+      },
+      "obj_emotion_abs": {
+        "family": "delivery",
+        "eta2_persona": 0.001379307718961999,
+        "age:old-young_std": -0.023739998464784567,
+        "edu:college-high_school_std": -0.01918709928189157,
+        "ses:high-low_std": -0.024199983092962604,
+        "geo:urban-rural_std": -0.004802937492745653
+      }
+    }
+  },
+  "D3_certainty_holdout": {
+    "legal_basis": {
+      "family": "content",
+      "mean_norm_entropy": 0.1547173720147291,
+      "share_high_confidence_choice_p_ge_0.8": 0.8637361111111111
+    },
+    "money_demand": {
+      "family": "content",
+      "mean_norm_entropy": 0.1781452706688483,
+      "share_high_confidence_choice_p_ge_0.8": 0.8431527777777778
+    },
+    "prior_attempts": {
+      "family": "content",
+      "mean_norm_entropy": 0.2686448501356527,
+      "share_high_confidence_choice_p_ge_0.8": 0.7439027777777778
+    },
+    "confidence": {
+      "family": "delivery",
+      "mean_norm_entropy": 0.3024183937634499,
+      "share_high_confidence_choice_p_ge_0.8": 0.6664722222222222
+    },
+    "rudeness": {
+      "family": "delivery",
+      "mean_norm_entropy": 0.3126650411290013,
+      "share_high_confidence_choice_p_ge_0.8": 0.6741944444444444
+    },
+    "formality": {
+      "family": "delivery",
+      "mean_norm_entropy": 0.3488268594807698,
+      "share_high_confidence_choice_p_ge_0.8": 0.6044722222222222
+    },
+    "vocabulary": {
+      "family": "delivery",
+      "mean_norm_entropy": 0.3728018654935775,
+      "share_high_confidence_choice_p_ge_0.8": 0.603125
+    },
+    "request_clarity": {
+      "family": "structure",
+      "mean_norm_entropy": 0.3847815435505643,
+      "share_high_confidence_choice_p_ge_0.8": 0.6101388888888889
+    },
+    "emotion": {
+      "family": "delivery",
+      "mean_norm_entropy": 0.3882136229175425,
+      "share_high_confidence_choice_p_ge_0.8": 0.5809722222222222
+    },
+    "politeness": {
+      "family": "delivery",
+      "mean_norm_entropy": 0.39523168116875534,
+      "share_high_confidence_choice_p_ge_0.8": 0.5940138888888888
+    },
+    "evidence": {
+      "family": "content",
+      "mean_norm_entropy": 0.42811644626772705,
+      "share_high_confidence_choice_p_ge_0.8": 0.5425416666666667
+    },
+    "harm": {
+      "family": "content",
+      "mean_norm_entropy": 0.4313451395125833,
+      "share_high_confidence_choice_p_ge_0.8": 0.5185
+    },
+    "entitlement": {
+      "family": "delivery",
+      "mean_norm_entropy": 0.4476714629251041,
+      "share_high_confidence_choice_p_ge_0.8": 0.49468055555555557
+    },
+    "chronology": {
+      "family": "structure",
+      "mean_norm_entropy": 0.49861216021655996,
+      "share_high_confidence_choice_p_ge_0.8": 0.4259722222222222
+    },
+    "coherence": {
+      "family": "structure",
+      "mean_norm_entropy": 0.5181298347273767,
+      "share_high_confidence_choice_p_ge_0.8": 0.3925
+    },
+    "grammar": {
+      "family": "delivery",
+      "mean_norm_entropy": 0.5291088807607928,
+      "share_high_confidence_choice_p_ge_0.8": 0.3427777777777778
+    },
+    "bank_error": {
+      "family": "content",
+      "mean_norm_entropy": 0.5416197689445034,
+      "share_high_confidence_choice_p_ge_0.8": 0.3855972222222222
+    },
+    "argument": {
+      "family": "structure",
+      "mean_norm_entropy": 0.5700413504875406,
+      "share_high_confidence_choice_p_ge_0.8": 0.31898611111111114
+    },
+    "concision": {
+      "family": "structure",
+      "mean_norm_entropy": 0.6489821260539087,
+      "share_high_confidence_choice_p_ge_0.8": 0.19509722222222223
+    }
+  },
+  "D4_gpt_linguistic_markers": {
+    "n_guises": 20000,
+    "share_with_any_marker": 1.0,
+    "gpt-4o-mini": {
+      "overall_theme_share": {
+        "formality/register": 0.8952419032387046,
+        "vocabulary/technical terms": 0.37774890043982406,
+        "legal/regulatory references": 0.34576169532187123,
+        "grammar/spelling/punctuation": 0.017393042782886847,
+        "structure/organisation": 0.6570371851259497,
+        "confidence/assertiveness": 0.9685125949620151,
+        "emotion/frustration": 0.49770091963214713,
+        "politeness": 0.22800879648140743,
+        "specific details/evidence": 0.9282287085165933,
+        "age cues": 0.0064974010395841665,
+        "regional/dialect cues": 0.000899640143942423
+      },
+      "by_edu": {
+        "college": {
+          "formality/register": 0.9119335048486048,
+          "vocabulary/technical terms": 0.4405303779932713,
+          "legal/regulatory references": 0.34890164258856127,
+          "grammar/spelling/punctuation": 0.018207005739164853,
+          "structure/organisation": 0.7282802295665941,
+          "confidence/assertiveness": 0.9653671086483278,
+          "emotion/frustration": 0.47555907381753415,
+          "politeness": 0.28022956659410253,
+          "specific details/evidence": 0.9386503067484663,
+          "age cues": 0.005937067088858104,
+          "regional/dialect cues": 0.0
+        },
+        "high_school": {
+          "formality/register": 0.8782064229448596,
+          "vocabulary/technical terms": 0.3136740052514643,
+          "legal/regulatory references": 0.34255705917996365,
+          "grammar/spelling/punctuation": 0.01656231064431428,
+          "structure/organisation": 0.5843263987073318,
+          "confidence/assertiveness": 0.9717228842658049,
+          "emotion/frustration": 0.5202989295091901,
+          "politeness": 0.17471217935770553,
+          "specific details/evidence": 0.9175924055746314,
+          "age cues": 0.007069278933548778,
+          "regional/dialect cues": 0.001817814582912543
+        }
+      },
+      "by_ses": {
+        "high": {
+          "formality/register": 0.9116169080697606,
+          "vocabulary/technical terms": 0.46053798403783625,
+          "legal/regulatory references": 0.350872007094295,
+          "grammar/spelling/punctuation": 0.02039609813774756,
+          "structure/organisation": 0.7351463198344664,
+          "confidence/assertiveness": 0.9689624593556015,
+          "emotion/frustration": 0.46615430091634646,
+          "politeness": 0.26485368016553357,
+          "specific details/evidence": 0.9385161099615725,
+          "age cues": 0.0073898906296186815,
+          "regional/dialect cues": 0.0005911912503694946
+        },
+        "low": {
+          "formality/register": 0.8778787878787879,
+          "vocabulary/technical terms": 0.3003030303030303,
+          "legal/regulatory references": 0.35,
+          "grammar/spelling/punctuation": 0.014545454545454545,
+          "structure/organisation": 0.5869696969696969,
+          "confidence/assertiveness": 0.9709090909090909,
+          "emotion/frustration": 0.5487878787878788,
+          "politeness": 0.18757575757575756,
+          "specific details/evidence": 0.9145454545454546,
+          "age cues": 0.007272727272727273,
+          "regional/dialect cues": 0.0006060606060606061
+        },
+        "middle": {
+          "formality/register": 0.8958145137006925,
+          "vocabulary/technical terms": 0.37037037037037035,
+          "legal/regulatory references": 0.33634447455585664,
+          "grammar/spelling/punctuation": 0.017163504968383016,
+          "structure/organisation": 0.647094248720265,
+          "confidence/assertiveness": 0.9656729900632339,
+          "emotion/frustration": 0.4790725685034628,
+          "politeness": 0.23065341764528757,
+          "specific details/evidence": 0.931345980126468,
+          "age cues": 0.004817825956037338,
+          "regional/dialect cues": 0.0015055706112616681
+        }
+      },
+      "by_age": {
+        "old": {
+          "formality/register": 0.8956898248376304,
+          "vocabulary/technical terms": 0.47569376107065536,
+          "legal/regulatory references": 0.3558354654595552,
+          "grammar/spelling/punctuation": 0.02125565833497343,
+          "structure/organisation": 0.8333005313914583,
+          "confidence/assertiveness": 0.9653611493800432,
+          "emotion/frustration": 0.43121432788821096,
+          "politeness": 0.3178508167683527,
+          "specific details/evidence": 0.9588663648888014,
+          "age cues": 0.006691596142491636,
+          "regional/dialect cues": 0.00098405825624877
+        },
+        "young": {
+          "formality/register": 0.8947796059313426,
+          "vocabulary/technical terms": 0.27666057282145035,
+          "legal/regulatory references": 0.3353646150721105,
+          "grammar/spelling/punctuation": 0.01340645947592931,
+          "structure/organisation": 0.4751167986999797,
+          "confidence/assertiveness": 0.9717651838309974,
+          "emotion/frustration": 0.5663213487710745,
+          "politeness": 0.13528336380255943,
+          "specific details/evidence": 0.8966077594962422,
+          "age cues": 0.006296973390209222,
+          "regional/dialect cues": 0.0008125126955108674
+        }
+      }
+    },
+    "gpt-5-mini": {
+      "overall_theme_share": {
+        "formality/register": 0.9582833133253301,
+        "vocabulary/technical terms": 0.6071428571428571,
+        "legal/regulatory references": 0.5753301320528211,
+        "grammar/spelling/punctuation": 0.9195678271308524,
+        "structure/organisation": 0.717687074829932,
+        "confidence/assertiveness": 0.9868947579031613,
+        "emotion/frustration": 0.39175670268107243,
+        "politeness": 0.23519407763105243,
+        "specific details/evidence": 0.5038015206082433,
+        "age cues": 0.007703081232492998,
+        "regional/dialect cues": 0.04731892757102841
+      },
+      "by_edu": {
+        "college": {
+          "formality/register": 0.9667001003009027,
+          "vocabulary/technical terms": 0.6114343029087261,
+          "legal/regulatory references": 0.6026078234704112,
+          "grammar/spelling/punctuation": 0.923370110330993,
+          "structure/organisation": 0.7404212637913741,
+          "confidence/assertiveness": 0.9873620862587763,
+          "emotion/frustration": 0.4,
+          "politeness": 0.25215646940822467,
+          "specific details/evidence": 0.509729187562688,
+          "age cues": 0.007622868605817452,
+          "regional/dialect cues": 0.04373119358074223
+        },
+        "high_school": {
+          "formality/register": 0.9499101975653562,
+          "vocabulary/technical terms": 0.602873677908601,
+          "legal/regulatory references": 0.5481939732588306,
+          "grammar/spelling/punctuation": 0.9157852724007184,
+          "structure/organisation": 0.6950708441428857,
+          "confidence/assertiveness": 0.9864298543204949,
+          "emotion/frustration": 0.3835561764118938,
+          "politeness": 0.21831969666733186,
+          "specific details/evidence": 0.4979046098583117,
+          "age cues": 0.0077828776691279185,
+          "regional/dialect cues": 0.050888046298144085
+        }
+      },
+      "by_ses": {
+        "high": {
+          "formality/register": 0.9653834676216055,
+          "vocabulary/technical terms": 0.6251865114891078,
+          "legal/regulatory references": 0.6042972247090421,
+          "grammar/spelling/punctuation": 0.9239033124440466,
+          "structure/organisation": 0.7335123843628768,
+          "confidence/assertiveness": 0.9865711727842436,
+          "emotion/frustration": 0.39659803043867503,
+          "politeness": 0.24888093106535364,
+          "specific details/evidence": 0.5147717099373321,
+          "age cues": 0.007162041181736795,
+          "regional/dialect cues": 0.0444643390032826
+        },
+        "low": {
+          "formality/register": 0.9494794856093081,
+          "vocabulary/technical terms": 0.593692590324556,
+          "legal/regulatory references": 0.5511328842620943,
+          "grammar/spelling/punctuation": 0.9154929577464789,
+          "structure/organisation": 0.6974892835272505,
+          "confidence/assertiveness": 0.9883649724433557,
+          "emotion/frustration": 0.39191671769748926,
+          "politeness": 0.21922841396203308,
+          "specific details/evidence": 0.49540722596448256,
+          "age cues": 0.007348438456827924,
+          "regional/dialect cues": 0.046846295162278014
+        },
+        "middle": {
+          "formality/register": 0.9597514057413435,
+          "vocabulary/technical terms": 0.6022491861497484,
+          "legal/regulatory references": 0.5699911216336194,
+          "grammar/spelling/punctuation": 0.9192068659366677,
+          "structure/organisation": 0.72151524119562,
+          "confidence/assertiveness": 0.9857946137910625,
+          "emotion/frustration": 0.38680082864752885,
+          "politeness": 0.23705238236164547,
+          "specific details/evidence": 0.5010358094110684,
+          "age cues": 0.00858242083456644,
+          "regional/dialect cues": 0.05060668836934004
+        }
+      },
+      "by_age": {
+        "old": {
+          "formality/register": 0.9641056664650131,
+          "vocabulary/technical terms": 0.6190764266989313,
+          "legal/regulatory references": 0.6003226456946965,
+          "grammar/spelling/punctuation": 0.9203468441217988,
+          "structure/organisation": 0.7192982456140351,
+          "confidence/assertiveness": 0.984875983061101,
+          "emotion/frustration": 0.39483766888485583,
+          "politeness": 0.2601330913490623,
+          "specific details/evidence": 0.5045372050816697,
+          "age cues": 0.007461181689856826,
+          "regional/dialect cues": 0.044162129461584994
+        },
+        "young": {
+          "formality/register": 0.9525511216994242,
+          "vocabulary/technical terms": 0.5953940837800278,
+          "legal/regulatory references": 0.5507246376811594,
+          "grammar/spelling/punctuation": 0.9188008735358348,
+          "structure/organisation": 0.7161008536827477,
+          "confidence/assertiveness": 0.9888822711931705,
+          "emotion/frustration": 0.3887234464959301,
+          "politeness": 0.2106412547151082,
+          "specific details/evidence": 0.5030772285090331,
+          "age cues": 0.007941234862021045,
+          "regional/dialect cues": 0.05042684137383363
+        }
+      }
+    }
+  }
+}

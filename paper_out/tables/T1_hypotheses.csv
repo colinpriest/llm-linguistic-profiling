@@ -1,0 +1,13 @@
+Hypothesis,Claim,Estimate [95% CI],Verdict
+H1,Persona-specific share of style variation < 5%,"1.1% [0.7, 1.5]",Supported
+H2,Directional persona effects (12 contrasts),9/12 supported,Mostly supported
+H3a,E[tier] reduces arbitrariness (residual share),4o: 0.20→0.06; 5: 0.13→0.03,Supported
+H3b,E[tier] effect on systematic disparity (estimation),"4o: -0.0058 [-0.0214, 0.0047]",No reduction
+H4,Probability averaging not superior to hard voting,paraphrase Δ -0.0046; orders(4o) Δ +0.0052,Supported
+H5,Uncertainty referral creates disparity (5-mini bank),p = 0.32,Not supported
+H6,Jev monetary disparity < GPT-4o-mini (matched volume),"Δ +0.0102 [-0.0094, 0.0232]",Inconclusive
+H-A1,Rewrites preserve content (η² < 0.05),max upper bound 0.032,Supported
+H-A2,Delivery drives GPT-4o-mini edu/SES gaps,"edu 79%, SES 96% explained",Supported
+H-A3,Effect only where cue is recognisable,"difference +0.045 [0.025, 0.063]",Supported
+H-A4,"Jev infers persona from delivery, not content",6/6 differences > 0,Supported
+H-A5,Jev remedy judgment driven by content,R² content 0.20 vs delivery 0.04,Supported
