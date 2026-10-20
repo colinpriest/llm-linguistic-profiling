@@ -1,0 +1,123 @@
+{
+ "S0": {
+  "paraphrase_2": {
+   "D_prob_avg": 0.01572904557422811,
+   "D_hard_vote": 0.020328243096515253,
+   "difference": -0.004599197522287143,
+   "ci90_corrected": [
+    -0.014096930110335288,
+    0.005233517296205213
+   ],
+   "ci95_corrected": [
+    -0.01543518085642633,
+    0.007521564709884399
+   ],
+   "prob_avg_superior": false
+  },
+  "orders_6_gpt-4o-mini": {
+   "D_prob_avg": 0.02138429287243763,
+   "D_hard_vote": 0.016155070362456316,
+   "difference": 0.005229222509981313,
+   "ci90_corrected": [
+    3.9956572485459174e-06,
+    0.01321766631671194
+   ],
+   "ci95_corrected": [
+    -0.0005974555292015894,
+    0.014759345803187154
+   ],
+   "prob_avg_superior": false
+  },
+  "orders_6_gpt-5-mini": {
+   "D_prob_avg": 0.007959774247539577,
+   "D_hard_vote": 0.007687333426259298,
+   "difference": 0.0002724408212802787,
+   "ci90_corrected": [
+    -0.007185635108779573,
+    0.006623674896224853
+   ],
+   "ci95_corrected": [
+    -0.008848457096945653,
+    0.007901645421407685
+   ],
+   "prob_avg_superior": false
+  }
+ },
+ "S1": {
+  "gpt-4o-mini": {
+   "share_complaints_tier_constant": 0.633,
+   "mean_p2_range_in_constant": 0.06173775671406003,
+   "share_constant_with_p2_range_gt_0.10": 0.2480252764612954,
+   "mean_entropy_range_in_constant": 0.26571760834413416,
+   "mean_pairwise_tv_between_guises": 0.07297330952380952,
+   "tv_same_text_option_reversal": 0.057606666666666674
+  },
+  "gpt-5-mini": {
+   "share_complaints_tier_constant": 0.738,
+   "mean_p2_range_in_constant": 0.054810298102981034,
+   "share_constant_with_p2_range_gt_0.10": 0.23577235772357724,
+   "mean_entropy_range_in_constant": 0.1915354097403797,
+   "mean_pairwise_tv_between_guises": 0.049216960317460326,
+   "tv_same_text_option_reversal": 0.05671625
+  },
+  "cross_bank": {
+   "tv_same_persona": 0.09065083333333335,
+   "tv_different_persona": 0.09163351587301588,
+   "persona_specific_share": 0.010840303431840486
+  }
+ },
+ "S3_p": {
+  "gpt-4o-mini:age": 0.0006,
+  "gpt-4o-mini:edu": 0.76,
+  "gpt-4o-mini:ses": 0.5643,
+  "gpt-5-mini:age": 0.4594,
+  "gpt-5-mini:edu": 0.8245,
+  "gpt-5-mini:ses": 0.6377
+ },
+ "S4": {
+  "gpt-4o-mini": {
+   "age": {
+    "chance": 0.5,
+    "argmax_matches_target": 0.659,
+    "mean_p_target": 0.6348833333333335
+   },
+   "geo": {
+    "chance": 0.3333333333333333,
+    "argmax_matches_target": 0.343,
+    "mean_p_target": 0.3398208333333333
+   },
+   "edu": {
+    "chance": 0.5,
+    "argmax_matches_target": 0.5916944444444444,
+    "mean_p_target": 0.584338888888889
+   },
+   "ses": {
+    "chance": 0.3333333333333333,
+    "argmax_matches_target": 0.35838888888888887,
+    "mean_p_target": 0.36561611111111114
+   }
+  },
+  "gpt-5-mini": {
+   "age": {
+    "chance": 0.5,
+    "argmax_matches_target": 0.5366388888888889,
+    "mean_p_target": 0.5271277777777778
+   },
+   "geo": {
+    "chance": 0.3333333333333333,
+    "argmax_matches_target": 0.3385,
+    "mean_p_target": 0.3367352777777778
+   },
+   "edu": {
+    "chance": 0.5,
+    "argmax_matches_target": 0.5348888888888889,
+    "mean_p_target": 0.5288250000000001
+   },
+   "ses": {
+    "chance": 0.3333333333333333,
+    "argmax_matches_target": 0.34097222222222223,
+    "mean_p_target": 0.3418769444444445
+   }
+  }
+ }
+}
