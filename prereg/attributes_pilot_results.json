@@ -1,0 +1,2035 @@
+{
+  "n_complaints": 200,
+  "n_guises": 14400,
+  "QC_certainty": {
+    "vocabulary": {
+      "family": "delivery",
+      "mean_norm_entropy": 0.3592465064611207,
+      "within_complaint_sd_E": 0.1125351154856147,
+      "retest_spearman_E": 0.997983636526577,
+      "retest_choice_agree": 0.988
+    },
+    "grammar": {
+      "family": "delivery",
+      "mean_norm_entropy": 0.531418756366935,
+      "within_complaint_sd_E": 0.14059643056722745,
+      "retest_spearman_E": 0.9957574275416028,
+      "retest_choice_agree": 0.982
+    },
+    "formality": {
+      "family": "delivery",
+      "mean_norm_entropy": 0.35850960052817277,
+      "within_complaint_sd_E": 0.29128499768266836,
+      "retest_spearman_E": 0.9988890907785872,
+      "retest_choice_agree": 0.982
+    },
+    "confidence": {
+      "family": "delivery",
+      "mean_norm_entropy": 0.32189306656577393,
+      "within_complaint_sd_E": 0.09988935710973455,
+      "retest_spearman_E": 0.9983598560022777,
+      "retest_choice_agree": 0.99
+    },
+    "politeness": {
+      "family": "delivery",
+      "mean_norm_entropy": 0.3942436257937346,
+      "within_complaint_sd_E": 0.13969752302556643,
+      "retest_spearman_E": 0.9970440557659047,
+      "retest_choice_agree": 0.99
+    },
+    "rudeness": {
+      "family": "delivery",
+      "mean_norm_entropy": 0.31404899624968896,
+      "within_complaint_sd_E": 0.07867378534202042,
+      "retest_spearman_E": 0.9963828177089071,
+      "retest_choice_agree": 0.986
+    },
+    "emotion": {
+      "family": "delivery",
+      "mean_norm_entropy": 0.404593934854127,
+      "within_complaint_sd_E": 0.12360740152384442,
+      "retest_spearman_E": 0.9982480473154626,
+      "retest_choice_agree": 0.99
+    },
+    "entitlement": {
+      "family": "delivery",
+      "mean_norm_entropy": 0.49908505585469554,
+      "within_complaint_sd_E": 0.11900831952552235,
+      "retest_spearman_E": 0.9979733793668345,
+      "retest_choice_agree": 0.97
+    },
+    "coherence": {
+      "family": "structure",
+      "mean_norm_entropy": 0.5028110794311328,
+      "within_complaint_sd_E": 0.06770735340153196,
+      "retest_spearman_E": 0.9959809915748249,
+      "retest_choice_agree": 0.984
+    },
+    "chronology": {
+      "family": "structure",
+      "mean_norm_entropy": 0.48083181344443104,
+      "within_complaint_sd_E": 0.07329694597722353,
+      "retest_spearman_E": 0.9961183736720118,
+      "retest_choice_agree": 0.972
+    },
+    "argument": {
+      "family": "structure",
+      "mean_norm_entropy": 0.5620440674294175,
+      "within_complaint_sd_E": 0.05022139446651904,
+      "retest_spearman_E": 0.9938158720261184,
+      "retest_choice_agree": 0.98
+    },
+    "request_clarity": {
+      "family": "structure",
+      "mean_norm_entropy": 0.4218771298366154,
+      "within_complaint_sd_E": 0.06217126198711637,
+      "retest_spearman_E": 0.9979664186991759,
+      "retest_choice_agree": 0.974
+    },
+    "concision": {
+      "family": "structure",
+      "mean_norm_entropy": 0.6726247135867311,
+      "within_complaint_sd_E": 0.10763768775212991,
+      "retest_spearman_E": 0.9958003405075119,
+      "retest_choice_agree": 0.962
+    },
+    "evidence": {
+      "family": "content",
+      "mean_norm_entropy": 0.4531851293893749,
+      "within_complaint_sd_E": 0.042084871130905886,
+      "retest_spearman_E": 0.9975873146759281,
+      "retest_choice_agree": 0.978
+    },
+    "harm": {
+      "family": "content",
+      "mean_norm_entropy": 0.46963180611158734,
+      "within_complaint_sd_E": 0.053323595756587176,
+      "retest_spearman_E": 0.9975841806852438,
+      "retest_choice_agree": 0.976
+    },
+    "bank_error": {
+      "family": "content",
+      "mean_norm_entropy": 0.509250168453358,
+      "within_complaint_sd_E": 0.06294530270267774,
+      "retest_spearman_E": 0.9976373539622364,
+      "retest_choice_agree": 0.966
+    },
+    "money_demand": {
+      "family": "content",
+      "mean_norm_entropy": 0.1652800305538769,
+      "within_complaint_sd_E": 0.04246774008992135,
+      "retest_spearman_E": 0.9836919999140781,
+      "retest_choice_agree": 0.974
+    },
+    "legal_basis": {
+      "family": "content",
+      "mean_norm_entropy": 0.17108575512518617,
+      "within_complaint_sd_E": 0.04499154338198841,
+      "retest_spearman_E": 0.9939818521717364,
+      "retest_choice_agree": 0.996
+    },
+    "prior_attempts": {
+      "family": "content",
+      "mean_norm_entropy": 0.2903611593016459,
+      "within_complaint_sd_E": 0.06724231811299591,
+      "retest_spearman_E": 0.9975357966889019,
+      "retest_choice_agree": 0.988
+    }
+  },
+  "QA_manipulation": {
+    "gpt-4o-mini": {
+      "vocabulary_E": {
+        "family": "delivery",
+        "eta2_persona": 0.7304361904909862,
+        "age:old-young_std": 1.1146881033088798,
+        "edu:college-high_school_std": 0.9303880844226969,
+        "ses:high-low_std": 0.9730934089763679,
+        "geo:urban-rural_std": 0.12956236825873246
+      },
+      "grammar_E": {
+        "family": "delivery",
+        "eta2_persona": 0.5822444025958724,
+        "age:old-young_std": 1.015716341479606,
+        "edu:college-high_school_std": 0.8555715431600961,
+        "ses:high-low_std": 0.8482286936883063,
+        "geo:urban-rural_std": 0.04742616894132605
+      },
+      "formality_E": {
+        "family": "delivery",
+        "eta2_persona": 0.7104661943089319,
+        "age:old-young_std": 1.3615183284346846,
+        "edu:college-high_school_std": 0.715541481707051,
+        "ses:high-low_std": 0.6799854646429525,
+        "geo:urban-rural_std": 0.08374644769751709
+      },
+      "confidence_E": {
+        "family": "delivery",
+        "eta2_persona": 0.0399284944759791,
+        "age:old-young_std": -0.20603079690364756,
+        "edu:college-high_school_std": -0.012469872538610418,
+        "ses:high-low_std": 0.17039546400902414,
+        "geo:urban-rural_std": 0.2700974391863028
+      },
+      "politeness_E": {
+        "family": "delivery",
+        "eta2_persona": 0.3723379092044137,
+        "age:old-young_std": 0.9538804460874571,
+        "edu:college-high_school_std": 0.5688471128894246,
+        "ses:high-low_std": 0.4776822183521344,
+        "geo:urban-rural_std": -0.1329847075323421
+      },
+      "rudeness_E": {
+        "family": "delivery",
+        "eta2_persona": 0.14337151599887862,
+        "age:old-young_std": -0.6422232829751484,
+        "edu:college-high_school_std": -0.27132487821458234,
+        "ses:high-low_std": -0.1255367729929675,
+        "geo:urban-rural_std": 0.1811070732331151
+      },
+      "emotion_E": {
+        "family": "delivery",
+        "eta2_persona": 0.1298508514701887,
+        "age:old-young_std": -0.5843118274150682,
+        "edu:college-high_school_std": -0.2215965810727633,
+        "ses:high-low_std": -0.26243780588403365,
+        "geo:urban-rural_std": 0.16389188279103306
+      },
+      "entitlement_E": {
+        "family": "delivery",
+        "eta2_persona": 0.07785225277460124,
+        "age:old-young_std": -0.42435126986530186,
+        "edu:college-high_school_std": -0.1521153522716211,
+        "ses:high-low_std": 0.08023064434990995,
+        "geo:urban-rural_std": 0.24008883253411545
+      },
+      "coherence_E": {
+        "family": "structure",
+        "eta2_persona": 0.07841365928292622,
+        "age:old-young_std": 0.3944198724420158,
+        "edu:college-high_school_std": 0.3032994179636914,
+        "ses:high-low_std": 0.2628443888031129,
+        "geo:urban-rural_std": 0.0413880940835574
+      },
+      "chronology_E": {
+        "family": "structure",
+        "eta2_persona": 0.25851176348948873,
+        "age:old-young_std": 0.8073288293486423,
+        "edu:college-high_school_std": 0.44313884810533355,
+        "ses:high-low_std": 0.4290032627854106,
+        "geo:urban-rural_std": -0.00617802303768613
+      },
+      "argument_E": {
+        "family": "structure",
+        "eta2_persona": 0.22135358691982937,
+        "age:old-young_std": 0.5434649653683934,
+        "edu:college-high_school_std": 0.5672578789616705,
+        "ses:high-low_std": 0.5180181541229005,
+        "geo:urban-rural_std": 0.1320071468202619
+      },
+      "request_clarity_E": {
+        "family": "structure",
+        "eta2_persona": 0.00864099804497784,
+        "age:old-young_std": 0.1023736441559067,
+        "edu:college-high_school_std": 0.08909352780781331,
+        "ses:high-low_std": 0.061037457830660086,
+        "geo:urban-rural_std": 0.04297795895069789
+      },
+      "concision_E": {
+        "family": "structure",
+        "eta2_persona": 0.1285295861118943,
+        "age:old-young_std": -0.34123330685134606,
+        "edu:college-high_school_std": -0.20875519550185503,
+        "ses:high-low_std": -0.23252280081996063,
+        "geo:urban-rural_std": 0.046066048964524105
+      },
+      "evidence_E": {
+        "family": "content",
+        "eta2_persona": 0.007571717216933856,
+        "age:old-young_std": 0.08628169276398129,
+        "edu:college-high_school_std": 0.07214188358192439,
+        "ses:high-low_std": 0.06849871846103699,
+        "geo:urban-rural_std": 0.0025430013962628915
+      },
+      "harm_E": {
+        "family": "content",
+        "eta2_persona": 0.017105936251032544,
+        "age:old-young_std": -0.18394145890172905,
+        "edu:college-high_school_std": -0.056840049654807545,
+        "ses:high-low_std": -0.09777237139587554,
+        "geo:urban-rural_std": 0.048324736477452765
+      },
+      "bank_error_E": {
+        "family": "content",
+        "eta2_persona": 0.01627381331972995,
+        "age:old-young_std": -0.10973006665337082,
+        "edu:college-high_school_std": 0.08776495322406258,
+        "ses:high-low_std": 0.15922319723919282,
+        "geo:urban-rural_std": 0.12473558164284942
+      },
+      "money_demand_E": {
+        "family": "content",
+        "eta2_persona": 0.0019387548947991766,
+        "age:old-young_std": 0.00017992293055069504,
+        "edu:college-high_school_std": -0.014429819030174502,
+        "ses:high-low_std": -0.0166788556620594,
+        "geo:urban-rural_std": 0.012846497241327342
+      },
+      "legal_basis_E": {
+        "family": "content",
+        "eta2_persona": 0.017678312155693897,
+        "age:old-young_std": 0.04323980112013895,
+        "edu:college-high_school_std": 0.14153155002168616,
+        "ses:high-low_std": 0.1926512158187081,
+        "geo:urban-rural_std": 0.024328125895619484
+      },
+      "prior_attempts_E": {
+        "family": "content",
+        "eta2_persona": 0.011543204432202445,
+        "age:old-young_std": -0.0925553159877261,
+        "edu:college-high_school_std": -0.08414311782305037,
+        "ses:high-low_std": -0.1627379893691474,
+        "geo:urban-rural_std": -0.0059286974502299255
+      },
+      "obj_sentence_len": {
+        "family": "delivery",
+        "eta2_persona": 0.06418597577614131,
+        "age:old-young_std": 0.31473835466009686,
+        "edu:college-high_school_std": 0.271837235875844,
+        "ses:high-low_std": 0.2955997785097067,
+        "geo:urban-rural_std": -0.06431590399299603
+      },
+      "obj_fk_grade": {
+        "family": "delivery",
+        "eta2_persona": 0.6635699053702355,
+        "age:old-young_std": 0.8904745441877794,
+        "edu:college-high_school_std": 0.9798607808804024,
+        "ses:high-low_std": 1.0179024487626045,
+        "geo:urban-rural_std": 0.2566546208187703
+      },
+      "obj_emotion_abs": {
+        "family": "delivery",
+        "eta2_persona": 0.007345228470536124,
+        "age:old-young_std": 0.07990375880614597,
+        "edu:college-high_school_std": 0.028830015447925107,
+        "ses:high-low_std": 0.010253555600554016,
+        "geo:urban-rural_std": 0.05629554633863122
+      }
+    },
+    "gpt-5-mini": {
+      "vocabulary_E": {
+        "family": "delivery",
+        "eta2_persona": 0.2748108497249328,
+        "age:old-young_std": 0.4506729425926678,
+        "edu:college-high_school_std": 0.7135654924383905,
+        "ses:high-low_std": 0.6521852935757328,
+        "geo:urban-rural_std": 0.09852266421216363
+      },
+      "grammar_E": {
+        "family": "delivery",
+        "eta2_persona": 0.07795263399629049,
+        "age:old-young_std": 0.2608158956336693,
+        "edu:college-high_school_std": 0.3242627538884026,
+        "ses:high-low_std": 0.3719160028373472,
+        "geo:urban-rural_std": 0.03749194447105048
+      },
+      "formality_E": {
+        "family": "delivery",
+        "eta2_persona": 0.30535394307113134,
+        "age:old-young_std": 0.6884296081899807,
+        "edu:college-high_school_std": 0.6373800955976197,
+        "ses:high-low_std": 0.6259285125907899,
+        "geo:urban-rural_std": 0.0485649599836992
+      },
+      "confidence_E": {
+        "family": "delivery",
+        "eta2_persona": 0.018636600967315137,
+        "age:old-young_std": 0.019209045632361595,
+        "edu:college-high_school_std": 0.16320626638377797,
+        "ses:high-low_std": 0.2038665899971315,
+        "geo:urban-rural_std": 0.04369704773905778
+      },
+      "politeness_E": {
+        "family": "delivery",
+        "eta2_persona": 0.09166939877468377,
+        "age:old-young_std": 0.3846971633697985,
+        "edu:college-high_school_std": 0.3657813668296958,
+        "ses:high-low_std": 0.18518109010434236,
+        "geo:urban-rural_std": -0.04249217186629086
+      },
+      "rudeness_E": {
+        "family": "delivery",
+        "eta2_persona": 0.03060753668592012,
+        "age:old-young_std": -0.17742250374417076,
+        "edu:college-high_school_std": -0.19935189779520773,
+        "ses:high-low_std": -0.18400132195948182,
+        "geo:urban-rural_std": 0.008531904872981548
+      },
+      "emotion_E": {
+        "family": "delivery",
+        "eta2_persona": 0.09497244192359214,
+        "age:old-young_std": -0.3226735337922808,
+        "edu:college-high_school_std": -0.3810338845961271,
+        "ses:high-low_std": -0.3759093184130101,
+        "geo:urban-rural_std": -0.0138437916548766
+      },
+      "entitlement_E": {
+        "family": "delivery",
+        "eta2_persona": 0.01073345999254453,
+        "age:old-young_std": -0.0818484667724219,
+        "edu:college-high_school_std": -0.026259837057865863,
+        "ses:high-low_std": 0.08529380371827207,
+        "geo:urban-rural_std": 0.04877033685112988
+      },
+      "coherence_E": {
+        "family": "structure",
+        "eta2_persona": 0.04670301430712067,
+        "age:old-young_std": 0.22898869621311763,
+        "edu:college-high_school_std": 0.22268713098028964,
+        "ses:high-low_std": 0.278271391986017,
+        "geo:urban-rural_std": -0.004869391316276279
+      },
+      "chronology_E": {
+        "family": "structure",
+        "eta2_persona": 0.05809470821384778,
+        "age:old-young_std": 0.28822589209357774,
+        "edu:college-high_school_std": 0.2575455684588068,
+        "ses:high-low_std": 0.2743730843687524,
+        "geo:urban-rural_std": -0.03587148105586362
+      },
+      "argument_E": {
+        "family": "structure",
+        "eta2_persona": 0.04932958104238642,
+        "age:old-young_std": 0.13923536026772904,
+        "edu:college-high_school_std": 0.2967911626759484,
+        "ses:high-low_std": 0.26440323817758143,
+        "geo:urban-rural_std": 0.001243172859533005
+      },
+      "request_clarity_E": {
+        "family": "structure",
+        "eta2_persona": 0.005977736680285242,
+        "age:old-young_std": 0.03735756311962466,
+        "edu:college-high_school_std": 0.0230238920060708,
+        "ses:high-low_std": -0.0009348046378403825,
+        "geo:urban-rural_std": -0.014489471886527258
+      },
+      "concision_E": {
+        "family": "structure",
+        "eta2_persona": 0.015027894388934163,
+        "age:old-young_std": 0.09996170626590514,
+        "edu:college-high_school_std": 0.11541052186034578,
+        "ses:high-low_std": 0.1801671523748447,
+        "geo:urban-rural_std": 0.004690558622172663
+      },
+      "evidence_E": {
+        "family": "content",
+        "eta2_persona": 0.0064708450651505935,
+        "age:old-young_std": -0.05600515363838495,
+        "edu:college-high_school_std": 0.04308532416876814,
+        "ses:high-low_std": 0.07457740850096013,
+        "geo:urban-rural_std": 0.007526954222254552
+      },
+      "harm_E": {
+        "family": "content",
+        "eta2_persona": 0.013287322111673727,
+        "age:old-young_std": -0.16492346763408247,
+        "edu:college-high_school_std": -0.060978093028808536,
+        "ses:high-low_std": -0.09994563323221416,
+        "geo:urban-rural_std": -0.009484416669052732
+      },
+      "bank_error_E": {
+        "family": "content",
+        "eta2_persona": 0.003742209128750786,
+        "age:old-young_std": -0.012155430838579413,
+        "edu:college-high_school_std": -0.0033637670245124417,
+        "ses:high-low_std": 0.042716018748781816,
+        "geo:urban-rural_std": -0.02522825268384423
+      },
+      "money_demand_E": {
+        "family": "content",
+        "eta2_persona": 0.00749115552172731,
+        "age:old-young_std": -0.044160626120285894,
+        "edu:college-high_school_std": -0.022938991901370696,
+        "ses:high-low_std": -0.025300358714747055,
+        "geo:urban-rural_std": -0.03486849437414224
+      },
+      "legal_basis_E": {
+        "family": "content",
+        "eta2_persona": 0.004925583573063658,
+        "age:old-young_std": 0.01084514587283594,
+        "edu:college-high_school_std": 0.004248613847090244,
+        "ses:high-low_std": 0.02649793373053731,
+        "geo:urban-rural_std": -0.006708337653300571
+      },
+      "prior_attempts_E": {
+        "family": "content",
+        "eta2_persona": 0.005931466586144667,
+        "age:old-young_std": -0.04138313569259455,
+        "edu:college-high_school_std": 0.05581481043487028,
+        "ses:high-low_std": 0.025024153960164146,
+        "geo:urban-rural_std": 0.06702402788960812
+      },
+      "obj_sentence_len": {
+        "family": "delivery",
+        "eta2_persona": 0.032451585524643084,
+        "age:old-young_std": -0.0871258272928018,
+        "edu:college-high_school_std": 0.2665686961970493,
+        "ses:high-low_std": 0.1589718001303022,
+        "geo:urban-rural_std": 0.005318812346353464
+      },
+      "obj_fk_grade": {
+        "family": "delivery",
+        "eta2_persona": 0.1620263500928504,
+        "age:old-young_std": 0.14441082160559887,
+        "edu:college-high_school_std": 0.6265429244435708,
+        "ses:high-low_std": 0.4713513707499595,
+        "geo:urban-rural_std": 0.11765869691301775
+      },
+      "obj_emotion_abs": {
+        "family": "delivery",
+        "eta2_persona": 0.005174664828648377,
+        "age:old-young_std": -0.006730339002573787,
+        "edu:college-high_school_std": -0.004385773048454549,
+        "ses:high-low_std": 0.004890059366516343,
+        "geo:urban-rural_std": -0.00338765718548142
+      }
+    }
+  },
+  "QB_persona_inference": {
+    "gpt-4o-mini": {
+      "jev_age_old": {
+        "r2_within": 0.7030657898139182,
+        "r2_by_family_alone": {
+          "delivery": 0.685339615468538,
+          "structure": 0.32856919578342314,
+          "content": 0.010934201500154006
+        },
+        "top_std_betas": {
+          "formality_E": 0.10122239304673042,
+          "vocabulary_E": 0.053772348251479106,
+          "politeness_E": 0.028722079488221624,
+          "concision_E": -0.026288739261629463,
+          "obj_fk_grade": -0.023236260750347078,
+          "grammar_E": -0.01172058188364019
+        }
+      },
+      "jev_edu_college": {
+        "r2_within": 0.7259528463716096,
+        "r2_by_family_alone": {
+          "delivery": 0.7196010229452782,
+          "structure": 0.3445368518821109,
+          "content": 0.03101391508342244
+        },
+        "top_std_betas": {
+          "grammar_E": 0.061440683240686085,
+          "formality_E": 0.0556880952559324,
+          "vocabulary_E": 0.05240282702991974,
+          "obj_fk_grade": 0.014154574002898546,
+          "concision_E": 0.012403573596743335,
+          "obj_sentence_len": 0.009009036523681917
+        }
+      },
+      "jev_ses": {
+        "r2_within": 0.7853891456579238,
+        "r2_by_family_alone": {
+          "delivery": 0.7796232044537026,
+          "structure": 0.40451221102817614,
+          "content": 0.036444648874179975
+        },
+        "top_std_betas": {
+          "vocabulary_E": 0.06989913886132544,
+          "grammar_E": 0.03455494842367444,
+          "obj_fk_grade": 0.03311237378459214,
+          "formality_E": 0.014328236651533119,
+          "politeness_E": 0.012076678319539041,
+          "obj_sentence_len": -0.010199473635098048
+        }
+      },
+      "gpt_age_old": {
+        "r2_within": 0.014061868272363776,
+        "r2_by_family_alone": {
+          "delivery": 0.008812064451465984,
+          "structure": 0.00601353992278153,
+          "content": 0.002808315626288471
+        },
+        "top_std_betas": {
+          "bank_error_E": -0.0033316848559726622,
+          "formality_E": 0.002933723748009122,
+          "request_clarity_E": 0.002358344687179709,
+          "money_demand_E": -0.002312768740691269,
+          "obj_fk_grade": 0.0021805012332059776,
+          "grammar_E": 0.0016453348401556092
+        }
+      },
+      "gpt_edu_college": {
+        "r2_within": 0.07501830817237631,
+        "r2_by_family_alone": {
+          "delivery": 0.06991208394779891,
+          "structure": 0.029384977058784734,
+          "content": 0.007768406981841558
+        },
+        "top_std_betas": {
+          "vocabulary_E": 0.041948153151949975,
+          "grammar_E": 0.024077825768395473,
+          "obj_fk_grade": -0.014381178190936601,
+          "obj_sentence_len": 0.010759719606278495,
+          "formality_E": -0.010083960498916649,
+          "politeness_E": -0.008690355591467726
+        }
+      },
+      "gpt_ses": {
+        "r2_within": 0.028877401459648677,
+        "r2_by_family_alone": {
+          "delivery": 0.020586355587818295,
+          "structure": 0.01313004856176403,
+          "content": 0.00833462958381559
+        },
+        "top_std_betas": {
+          "vocabulary_E": 0.004262130588815003,
+          "grammar_E": 0.004148397327968593,
+          "confidence_E": 0.0031792449291055936,
+          "coherence_E": 0.002759827206051003,
+          "obj_fk_grade": -0.0027219692342711713,
+          "harm_E": -0.002086238990299483
+        }
+      },
+      "jev_age_ambiguity": {
+        "r2_within": 0.42785820722782875,
+        "r2_by_family_alone": {
+          "delivery": 0.41613644734634003,
+          "structure": 0.15686311648093632,
+          "content": 0.010677028899914842
+        },
+        "top_std_betas": {
+          "formality_E": 0.12854293738021877,
+          "obj_fk_grade": -0.040725082415119185,
+          "vocabulary_E": 0.037375705386903414,
+          "coherence_E": -0.023279171281502403,
+          "politeness_E": 0.022075243425116294,
+          "obj_sentence_len": 0.018866685406803682
+        }
+      },
+      "jev_geo_ambiguity": {
+        "r2_within": 0.1421622013862287,
+        "r2_by_family_alone": {
+          "delivery": 0.12896959838570432,
+          "structure": 0.028594009232481676,
+          "content": 0.02250189997197949
+        },
+        "top_std_betas": {
+          "grammar_E": -0.018713926149351218,
+          "formality_E": 0.016214635071416288,
+          "rudeness_E": 0.0056343061534520535,
+          "vocabulary_E": 0.004372240400345599,
+          "obj_fk_grade": 0.004328501791777073,
+          "obj_sentence_len": -0.004003850646901539
+        }
+      },
+      "jev_edu_ambiguity": {
+        "r2_within": 0.6815769956893948,
+        "r2_by_family_alone": {
+          "delivery": 0.6728780637656488,
+          "structure": 0.3130496993438906,
+          "content": 0.020147518135529063
+        },
+        "top_std_betas": {
+          "formality_E": -0.15741521866227512,
+          "obj_fk_grade": -0.07858710383058698,
+          "grammar_E": -0.029960439544092998,
+          "politeness_E": -0.026909189151077532,
+          "vocabulary_E": 0.025436208476507006,
+          "obj_sentence_len": 0.01988273295713077
+        }
+      },
+      "jev_ses_ambiguity": {
+        "r2_within": 0.1454895088259054,
+        "r2_by_family_alone": {
+          "delivery": 0.11398054886275688,
+          "structure": 0.06924330387118405,
+          "content": 0.003150566925372522
+        },
+        "top_std_betas": {
+          "vocabulary_E": 0.04798871634355903,
+          "grammar_E": -0.027133110448575415,
+          "concision_E": -0.01896217308099284,
+          "chronology_E": -0.010071178257497003,
+          "coherence_E": 0.009113634404130476,
+          "obj_sentence_len": -0.008809371329761376
+        }
+      }
+    },
+    "gpt-5-mini": {
+      "jev_age_old": {
+        "r2_within": 0.29701686976083164,
+        "r2_by_family_alone": {
+          "delivery": 0.27489011478347436,
+          "structure": 0.021187054701705565,
+          "content": 0.011430823718306726
+        },
+        "top_std_betas": {
+          "formality_E": 0.025447323748820555,
+          "politeness_E": 0.018867996641117445,
+          "vocabulary_E": 0.015460632216138945,
+          "concision_E": -0.011885461083869505,
+          "rudeness_E": 0.0071542025158725904,
+          "confidence_E": -0.0047274572773997455
+        }
+      },
+      "jev_edu_college": {
+        "r2_within": 0.6663099765386022,
+        "r2_by_family_alone": {
+          "delivery": 0.6476054067314885,
+          "structure": 0.3171946679878105,
+          "content": 0.02015895430449899
+        },
+        "top_std_betas": {
+          "formality_E": 0.030025583030234282,
+          "vocabulary_E": 0.0283749051679173,
+          "grammar_E": 0.021778422586746473,
+          "entitlement_E": -0.0088139452789369,
+          "concision_E": 0.007656049451858256,
+          "politeness_E": -0.005542612778587962
+        }
+      },
+      "jev_ses": {
+        "r2_within": 0.6063764811010559,
+        "r2_by_family_alone": {
+          "delivery": 0.593922305218413,
+          "structure": 0.27093153188263974,
+          "content": 0.018393048585223504
+        },
+        "top_std_betas": {
+          "vocabulary_E": 0.034774259436125686,
+          "grammar_E": 0.021356213087449685,
+          "formality_E": 0.008910424231430803,
+          "coherence_E": 0.005862477749531365,
+          "emotion_E": -0.005702188699163228,
+          "politeness_E": 0.005678277829403322
+        }
+      },
+      "gpt_age_old": {
+        "r2_within": 0.08261823594361017,
+        "r2_by_family_alone": {
+          "delivery": 0.0807902244401365,
+          "structure": 0.009900015610514012,
+          "content": 0.001556650005574589
+        },
+        "top_std_betas": {
+          "formality_E": 0.0663254707179476,
+          "vocabulary_E": 0.028891979537909097,
+          "obj_fk_grade": -0.01703642924769116,
+          "obj_sentence_len": 0.016617299764715796,
+          "rudeness_E": 0.01289470182999343,
+          "confidence_E": -0.010632782433255696
+        }
+      },
+      "gpt_edu_college": {
+        "r2_within": 0.09828243819443061,
+        "r2_by_family_alone": {
+          "delivery": 0.08932747400672558,
+          "structure": 0.054065690260351906,
+          "content": 0.005971477581473095
+        },
+        "top_std_betas": {
+          "vocabulary_E": 0.03061298558664233,
+          "grammar_E": 0.01789251652678884,
+          "chronology_E": 0.01573869296864191,
+          "obj_fk_grade": -0.013819453513482467,
+          "formality_E": 0.013650764033010269,
+          "obj_sentence_len": 0.012126024146911147
+        }
+      },
+      "gpt_ses": {
+        "r2_within": 0.011390798545525382,
+        "r2_by_family_alone": {
+          "delivery": 0.010286929258773503,
+          "structure": 0.00597928143473192,
+          "content": 0.0009080271098589332
+        },
+        "top_std_betas": {
+          "vocabulary_E": 0.0034148938814612963,
+          "grammar_E": 0.0018411187295814548,
+          "chronology_E": 0.001286042408970221,
+          "obj_fk_grade": -0.0011497550066604004,
+          "concision_E": 0.0010284277757991213,
+          "politeness_E": -0.0008771720785771823
+        }
+      },
+      "jev_age_ambiguity": {
+        "r2_within": 0.15646635021081023,
+        "r2_by_family_alone": {
+          "delivery": 0.15261007954924122,
+          "structure": 0.008342284377773401,
+          "content": 0.004021597265998822
+        },
+        "top_std_betas": {
+          "formality_E": 0.030029433472301924,
+          "vocabulary_E": 0.010464889150268337,
+          "politeness_E": 0.009754918115202581,
+          "rudeness_E": 0.009037305148608597,
+          "emotion_E": -0.008524348668196527,
+          "obj_fk_grade": -0.004508874218095999
+        }
+      },
+      "jev_geo_ambiguity": {
+        "r2_within": 0.05164114643167095,
+        "r2_by_family_alone": {
+          "delivery": 0.03706765018558744,
+          "structure": 0.031445561888302054,
+          "content": 0.007249069853342949
+        },
+        "top_std_betas": {
+          "grammar_E": -0.00446305129750459,
+          "coherence_E": -0.0029277389729761407,
+          "politeness_E": -0.0028375893459784566,
+          "obj_fk_grade": 0.0024421724700996756,
+          "bank_error_E": -0.00238249901258839,
+          "confidence_E": 0.0019311867304245653
+        }
+      },
+      "jev_edu_ambiguity": {
+        "r2_within": 0.19509816936556967,
+        "r2_by_family_alone": {
+          "delivery": 0.17376709153037329,
+          "structure": 0.04817056309564627,
+          "content": 0.0042649173001416685
+        },
+        "top_std_betas": {
+          "obj_fk_grade": -0.03605138091320925,
+          "formality_E": -0.03349791879630243,
+          "grammar_E": -0.027719264940231962,
+          "vocabulary_E": 0.02196196461824325,
+          "obj_sentence_len": 0.019211028295582206,
+          "argument_E": -0.01870858076664576
+        }
+      },
+      "jev_ses_ambiguity": {
+        "r2_within": 0.11587330672830898,
+        "r2_by_family_alone": {
+          "delivery": 0.10237577058912428,
+          "structure": 0.008358696208158434,
+          "content": 0.013526749819400052
+        },
+        "top_std_betas": {
+          "vocabulary_E": 0.026591084495639676,
+          "formality_E": -0.010125994575726754,
+          "grammar_E": -0.008979901140772488,
+          "legal_basis_E": 0.004412143541677628,
+          "emotion_E": -0.004279328899756435,
+          "coherence_E": -0.0039457929748864225
+        }
+      }
+    }
+  },
+  "QD_outcomes": {
+    "gpt-4o-mini": {
+      "gpt_tier": {
+        "r2_within": 0.030918288453943177,
+        "r2_by_family_alone": {
+          "delivery": 0.01787225261666625,
+          "structure": 0.01710432140563012,
+          "content": 0.009879589063302552
+        },
+        "top_std_betas": {
+          "grammar_E": 0.025478473892578853,
+          "politeness_E": 0.024244979726536234,
+          "bank_error_E": 0.02315569029646233,
+          "argument_E": 0.01847826050048911,
+          "chronology_E": -0.013847472966936265,
+          "formality_E": -0.013139890554449557,
+          "entitlement_E": 0.012332128786838918,
+          "request_clarity_E": 0.010546921328210864
+        },
+        "decomposition": {
+          "age": {
+            "contrast": "old-young",
+            "gap": 0.007777777777777772,
+            "gap_ci95": [
+              -0.016812500000000015,
+              0.0315347222222222
+            ],
+            "explained": 0.021768429265455084,
+            "explained_ci95": [
+              0.004544762190612707,
+              0.0396318068506687
+            ],
+            "share_explained": 2.7987980484156556,
+            "fam_delivery": 0.022711675532420726,
+            "fam_structure": 0.0020984351063046257,
+            "fam_content": -0.0030416813732702702,
+            "fam_delivery_ci95": [
+              -0.003013120071213772,
+              0.047766004714929734
+            ],
+            "fam_structure_ci95": [
+              -0.011828293727074852,
+              0.015432560708296643
+            ],
+            "fam_content_ci95": [
+              -0.007416893052188135,
+              0.0010861419339985477
+            ],
+            "top_contrib": {
+              "grammar_E": 0.025880699621870455,
+              "politeness_E": 0.023128418272860208,
+              "formality_E": -0.017891444328064547,
+              "chronology_E": -0.011180240572389302,
+              "argument_E": 0.01004298465667445,
+              "obj_fk_grade": 0.0091066138417693
+            }
+          },
+          "edu": {
+            "contrast": "college-high_school",
+            "gap": 0.04944444444444451,
+            "gap_ci95": [
+              0.031083333333333314,
+              0.06945833333333329
+            ],
+            "explained": 0.0352980311271332,
+            "explained_ci95": [
+              0.021268414944745306,
+              0.05163201230377965
+            ],
+            "share_explained": 0.7138927643689851,
+            "fam_delivery": 0.027303946972972705,
+            "fam_structure": 0.006698915511239455,
+            "fam_content": 0.0012951686429210371,
+            "fam_delivery_ci95": [
+              0.008877839568370518,
+              0.049306463926790486
+            ],
+            "fam_structure_ci95": [
+              -0.0036517718569594746,
+              0.016337710803802523
+            ],
+            "fam_content_ci95": [
+              -0.0012919730777218492,
+              0.004278094502130344
+            ],
+            "top_contrib": {
+              "grammar_E": 0.021800171178983887,
+              "politeness_E": 0.013792644575302755,
+              "argument_E": 0.010482666846662431,
+              "obj_fk_grade": 0.010020739849797042,
+              "formality_E": -0.009402789750983997,
+              "chronology_E": -0.006136779399772423
+            }
+          },
+          "ses": {
+            "contrast": "high-low",
+            "gap": 0.04249999999999998,
+            "gap_ci95": [
+              0.025416666666666754,
+              0.06271874999999996
+            ],
+            "explained": 0.03480914699078844,
+            "explained_ci95": [
+              0.01869666137252161,
+              0.05189145288099095
+            ],
+            "share_explained": 0.8190387527244342,
+            "fam_delivery": 0.0237867955390327,
+            "fam_structure": 0.007716185709853855,
+            "fam_content": 0.0033061657419018804,
+            "fam_delivery_ci95": [
+              0.00473021374573138,
+              0.046223321015145376
+            ],
+            "fam_structure_ci95": [
+              -0.0036549234604606085,
+              0.01887617751720112
+            ],
+            "fam_content_ci95": [
+              -0.0010707801307780972,
+              0.007357803178147866
+            ],
+            "top_contrib": {
+              "grammar_E": 0.018706204561796204,
+              "obj_fk_grade": 0.01228379889585724,
+              "politeness_E": 0.010979612682270566,
+              "argument_E": 0.010628948498221215,
+              "vocabulary_E": -0.007584793906755301,
+              "formality_E": -0.006301890400850697
+            }
+          }
+        }
+      },
+      "gpt_monetary": {
+        "r2_within": 0.011487947547396349,
+        "r2_by_family_alone": {
+          "delivery": 0.007250056420686102,
+          "structure": 0.004370485921784351,
+          "content": 0.0030797308282209945
+        },
+        "top_std_betas": {
+          "politeness_E": 0.00839598725173263,
+          "entitlement_E": 0.0072526457201255055,
+          "grammar_E": 0.00683333113368032,
+          "chronology_E": -0.005947173535561452,
+          "emotion_E": 0.005216194202951822,
+          "money_demand_E": 0.005143466889604229,
+          "request_clarity_E": -0.004757745531283987,
+          "bank_error_E": 0.004334226545883785
+        },
+        "decomposition": {
+          "age": {
+            "contrast": "old-young",
+            "gap": 0.001944444444444443,
+            "gap_ci95": [
+              -0.010701388888888889,
+              0.01403472222222222
+            ],
+            "explained": 0.006992415669037094,
+            "explained_ci95": [
+              -0.0022271589914630357,
+              0.016413700653212793
+            ],
+            "share_explained": 3.5960994869333653,
+            "fam_delivery": 0.008849201396471195,
+            "fam_structure": -0.0019411276642019436,
+            "fam_content": 8.43419367678419e-05,
+            "fam_delivery_ci95": [
+              -0.00298062688015084,
+              0.02015310926796866
+            ],
+            "fam_structure_ci95": [
+              -0.00785934537767429,
+              0.004312888912275141
+            ],
+            "fam_content_ci95": [
+              -0.0014727068461487314,
+              0.001890991014087913
+            ],
+            "top_contrib": {
+              "politeness_E": 0.00800932428741679,
+              "grammar_E": 0.006941208144302065,
+              "chronology_E": -0.004801658108456671,
+              "entitlement_E": -0.0030778831705273514,
+              "emotion_E": -0.003048095647537799,
+              "formality_E": -0.002674563443521728
+            }
+          },
+          "edu": {
+            "contrast": "college-high_school",
+            "gap": 0.013611111111111115,
+            "gap_ci95": [
+              0.004722222222222225,
+              0.026256944444444447
+            ],
+            "explained": 0.010053796436016435,
+            "explained_ci95": [
+              0.0043262352576938145,
+              0.017251364430465724
+            ],
+            "share_explained": 0.7386462687685542,
+            "fam_delivery": 0.009879450642543511,
+            "fam_structure": -0.00016634601344052907,
+            "fam_content": 0.00034069180691345344,
+            "fam_delivery_ci95": [
+              0.0021492070545507313,
+              0.018728060789750332
+            ],
+            "fam_structure_ci95": [
+              -0.004332492287025187,
+              0.003631655582275878
+            ],
+            "fam_content_ci95": [
+              -0.00047690908338319116,
+              0.0016011067717770027
+            ],
+            "top_contrib": {
+              "grammar_E": 0.0058468097055177646,
+              "politeness_E": 0.0047763648115232045,
+              "chronology_E": -0.0026356066646274195,
+              "obj_fk_grade": 0.002632732855794614,
+              "argument_E": 0.0014988368558464702,
+              "formality_E": -0.0014056080254881836
+            }
+          },
+          "ses": {
+            "contrast": "high-low",
+            "gap": 0.01833333333333334,
+            "gap_ci95": [
+              0.00708333333333333,
+              0.029385416666666664
+            ],
+            "explained": 0.011581742182044424,
+            "explained_ci95": [
+              0.004182498127904217,
+              0.019176239237834593
+            ],
+            "share_explained": 0.6317313917478774,
+            "fam_delivery": 0.011503482509076362,
+            "fam_structure": -0.0009639344765723549,
+            "fam_content": 0.0010421941495404165,
+            "fam_delivery_ci95": [
+              0.0017539653124772313,
+              0.021197642606478936
+            ],
+            "fam_structure_ci95": [
+              -0.005903268757874783,
+              0.0038984557377672873
+            ],
+            "fam_content_ci95": [
+              -0.0006734239428396597,
+              0.002900078388626565
+            ],
+            "top_contrib": {
+              "grammar_E": 0.005329666787728737,
+              "politeness_E": 0.004551357165994167,
+              "chronology_E": -0.003499389461459081,
+              "obj_fk_grade": 0.0028544092958168615,
+              "emotion_E": -0.001687494234634436,
+              "argument_E": 0.0016349665695706442
+            }
+          }
+        }
+      },
+      "e_tier": {
+        "r2_within": 0.2548428956862123,
+        "r2_by_family_alone": {
+          "delivery": 0.042930445059764066,
+          "structure": 0.08964941796618575,
+          "content": 0.19498008336934958
+        },
+        "top_std_betas": {
+          "bank_error_E": 0.035259308809920974,
+          "coherence_E": 0.010698660096666233,
+          "argument_E": 0.00883984038956876,
+          "entitlement_E": -0.007893260732826392,
+          "emotion_E": -0.005609694355684396,
+          "legal_basis_E": -0.0048100279127959765,
+          "evidence_E": 0.004593077243922094,
+          "concision_E": 0.004223596515122492
+        },
+        "decomposition": {
+          "age": {
+            "contrast": "old-young",
+            "gap": 0.01443888888888889,
+            "gap_ci95": [
+              0.005125208333333275,
+              0.024141666666666676
+            ],
+            "explained": 0.009692001716336222,
+            "explained_ci95": [
+              0.0016928323712466645,
+              0.01800605410408065
+            ],
+            "share_explained": 0.6712429045557983,
+            "fam_delivery": 0.009055668031602125,
+            "fam_structure": 0.004898622500332783,
+            "fam_content": -0.004262288815598686,
+            "fam_delivery_ci95": [
+              0.00077585304454043,
+              0.017064418448799308
+            ],
+            "fam_structure_ci95": [
+              -0.000667578722063052,
+              0.011364742627181826
+            ],
+            "fam_content_ci95": [
+              -0.00812110017972678,
+              2.0145870208048576e-05
+            ],
+            "top_contrib": {
+              "argument_E": 0.004804477207015252,
+              "coherence_E": 0.004220057220333146,
+              "formality_E": 0.00387032617039056,
+              "bank_error_E": -0.0038692750148486316,
+              "entitlement_E": 0.003349747844808602,
+              "emotion_E": 0.0032780384096709396
+            }
+          },
+          "edu": {
+            "contrast": "college-high_school",
+            "gap": 0.010361111111111154,
+            "gap_ci95": [
+              0.0035277777777778232,
+              0.017475902777777837
+            ],
+            "explained": 0.011292071932279449,
+            "explained_ci95": [
+              0.005416457959419264,
+              0.017786224856793972
+            ],
+            "share_explained": 1.0898514465470737,
+            "fam_delivery": 0.0028402797858517576,
+            "fam_structure": 0.00592441041833913,
+            "fam_content": 0.0025273817280885625,
+            "fam_delivery_ci95": [
+              -0.003040762653164118,
+              0.009460022619547086
+            ],
+            "fam_structure_ci95": [
+              0.002175843542651179,
+              0.010116902253008733
+            ],
+            "fam_content_ci95": [
+              -0.00033740506091191086,
+              0.0056985456125901515
+            ],
+            "top_contrib": {
+              "argument_E": 0.005014817373045865,
+              "coherence_E": 0.0032451227438817024,
+              "bank_error_E": 0.003094746508830149,
+              "obj_fk_grade": -0.00290592429382273,
+              "formality_E": 0.002034037195690745,
+              "vocabulary_E": 0.0015955141173948093
+            }
+          },
+          "ses": {
+            "contrast": "high-low",
+            "gap": 0.011545833333333255,
+            "gap_ci95": [
+              0.003112291666666739,
+              0.020211875000000018
+            ],
+            "explained": 0.009685308515575683,
+            "explained_ci95": [
+              0.0032368577510674865,
+              0.016599434390652184
+            ],
+            "share_explained": 0.8388574679675855,
+            "fam_delivery": 0.00045965932966392974,
+            "fam_structure": 0.0046510343252741,
+            "fam_content": 0.0045746148606376534,
+            "fam_delivery_ci95": [
+              -0.006287557218263099,
+              0.0075240374177516075
+            ],
+            "fam_structure_ci95": [
+              0.0006067692858295959,
+              0.009132318948248262
+            ],
+            "fam_content_ci95": [
+              0.0008876714203959262,
+              0.008071163706882113
+            ],
+            "top_contrib": {
+              "bank_error_E": 0.005742636601953716,
+              "argument_E": 0.004530533763945797,
+              "obj_fk_grade": -0.00441551082877856,
+              "formality_E": 0.0032116934737017855,
+              "coherence_E": 0.0026174825871460162,
+              "chronology_E": -0.001364217850311366
+            }
+          }
+        }
+      }
+    },
+    "gpt-5-mini": {
+      "gpt_tier": {
+        "r2_within": 0.00483762261284737,
+        "r2_by_family_alone": {
+          "delivery": 0.0019895556287328198,
+          "structure": 0.00158272602457743,
+          "content": 0.000987016867327828
+        },
+        "top_std_betas": {
+          "chronology_E": 0.012370610916575828,
+          "obj_fk_grade": 0.011737910933246444,
+          "obj_sentence_len": -0.010572108963101333,
+          "confidence_E": 0.009853384098217753,
+          "concision_E": -0.008207085014959996,
+          "rudeness_E": -0.008193283349805056,
+          "argument_E": -0.007901383542467753,
+          "politeness_E": 0.006829763922137846
+        },
+        "decomposition": {
+          "age": {
+            "contrast": "old-young",
+            "gap": 0.005833333333333357,
+            "gap_ci95": [
+              -0.009166666666666656,
+              0.020013888888888838
+            ],
+            "explained": 0.0017937511271400141,
+            "explained_ci95": [
+              -0.004788031411452017,
+              0.008457315501264174
+            ],
+            "share_explained": 0.3075001932240012,
+            "fam_delivery": 8.0810521069716e-05,
+            "fam_structure": 0.0031290874961851173,
+            "fam_content": -0.0014161468901148194,
+            "fam_delivery_ci95": [
+              -0.007067825758031847,
+              0.007205353201611863
+            ],
+            "fam_structure_ci95": [
+              0.0002949911804507533,
+              0.005832439515025584
+            ],
+            "fam_content_ci95": [
+              -0.003231077557327825,
+              0.00012474126986498828
+            ],
+            "top_contrib": {
+              "chronology_E": 0.0035657779992433946,
+              "politeness_E": 0.0026275732840349815,
+              "vocabulary_E": -0.0025425960793420454,
+              "formality_E": -0.002376456900171398,
+              "obj_fk_grade": 0.0016951990880502124,
+              "rudeness_E": 0.001453773805827819
+            }
+          },
+          "edu": {
+            "contrast": "college-high_school",
+            "gap": -0.007499999999999951,
+            "gap_ci95": [
+              -0.021944444444444433,
+              0.007222222222222241
+            ],
+            "explained": 0.002433502173522667,
+            "explained_ci95": [
+              -0.005423610561522304,
+              0.01036486439369912
+            ],
+            "share_explained": -0.32446695646969104,
+            "fam_delivery": 0.0016847702464346777,
+            "fam_structure": 0.0013006826226839513,
+            "fam_content": -0.0005519506955959623,
+            "fam_delivery_ci95": [
+              -0.007375175052051431,
+              0.009547935401995354
+            ],
+            "fam_structure_ci95": [
+              -0.0022625987324263563,
+              0.004994038819766317
+            ],
+            "fam_content_ci95": [
+              -0.0018740762735560141,
+              0.00045655395088052986
+            ],
+            "top_contrib": {
+              "obj_fk_grade": 0.007354815811808084,
+              "vocabulary_E": -0.004025777125624926,
+              "chronology_E": 0.003186217293465435,
+              "obj_sentence_len": -0.002818389030603886,
+              "politeness_E": 0.002498373886774961,
+              "argument_E": -0.002345223676728277
+            }
+          },
+          "ses": {
+            "contrast": "high-low",
+            "gap": 0.006249999999999978,
+            "gap_ci95": [
+              -0.010833333333333361,
+              0.02416666666666667
+            ],
+            "explained": 0.0023781973370191854,
+            "explained_ci95": [
+              -0.005036925191019215,
+              0.010175297503666388
+            ],
+            "share_explained": 0.380511573923071,
+            "fam_delivery": -0.0010512044711112978,
+            "fam_structure": 0.004535861101161605,
+            "fam_content": -0.001106459293031121,
+            "fam_delivery_ci95": [
+              -0.009414473477883833,
+              0.007610954459346966
+            ],
+            "fam_structure_ci95": [
+              -1.2017145255275056e-05,
+              0.009249441292718236
+            ],
+            "fam_content_ci95": [
+              -0.0033490743978223493,
+              0.0006703010753719083
+            ],
+            "top_contrib": {
+              "vocabulary_E": -0.005661535120149418,
+              "obj_fk_grade": 0.005043858354291576,
+              "chronology_E": 0.002935982641119889,
+              "emotion_E": -0.0029212943280538467,
+              "formality_E": 0.002072059674981821,
+              "coherence_E": 0.001826240267795092
+            }
+          }
+        }
+      },
+      "gpt_monetary": {
+        "r2_within": 0.00263930710195448,
+        "r2_by_family_alone": {
+          "delivery": 0.0014101812763324117,
+          "structure": 0.0005201607400118213,
+          "content": 0.0007620998940655044
+        },
+        "top_std_betas": {
+          "confidence_E": 0.0055161847642031595,
+          "chronology_E": 0.0043970440190618425,
+          "rudeness_E": -0.003503832103743376,
+          "concision_E": -0.0034498243114973208,
+          "legal_basis_E": 0.0029531214475853893,
+          "obj_emotion_abs": -0.0028836571629913934,
+          "harm_E": 0.0024499713939552113,
+          "politeness_E": -0.0017151643019636745
+        },
+        "decomposition": {
+          "age": {
+            "contrast": "old-young",
+            "gap": -0.001944444444444443,
+            "gap_ci95": [
+              -0.009590277777777776,
+              0.005145833333333312
+            ],
+            "explained": 0.00017879509549377298,
+            "explained_ci95": [
+              -0.002985696087955149,
+              0.0036130889555855685
+            ],
+            "share_explained": -0.0919517633967976,
+            "fam_delivery": -0.00013586216989518773,
+            "fam_structure": 0.0007701917640412862,
+            "fam_content": -0.0004555344986523255,
+            "fam_delivery_ci95": [
+              -0.004097600381850859,
+              0.0036287717632892303
+            ],
+            "fam_structure_ci95": [
+              -0.00046509603011207025,
+              0.002168149126802402
+            ],
+            "fam_content_ci95": [
+              -0.0011696390156332543,
+              0.0002729094431045554
+            ],
+            "top_contrib": {
+              "chronology_E": 0.0012674299539941695,
+              "politeness_E": -0.0006598646672050078,
+              "rudeness_E": 0.0006217018397834244,
+              "formality_E": -0.0006014456319735714,
+              "harm_E": -0.0004040858403865169,
+              "emotion_E": 0.0003596692507218487
+            }
+          },
+          "edu": {
+            "contrast": "college-high_school",
+            "gap": -0.006388888888888888,
+            "gap_ci95": [
+              -0.013888888888888895,
+              0.00097916666666666
+            ],
+            "explained": 0.000358803867011303,
+            "explained_ci95": [
+              -0.004271052158174765,
+              0.005339319555887439
+            ],
+            "share_explained": -0.05616060527133439,
+            "fam_delivery": 3.3286954457298176e-05,
+            "fam_structure": 0.0004508739218262778,
+            "fam_content": -0.00012535700927227304,
+            "fam_delivery_ci95": [
+              -0.00523372146730852,
+              0.005143707163072031
+            ],
+            "fam_structure_ci95": [
+              -0.0011765834091359343,
+              0.00247630118323603
+            ],
+            "fam_content_ci95": [
+              -0.000578290304597185,
+              0.0004233502743760221
+            ],
+            "top_contrib": {
+              "chronology_E": 0.0011325178512316787,
+              "obj_fk_grade": -0.0009865565747237803,
+              "confidence_E": 0.0009003384457229863,
+              "rudeness_E": 0.0006985440911278358,
+              "politeness_E": -0.0006274187149668453,
+              "formality_E": -0.0005568462916811316
+            }
+          },
+          "ses": {
+            "contrast": "high-low",
+            "gap": 0.003333333333333327,
+            "gap_ci95": [
+              -0.005833333333333344,
+              0.012718749999999992
+            ],
+            "explained": 0.0010908075335411232,
+            "explained_ci95": [
+              -0.002754280425341198,
+              0.005406271657085762
+            ],
+            "share_explained": 0.3272422600623376,
+            "fam_delivery": -0.0005712311760318045,
+            "fam_structure": 0.001889067119843595,
+            "fam_content": -0.0002270284102706673,
+            "fam_delivery_ci95": [
+              -0.005439755214144086,
+              0.004240132118340896
+            ],
+            "fam_structure_ci95": [
+              3.261059868298356e-05,
+              0.003827474768038512
+            ],
+            "fam_content_ci95": [
+              -0.001090465236801063,
+              0.0007544776275742299
+            ],
+            "top_contrib": {
+              "grammar_E": -0.0015264607801242828,
+              "vocabulary_E": 0.0013444778282661277,
+              "chronology_E": 0.0009633804939144245,
+              "coherence_E": 0.0009179803856390077,
+              "confidence_E": 0.0009167078229603891,
+              "formality_E": -0.000616486515591029
+            }
+          }
+        }
+      },
+      "e_tier": {
+        "r2_within": 0.22542299549216704,
+        "r2_by_family_alone": {
+          "delivery": 0.03528662886313194,
+          "structure": 0.051120689851211765,
+          "content": 0.19150733966811395
+        },
+        "top_std_betas": {
+          "bank_error_E": 0.024942679475975154,
+          "entitlement_E": -0.005967924959485665,
+          "coherence_E": 0.004916763518270533,
+          "confidence_E": 0.004467586654171824,
+          "concision_E": 0.0041924056088545845,
+          "harm_E": 0.003728269849481957,
+          "legal_basis_E": -0.0027320008843791737,
+          "grammar_E": -0.002722003640672535
+        },
+        "decomposition": {
+          "age": {
+            "contrast": "old-young",
+            "gap": 0.0010999999999999899,
+            "gap_ci95": [
+              -0.002913333333333254,
+              0.004723194444444406
+            ],
+            "explained": 0.0013405006898381823,
+            "explained_ci95": [
+              -0.0017511626445677801,
+              0.004232264136433424
+            ],
+            "share_explained": 1.2186369907619952,
+            "fam_delivery": 0.0009650553900712596,
+            "fam_structure": 0.0015077934389245195,
+            "fam_content": -0.0011323481391575967,
+            "fam_delivery_ci95": [
+              -0.0014579034049379753,
+              0.0033133053532115905
+            ],
+            "fam_structure_ci95": [
+              0.00046953277766522165,
+              0.0028402024866317406
+            ],
+            "fam_content_ci95": [
+              -0.002615493533484036,
+              0.0002995711787967399
+            ],
+            "top_contrib": {
+              "coherence_E": 0.0011259614621203936,
+              "formality_E": 0.0007855564787705014,
+              "grammar_E": -0.000709991124111384,
+              "harm_E": -0.0006149218962444632,
+              "politeness_E": -0.0005313401452484281,
+              "entitlement_E": 0.0004884994324964497
+            }
+          },
+          "edu": {
+            "contrast": "college-high_school",
+            "gap": 0.0051944444444445015,
+            "gap_ci95": [
+              0.0009927083333332865,
+              0.009545069444444563
+            ],
+            "explained": 0.0035557222358338207,
+            "explained_ci95": [
+              -2.7000501213964733e-05,
+              0.0072531409115799885
+            ],
+            "share_explained": 0.6845240667915301,
+            "fam_delivery": 0.0018394095748843116,
+            "fam_structure": 0.0019040611385741826,
+            "fam_content": -0.00018774847762467343,
+            "fam_delivery_ci95": [
+              -0.0009210913373019627,
+              0.004722898016662381
+            ],
+            "fam_structure_ci95": [
+              0.0008542531281761998,
+              0.0032945559614788373
+            ],
+            "fam_content_ci95": [
+              -0.0020643462579070172,
+              0.0016211996483847108
+            ],
+            "top_contrib": {
+              "coherence_E": 0.001094976004232967,
+              "grammar_E": -0.000882705697754111,
+              "confidence_E": 0.0007291887774413344,
+              "formality_E": 0.0007273046620590686,
+              "argument_E": 0.0005816228725319029,
+              "emotion_E": 0.0005746279163218443
+            }
+          },
+          "ses": {
+            "contrast": "high-low",
+            "gap": 0.003550000000000164,
+            "gap_ci95": [
+              -0.000550520833333201,
+              0.00827718749999994
+            ],
+            "explained": 0.00489619866741902,
+            "explained_ci95": [
+              0.0013304540409886532,
+              0.008716954008472362
+            ],
+            "share_explained": 1.379210892230646,
+            "fam_delivery": 0.001625552917564957,
+            "fam_structure": 0.0026007222273625482,
+            "fam_content": 0.0006699235224915154,
+            "fam_delivery_ci95": [
+              -0.001045451551344739,
+              0.005052854648206208
+            ],
+            "fam_structure_ci95": [
+              0.0013030553858969238,
+              0.003942688010161522
+            ],
+            "fam_content_ci95": [
+              -0.0010596314858724182,
+              0.0024545454330005575
+            ],
+            "top_contrib": {
+              "coherence_E": 0.0014250841089867025,
+              "confidence_E": 0.0011163234719784201,
+              "grammar_E": -0.0011143629799457797,
+              "bank_error_E": 0.0010712257634866184,
+              "formality_E": 0.0007734394518499722,
+              "argument_E": 0.0007415592304508846
+            }
+          }
+        }
+      }
+    }
+  },
+  "QE_persona_uncertainty": {
+    "gpt-4o-mini": {
+      "age": {
+        "mean_recognition": 0.6275722222222223,
+        "share_recognised": 0.5716666666666667,
+        "mean_recognition_by_level": {
+          "old": 0.422,
+          "young": 0.8331444444444445
+        },
+        "gpt_tier": {
+          "raw_beta_intended": 0.007777777777777781,
+          "raw_beta_perceived": 0.07179025109269614,
+          "joint_raw_betas": {
+            "intended_hi": -0.021706547789585386,
+            "perceived_hi": 0.11555934769249167
+          },
+          "joint_r2_within": 0.0027109970716069354,
+          "gap_by_recognition": {
+            "recognised": {
+              "n_guises": 4116,
+              "gap_demeaned": 0.007191399486232392,
+              "gap_ci95": [
+                -0.024227814919340004,
+                0.03531217344284369
+              ]
+            },
+            "ambiguous": {
+              "n_guises": 3084,
+              "gap_demeaned": -0.025703210043685434,
+              "gap_ci95": [
+                -0.059924016705918105,
+                0.008863655220216166
+              ]
+            }
+          }
+        },
+        "gpt_monetary": {
+          "raw_beta_intended": 0.001944444444444445,
+          "raw_beta_perceived": 0.0102824070223315,
+          "joint_raw_betas": {
+            "intended_hi": -0.0013985940380844817,
+            "perceived_hi": 0.0131025329193748
+          },
+          "joint_r2_within": 0.00015564990806926637,
+          "gap_by_recognition": {
+            "recognised": {
+              "n_guises": 4116,
+              "gap_demeaned": 0.0012874751752691258,
+              "gap_ci95": [
+                -0.01569311207620686,
+                0.018762834521208877
+              ]
+            },
+            "ambiguous": {
+              "n_guises": 3084,
+              "gap_demeaned": -0.009946540830370759,
+              "gap_ci95": [
+                -0.0322952991279032,
+                0.009273661640866744
+              ]
+            }
+          }
+        }
+      },
+      "edu": {
+        "mean_recognition": 0.5868763888888889,
+        "share_recognised": 0.5361111111111111,
+        "mean_recognition_by_level": {
+          "college": 0.8452305555555555,
+          "high_school": 0.32852222222222216
+        },
+        "gpt_tier": {
+          "raw_beta_intended": 0.04944444444444445,
+          "raw_beta_perceived": 0.14763593547341497,
+          "joint_raw_betas": {
+            "intended_hi": 0.029617391473550615,
+            "perceived_hi": 0.11411071077235818
+          },
+          "joint_r2_within": 0.012465126379676339,
+          "gap_by_recognition": {
+            "recognised": {
+              "n_guises": 3860,
+              "gap_demeaned": 0.0799420696603339,
+              "gap_ci95": [
+                0.04338792546809869,
+                0.11708544705351127
+              ]
+            },
+            "ambiguous": {
+              "n_guises": 3340,
+              "gap_demeaned": 0.014666931257857929,
+              "gap_ci95": [
+                -0.01474441896977325,
+                0.042323492207803216
+              ]
+            }
+          }
+        },
+        "gpt_monetary": {
+          "raw_beta_intended": 0.013611111111111114,
+          "raw_beta_perceived": 0.04793819755654645,
+          "joint_raw_betas": {
+            "intended_hi": 0.006574846323759559,
+            "perceived_hi": 0.040495840569240424
+          },
+          "joint_r2_within": 0.004209328770525933,
+          "gap_by_recognition": {
+            "recognised": {
+              "n_guises": 3860,
+              "gap_demeaned": 0.024296560161197467,
+              "gap_ci95": [
+                0.009725970688284999,
+                0.04167498029194439
+              ]
+            },
+            "ambiguous": {
+              "n_guises": 3340,
+              "gap_demeaned": -0.000516981106592802,
+              "gap_ci95": [
+                -0.010510491978298116,
+                0.010381475399232185
+              ]
+            }
+          }
+        }
+      },
+      "ses": {
+        "mean_recognition": 0.17321041666666667,
+        "share_recognised": 0.09083333333333334,
+        "mean_recognition_by_level": {
+          "high": 0.09611666666666667,
+          "low": 0.25030416666666666
+        },
+        "gpt_tier": {
+          "raw_beta_intended": 0.04249999999999996,
+          "raw_beta_perceived": 0.07185922451024235,
+          "joint_raw_betas": {
+            "intended_hi": 0.030796888612161667,
+            "perceived_hi": 0.051797544017570314
+          },
+          "joint_r2_within": 0.0077335207718147725,
+          "gap_by_recognition": {
+            "recognised": {
+              "n_guises": 436,
+              "gap_demeaned": 0.06003787878787881,
+              "gap_ci95": [
+                -0.019824168887880116,
+                0.16599617776117168
+              ]
+            },
+            "ambiguous": {
+              "n_guises": 4364,
+              "gap_demeaned": 0.04159371934097905,
+              "gap_ci95": [
+                0.019008293009423062,
+                0.060423827882526204
+              ]
+            }
+          }
+        },
+        "gpt_monetary": {
+          "raw_beta_intended": 0.018333333333333333,
+          "raw_beta_perceived": 0.01885754446920028,
+          "joint_raw_betas": {
+            "intended_hi": 0.016501360854505695,
+            "perceived_hi": 0.008108243352247501
+          },
+          "joint_r2_within": 0.0036545538433347957,
+          "gap_by_recognition": {
+            "recognised": {
+              "n_guises": 436,
+              "gap_demeaned": 0.048937289562289564,
+              "gap_ci95": [
+                0.005394370286830057,
+                0.12996311430742138
+              ]
+            },
+            "ambiguous": {
+              "n_guises": 4364,
+              "gap_demeaned": 0.01796897025158722,
+              "gap_ci95": [
+                0.005897871857202836,
+                0.03166291239620335
+              ]
+            }
+          }
+        }
+      }
+    },
+    "gpt-5-mini": {
+      "age": {
+        "mean_recognition": 0.5278388888888889,
+        "share_recognised": 0.4419444444444444,
+        "mean_recognition_by_level": {
+          "old": 0.39648333333333335,
+          "young": 0.6591944444444445
+        },
+        "gpt_tier": {
+          "raw_beta_intended": 0.005833333333333336,
+          "raw_beta_perceived": 0.06567680669895203,
+          "joint_raw_betas": {
+            "intended_hi": 0.0025246423701107985,
+            "perceived_hi": 0.05942570079625383
+          },
+          "joint_r2_within": 0.00025134747689903314,
+          "gap_by_recognition": {
+            "recognised": {
+              "n_guises": 3182,
+              "gap_demeaned": 0.012936489064600851,
+              "gap_ci95": [
+                -0.007983455575461288,
+                0.032526451366577225
+              ]
+            },
+            "ambiguous": {
+              "n_guises": 4018,
+              "gap_demeaned": 0.0005098398108343167,
+              "gap_ci95": [
+                -0.018906804899019265,
+                0.019795143740266235
+              ]
+            }
+          }
+        },
+        "gpt_monetary": {
+          "raw_beta_intended": -0.0019444444444444446,
+          "raw_beta_perceived": 0.0014274582856198688,
+          "joint_raw_betas": {
+            "intended_hi": -0.0023475567814841454,
+            "perceived_hi": 0.007240093860222135
+          },
+          "joint_r2_within": 4.059704188286162e-05,
+          "gap_by_recognition": {
+            "recognised": {
+              "n_guises": 3182,
+              "gap_demeaned": 0.0015196966094151074,
+              "gap_ci95": [
+                -0.008298282870392026,
+                0.012485024540789652
+              ]
+            },
+            "ambiguous": {
+              "n_guises": 4018,
+              "gap_demeaned": -0.0010692740170387593,
+              "gap_ci95": [
+                -0.011444026352325457,
+                0.008889435921346328
+              ]
+            }
+          }
+        }
+      },
+      "edu": {
+        "mean_recognition": 0.5280888888888888,
+        "share_recognised": 0.47402777777777777,
+        "mean_recognition_by_level": {
+          "college": 0.7582527777777778,
+          "high_school": 0.297925
+        },
+        "gpt_tier": {
+          "raw_beta_intended": -0.007500000000000001,
+          "raw_beta_perceived": 0.005810822956443525,
+          "joint_raw_betas": {
+            "intended_hi": -0.008624651163652968,
+            "perceived_hi": 0.0200195025175568
+          },
+          "joint_r2_within": 0.00016836206630055361,
+          "gap_by_recognition": {
+            "recognised": {
+              "n_guises": 3413,
+              "gap_demeaned": -0.006596473011705487,
+              "gap_ci95": [
+                -0.024580681713243208,
+                0.01280862378658517
+              ]
+            },
+            "ambiguous": {
+              "n_guises": 3787,
+              "gap_demeaned": -0.003032672242853674,
+              "gap_ci95": [
+                -0.023869138697659033,
+                0.01860072661323602
+              ]
+            }
+          }
+        },
+        "gpt_monetary": {
+          "raw_beta_intended": -0.006388888888888889,
+          "raw_beta_perceived": 0.023894972905001425,
+          "joint_raw_betas": {
+            "intended_hi": -0.008519759697426793,
+            "perceived_hi": 0.03793084904438518
+          },
+          "joint_r2_within": 0.0007222057390986469,
+          "gap_by_recognition": {
+            "recognised": {
+              "n_guises": 3413,
+              "gap_demeaned": -0.006598219022842862,
+              "gap_ci95": [
+                -0.016458314515579952,
+                0.002872064879713261
+              ]
+            },
+            "ambiguous": {
+              "n_guises": 3787,
+              "gap_demeaned": -0.010273847856360905,
+              "gap_ci95": [
+                -0.022777636518525272,
+                0.0018183599816885255
+              ]
+            }
+          }
+        }
+      },
+      "ses": {
+        "mean_recognition": 0.17234166666666667,
+        "share_recognised": 0.09104166666666667,
+        "mean_recognition_by_level": {
+          "high": 0.0807625,
+          "low": 0.2639208333333333
+        },
+        "gpt_tier": {
+          "raw_beta_intended": 0.0062499999999999995,
+          "raw_beta_perceived": 0.026760757282384546,
+          "joint_raw_betas": {
+            "intended_hi": 0.004990803668074624,
+            "perceived_hi": 0.022238924499478663
+          },
+          "joint_r2_within": 0.00017220163289810575,
+          "gap_by_recognition": {
+            "recognised": {
+              "n_guises": 437,
+              "gap_demeaned": 0.009027777777777801,
+              "gap_ci95": [
+                -0.01270550677199214,
+                0.029905881690563758
+              ]
+            },
+            "ambiguous": {
+              "n_guises": 4363,
+              "gap_demeaned": 0.005020188950633771,
+              "gap_ci95": [
+                -0.015163842585504938,
+                0.02669705730856326
+              ]
+            }
+          }
+        },
+        "gpt_monetary": {
+          "raw_beta_intended": 0.0033333333333333288,
+          "raw_beta_perceived": 0.00903815714869624,
+          "joint_raw_betas": {
+            "intended_hi": 0.0029741578389811387,
+            "perceived_hi": 0.006343472021354857
+          },
+          "joint_r2_within": 0.00011858100868411547,
+          "gap_by_recognition": {
+            "recognised": {
+              "n_guises": 437,
+              "gap_demeaned": 0.007043650793650793,
+              "gap_ci95": [
+                -0.006201750582686413,
+                0.02353700994428337
+              ]
+            },
+            "ambiguous": {
+              "n_guises": 4363,
+              "gap_demeaned": 0.0022046507175546197,
+              "gap_ci95": [
+                -0.007080175189880067,
+                0.012658710151324495
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "go_no_go": {
+    "G1_discriminating_attributes": [
+      "vocabulary",
+      "grammar",
+      "formality",
+      "confidence",
+      "politeness",
+      "rudeness",
+      "emotion",
+      "entitlement",
+      "coherence",
+      "chronology",
+      "argument",
+      "request_clarity",
+      "concision",
+      "harm",
+      "bank_error",
+      "prior_attempts"
+    ],
+    "G1_pass": true,
+    "G2_manipulated_delivery_structure": [
+      "argument_E",
+      "chronology_E",
+      "coherence_E",
+      "concision_E",
+      "emotion_E",
+      "entitlement_E",
+      "formality_E",
+      "grammar_E",
+      "politeness_E",
+      "rudeness_E",
+      "vocabulary_E"
+    ],
+    "G2_pass": true,
+    "G3_shares_gpt4o_tier": {
+      "gpt-4o-mini:edu": 0.7138927643689851,
+      "gpt-4o-mini:ses": 0.8190387527244342
+    },
+    "G3_pass": true,
+    "drop_for_confirmatory_unreliable": [],
+    "GO": true
+  }
+}
