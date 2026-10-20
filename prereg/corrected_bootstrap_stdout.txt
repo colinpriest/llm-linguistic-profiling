@@ -1,0 +1,29 @@
+
+### holdout_n1000
+  gpt-4o-mini  H3b_D_argmax_minus_D_etier   est -0.0058  original CI [-0.0106,+0.0076]  corrected CI [-0.0214,+0.0047]
+  gpt-4o-mini  H4_orders6_ratio_ci90        est +1.3237  original CI [+1.0109,+1.4755]  corrected CI [+1.0031,+11041341110.0862]
+  gpt-4o-mini  H6_D_gpt_minus_D_jev         est +0.0102  original CI [-0.0058,+0.0199]  corrected CI [-0.0094,+0.0232]
+  gpt-4o-mini  sys_sd_pp gpt                 est +0.248pp  original CI [+0.250,+0.728]  corrected CI [+0.000,+0.563]
+  gpt-4o-mini  sys_sd_pp jev                 est +0.000pp  original CI [+0.096,+0.533]  corrected CI [+0.000,+0.370]
+  gpt-4o-mini  sys_sd_pp delta               est +0.248pp  original CI [-0.165,+0.462]  corrected CI [-0.248,+0.549]
+  gpt-5-mini   H3b_D_argmax_minus_D_etier   est -0.0033  original CI [-0.0035,+0.0072]  corrected CI [-0.0120,+0.0045]
+  gpt-5-mini   H4_orders6_ratio_ci90        est +1.0354  original CI [+0.7481,+1.3440]  corrected CI [+0.0000,+6199659144.8563]
+  gpt-5-mini   H6_D_gpt_minus_D_jev         est +0.0055  original CI [-0.0026,+0.0216]  corrected CI [-0.0108,+0.0199]
+  gpt-5-mini   sys_sd_pp gpt                 est +0.144pp  original CI [+0.300,+0.806]  corrected CI [+0.000,+0.574]
+  gpt-5-mini   sys_sd_pp jev                 est +0.000pp  original CI [+0.156,+0.514]  corrected CI [+0.000,+0.374]
+  gpt-5-mini   sys_sd_pp delta               est +0.144pp  original CI [-0.072,+0.510]  corrected CI [-0.312,+0.518]
+
+### pooled_n3000
+  gpt-4o-mini  H3b_D_argmax_minus_D_etier   est +0.0001  original CI [-0.0040,+0.0061]  corrected CI [-0.0055,+0.0055]
+  gpt-4o-mini  H4_orders6_ratio_ci90        est +1.1132  original CI [+1.0340,+1.1794]  corrected CI [+1.0367,+1.2115]
+  gpt-4o-mini  H6_D_gpt_minus_D_jev         est +0.0116  original CI [+0.0019,+0.0189]  corrected CI [+0.0020,+0.0231]
+  gpt-4o-mini  sys_sd_pp gpt                 est +0.527pp  original CI [+0.419,+0.753]  corrected CI [+0.327,+0.711]
+  gpt-4o-mini  sys_sd_pp jev                 est +0.238pp  original CI [+0.184,+0.500]  corrected CI [+0.000,+0.430]
+  gpt-4o-mini  sys_sd_pp delta               est +0.289pp  original CI [+0.037,+0.466]  corrected CI [+0.027,+0.588]
+  gpt-5-mini   H3b_D_argmax_minus_D_etier   est -0.0014  original CI [-0.0026,+0.0033]  corrected CI [-0.0055,+0.0020]
+  gpt-5-mini   H4_orders6_ratio_ci90        est +0.8507  original CI [+0.7774,+1.0113]  corrected CI [+0.6626,+1.0127]
+  gpt-5-mini   H6_D_gpt_minus_D_jev         est -0.0053  original CI [-0.0049,+0.0069]  corrected CI [-0.0104,+0.0058]
+  gpt-5-mini   sys_sd_pp gpt                 est +0.049pp  original CI [+0.154,+0.456]  corrected CI [+0.000,+0.329]
+  gpt-5-mini   sys_sd_pp jev                 est +0.226pp  original CI [+0.207,+0.405]  corrected CI [+0.000,+0.342]
+  gpt-5-mini   sys_sd_pp delta               est -0.176pp  original CI [-0.171,+0.181]  corrected CI [-0.326,+0.156]
+exit 0
