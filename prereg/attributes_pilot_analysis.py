@@ -42,6 +42,10 @@ G1_ENTROPY, G1_SD, G1_MIN_ATTRS = 0.90, 0.05, 10
 G2_ETA, G2_MIN_ATTRS = 0.05, 3
 G3_SHARE = 0.25
 RELIABILITY_DROP = 0.50
+# Amendment 2a (persona uncertainty; added 20 Oct 2026 before any substantive pilot analysis)
+PERSONA_LEVELS = {"age": ["young", "old"], "geo": ["urban", "suburban", "rural"],
+                  "edu": ["high_school", "college"], "ses": ["low", "middle", "high"]}
+RECOGNISED = 0.60          # Jev P(intended persona level) at or above this = "recognised" guise
 rng = np.random.default_rng(SEED)
 
 
@@ -93,8 +97,13 @@ def assemble() -> pd.DataFrame:
     a = a.merge(texts, on="text_id", how="left")
     a = pd.concat([a, objective_metrics(a.text), gpt_persona(a)], axis=1)
     js = pd.read_csv("jev_pilot_out/jev_scores.csv")
-    js = js[js.source == "guise"][["text_id", "e_tier", "p2_fwd", "age_p_old", "edu_p_college", "ses_p_high", "ses_p_low"]]
+    pcols = ["age_p_young", "age_p_old", "geo_p_urban", "geo_p_suburban", "geo_p_rural",
+             "edu_p_high_school", "edu_p_college", "ses_p_low", "ses_p_middle", "ses_p_high"]
+    js = js[js.source == "guise"][["text_id", "e_tier", "p2_fwd"] + pcols]
     js = js.drop_duplicates("text_id").assign(jev_ses=lambda d: d.ses_p_high - d.ses_p_low)
+    for dim, levels in PERSONA_LEVELS.items():                     # Jev persona ambiguity (normalised entropy)
+        p = js[[f"{dim}_p_{lv}" for lv in levels]].to_numpy().clip(1e-12)
+        js[f"jev_{dim}_entropy"] = -(p * np.log(p)).sum(1) / math.log(len(levels))
     a = a.merge(js, on="text_id", how="left")
     dec = pd.read_csv(f"output/results_persona_decisions_{RUN_TS}.csv", usecols=["case_id", "model", "variant", "tier"])
     dec = dec.rename(columns={"model": "rewrite_model", "variant": "persona_label", "tier": "gpt_tier"})
@@ -217,7 +226,9 @@ def main() -> None:
     # Q-B persona inference
     qb = {}
     targets = {"jev_age_old": "age_p_old", "jev_edu_college": "edu_p_college", "jev_ses": "jev_ses",
-               "gpt_age_old": "gpt_age_old", "gpt_edu_college": "gpt_edu_college", "gpt_ses": "gpt_ses"}
+               "gpt_age_old": "gpt_age_old", "gpt_edu_college": "gpt_edu_college", "gpt_ses": "gpt_ses",
+               # amendment 2a: which attributes make Jev UNSURE who is writing
+               **{f"jev_{d}_ambiguity": f"jev_{d}_entropy" for d in PERSONA_LEVELS}}
     for b in BANKS:
         d = df[df.rewrite_model == b]
         out = {}
@@ -244,6 +255,49 @@ def main() -> None:
                       "decomposition": {dim: gelbach(d, y, xs, dim) for dim in ("age", "edu", "ses")}}
         qd[b] = out
     res["QD_outcomes"] = qd
+
+    # Q-E (amendment 2a): allowing for Jev's uncertainty about which persona applies
+    qe = {}
+    for b in BANKS:
+        d = df[df.rewrite_model == b]
+        out_b = {}
+        for dim in ("age", "edu", "ses"):
+            hi, lo = CONTRASTS[dim]
+            dd = d[d[f"p_{dim}"].isin([hi, lo])].copy()
+            dd["intended_hi"] = (dd[f"p_{dim}"] == hi).astype(float)
+            dd["perceived_hi"] = dd[f"{dim}_p_{hi}"] / (dd[f"{dim}_p_{hi}"] + dd[f"{dim}_p_{lo}"])  # Jev soft label
+            dd["recognition"] = np.where(dd.intended_hi == 1, dd[f"{dim}_p_{hi}"], dd[f"{dim}_p_{lo}"])
+            dd["recognised"] = dd.recognition >= RECOGNISED
+            r = {"mean_recognition": float(dd.recognition.mean()),
+                 "share_recognised": float(dd.recognised.mean()),
+                 "mean_recognition_by_level": {hi: float(dd.loc[dd.intended_hi == 1, "recognition"].mean()),
+                                               lo: float(dd.loc[dd.intended_hi == 0, "recognition"].mean())}}
+            for y in ("gpt_tier", "gpt_monetary"):
+                m_int = ols_within(dd, y, ["intended_hi"])
+                m_per = ols_within(dd, y, ["perceived_hi"])
+                m_both = ols_within(dd, y, ["intended_hi", "perceived_hi"])
+                yy = demean(dd.dropna(subset=[y]), [y])[y]
+                strata = {}
+                for name, mask in (("recognised", dd.recognised), ("ambiguous", ~dd.recognised)):
+                    s = dd.loc[mask].assign(_y=yy)
+                    vals = s.dropna(subset=["_y"])
+                    gap = float(vals.loc[vals.intended_hi == 1, "_y"].mean() - vals.loc[vals.intended_hi == 0, "_y"].mean())
+                    groups = list(vals.reset_index(drop=True).groupby("case_id").indices.values())
+                    v2 = vals.reset_index(drop=True)
+                    bs = [float("nan")]
+                    for _ in range(N_BOOT if groups else 0):
+                        pos = np.concatenate([groups[i] for i in rng.integers(0, len(groups), len(groups))])
+                        t = v2.iloc[pos]
+                        bs.append(t.loc[t.intended_hi == 1, "_y"].mean() - t.loc[t.intended_hi == 0, "_y"].mean())
+                    strata[name] = {"n_guises": int(len(vals)), "gap_demeaned": gap,
+                                    "gap_ci95": [float(np.nanquantile(bs, .025)), float(np.nanquantile(bs, .975))]}
+                r[y] = {"raw_beta_intended": m_int["beta_raw"]["intended_hi"],
+                        "raw_beta_perceived": m_per["beta_raw"]["perceived_hi"],
+                        "joint_raw_betas": m_both["beta_raw"], "joint_r2_within": m_both["r2_within"],
+                        "gap_by_recognition": strata}
+            out_b[dim] = r
+        qe[b] = out_b
+    res["QE_persona_uncertainty"] = qe
 
     # Go / no-go
     g1_ok = [a for a, r in cert.items() if r["mean_norm_entropy"] < G1_ENTROPY and r["within_complaint_sd_E"] >= G1_SD]

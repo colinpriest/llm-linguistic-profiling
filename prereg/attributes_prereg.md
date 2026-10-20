@@ -43,3 +43,22 @@ Before any holdout attribute scores exist, a short amendment will fix the confir
 
 ## 6. Pipeline smoke test (disclosed)
 Before freezing, the scoring and analysis code was run once on the first 300 pilot texts (5 complaints, $0.04) to catch code errors. This was a code check only: the outputs were inspected for crashes and empty merges, not for substantive results, and no wording, threshold or analysis choice was changed afterwards. Those 281 responses are reused by the full pilot. One observation, made while checking why some regressions returned NaN: GPT's cached persona estimates vary very little across guises. On a 300-guise sample, GPT-4o-mini labels 96% "young", 92% "college" and 96% "middle" SES. Within-complaint regressions for a target with no within-complaint variation therefore return NaN by design.
+
+## 7. Amendment 2a: persona uncertainty (requested 11:03 am; committed before any pilot result was inspected)
+Requested by the author at 11:03 am AEST. The request reached the analyst only after the 11:26 freeze.
+
+**Added to `prereg/attributes_pilot_analysis.py`:**
+- **Q-B:** Jev's persona *ambiguity* per dimension (normalised entropy of its persona distribution) as an additional target: which attributes make Jev unsure who is writing.
+- **Q-E (new): allowing for Jev's uncertainty about which persona applies.** For age, education and SES, per bank:
+  - (i) recognition = Jev's P(intended level), summarised by level;
+  - (ii) within-complaint regressions of the GPT tier and GPT monetary outcomes on the intended persona, on Jev's perceived persona (the soft label P(hi)/(P(hi)+P(lo))), and on both jointly;
+  - (iii) persona gaps (complaint-demeaned outcomes) computed separately for "recognised" guises (P(intended) ≥ 0.60) and "ambiguous" guises, with complaint-bootstrap CIs.
+
+**Exact sequence, disclosed:**
+1. Pilot scoring finished at 11:31 and the frozen chain started the analysis at 11:32.
+2. The Q-E code was written at about 11:29–11:31.
+3. A test run at about 11:34 used, unknown to the analyst at the time, the full pilot data rather than the smoke data. It crashed on an empty recognition stratum. The traceback was the only output seen.
+4. An empty-stratum guard was added (a code fix; it returns NaN when a stratum has no guises).
+5. No substantive pilot output had been produced or inspected when this amendment and the final script were committed.
+
+The chain's 11:32 run (script loaded before the guard) is superseded by the run of the committed script.
