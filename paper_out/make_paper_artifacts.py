@@ -4,7 +4,7 @@
 
 Inputs (prereg/): holdout_confirmatory_results.json, h6_rate_units_results.json, materiality_results.json,
 corrected_bootstrap_results.json, secondary_results.json, attributes_holdout_confirmatory_results.json,
-attributes_descriptives.json, attributes_pilot_results.json; jev_pilot_out/repeat/scores.csv + jev_scores.csv (repeat noise).
+attributes_descriptives.json, attributes_pilot_results.json, style_mitigation_results.json; jev_pilot_out/repeat/scores.csv + jev_scores.csv (repeat noise).
 Outputs: paper_out/figures/*.pdf|png, paper_out/tables/*.csv|tex.
 """
 
@@ -282,7 +282,7 @@ def fig6(mat, ax=None):
 # T1: hypothesis summary
 # ---------------------------------------------------------------------------
 
-def t1(hc, att, cbt, sec, pc):
+def t1(hc, att, cbt, sec, pc, sm=None):
     s0 = sec["holdout_n1000"]["S0_H4_difference_scale"]
     rows = [
         ("H1", "Persona-specific share of style variation < 5%", f"{100*hc['H1']['estimate']:.1f}% [{100*hc['H1']['ci95'][0]:.1f}, {100*hc['H1']['ci95'][1]:.1f}]", "Supported"),
@@ -301,8 +301,21 @@ def t1(hc, att, cbt, sec, pc):
         ("PC2", "Weakening facts lowers remedy (all systems)", "; ".join(f"{k.split('|')[-1]} {pc['deltas'][f'weaken|{k}']['mean_delta']:+.2f}" for k in ("gpt_tier|gpt-4o-mini", "gpt_tier|gpt-5-mini", "jev_e_tier")), "Supported" if pc["PC2_supported"] else "Not supported"),
         ("PC4", "Fact effect ≥ 5× largest persona gap", "; ".join(f"{k.split('|')[-1]} {v['ratio']:.0f}×" for k, v in pc["PC4_fact_vs_style"].items()), "Supported" if pc["PC4_supported"] else "Not supported"),
     ]
+    if sm is not None:
+        pr, ar, fs = sm["profiling"], sm["arbitrariness"], sm["fact_sensitivity"]
+        verdict = lambda ok: "Supported" if ok else "Not supported"  # noqa: E731
+        rows += [
+            ("MH1", "One standard style removes GPT-4o-mini edu/SES gaps",
+             "; ".join(f"{d} {pr[f'gpt:{d}']['M0']['gap']:+.3f}→{pr[f'gpt:{d}']['M1']['gap']:+.3f}" for d in ("edu", "ses")), verdict(sm["MH1_supported"])),
+            ("MH2", "One standard style reduces arbitrariness (MPAD)",
+             "; ".join(f"{s_} Δ {ar[s_]['M0_minus_M1']['estimate']:+.3f} {np.round(ar[s_]['M0_minus_M1']['ci95'], 3).tolist()}" for s_ in ("gpt", "jev")), verdict(sm["MH2_supported"])),
+            ("MH3", "Standardisation retains ≥ 50% of fact span",
+             f"retention {min(v['retention'] for v in fs.values()):.2f}–{max(v['retention'] for v in fs.values()):.2f}", verdict(sm["MH3_supported"])),
+            ("MH5", "Three styles reduce arbitrariness vs one",
+             "; ".join(f"{s_} Δ {ar[s_]['M1_minus_M2']['estimate']:+.3f} {np.round(ar[s_]['M1_minus_M2']['ci95'], 3).tolist()}" for s_ in ("gpt", "jev")), verdict(all(sm["MH5_M2_lt_M1"].values()))),
+        ]
     write_table(pd.DataFrame(rows, columns=["Hypothesis", "Claim", "Estimate [95% CI]", "Verdict"]),
-                "T1_hypotheses", "Pre-registered hypotheses and confirmatory results (holdout, n = 1,000).")
+                "T1_hypotheses", "Pre-registered hypotheses and confirmatory results (holdout; n = 1,000, MH: n = 500).")
 
 
 def t5(desc, pilot):
@@ -365,6 +378,57 @@ def fig7_t7(pc):
                 "Positive controls: remedy change after fact edits vs the largest persona gap (200 holdout complaints).")
 
 
+
+# ---------------------------------------------------------------------------
+# F8 / T8: style standardisation mitigation (prereg 4)
+# ---------------------------------------------------------------------------
+
+ARMS = [("M0", "as written"), ("M1", "one standard style"), ("M2", "three styles, averaged")]
+ARM_COLOR = {"M0": GRAY, "M1": BLUE, "M2": ORANGE}
+
+
+def fig8_t8(sm):
+    pr, ar = sm["profiling"], sm["arbitrariness"]
+    gaps = [("gpt:edu", "GPT-4o-mini: college − HS"), ("gpt:ses", "GPT-4o-mini: high − low SES"),
+            ("gpt:age", "GPT-4o-mini: old − young"), ("jev:edu", "Jev: college − HS"),
+            ("jev:ses", "Jev: high − low SES"), ("jev:age", "Jev: old − young")]
+    fig, (a, b) = plt.subplots(1, 2, figsize=(8.6, 3.4), gridspec_kw={"width_ratios": [3, 2], "wspace": 0.55})
+    rows = []
+    for i, (key, lab) in enumerate(gaps):
+        for j, (arm, name) in enumerate(ARMS):
+            g = pr[key][arm]
+            y = i + (j - 1) * 0.25
+            a.plot(g["ci95"], [y, y], color=ARM_COLOR[arm], lw=1.4)
+            a.plot(g["gap"], y, "o", ms=4, color=ARM_COLOR[arm], label=name if i == 0 else None)
+            rows.append({"outcome": lab, "arm": arm, "estimate": g["gap"], "lo": g["ci95"][0], "hi": g["ci95"][1]})
+    a.axvline(0, color=INK2, lw=0.8)
+    a.set_yticks(range(len(gaps)), [g[1] for g in gaps])
+    a.invert_yaxis()
+    a.set_xlabel("Within-complaint gap (tier or E[tier]), 95% CI")
+    a.set_title("(a) Profiling: gaps by arm", loc="left")
+    a.grid(axis="y", visible=False)
+    a.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=3, fontsize=7)
+    for i, (sysn, lab) in enumerate((("gpt", "GPT-4o-mini (tier)"), ("jev", "Jev (E[tier])"))):
+        for j, (arm, _) in enumerate(ARMS):
+            m = ar[sysn][arm]
+            x = i + (j - 1) * 0.27
+            b.bar(x, m["mpad"], width=0.24, color=ARM_COLOR[arm])
+            b.plot([x, x], m["ci95"], color=INK, lw=1)
+            rows.append({"outcome": f"MPAD {lab}", "arm": arm, "estimate": m["mpad"], "lo": m["ci95"][0], "hi": m["ci95"][1]})
+    b.set_xticks([0, 1], ["GPT-4o-mini (tier)", "Jev (E[tier])"])
+    b.set_ylabel("Mean abs. pairwise difference across 36 guises")
+    b.set_title("(b) Arbitrariness by arm", loc="left")
+    b.grid(axis="x", visible=False)
+    fig.suptitle("Style standardisation removes profiling, not arbitrariness (500 holdout complaints × 36 guises)",
+                 x=0.01, y=1.04, ha="left", fontsize=10)
+    save(fig, "F8_style_standardisation")
+    for k, v in sm["fact_sensitivity"].items():
+        rows.append({"outcome": f"fact retention {k.split(':')[0]}", "arm": k.split(":")[1], "estimate": v["retention"],
+                     "lo": v["retention_ci95"][0], "hi": v["retention_ci95"][1]})
+    write_table(pd.DataFrame(rows).round(4), "T8_style_standardisation",
+                "Style standardisation: persona gaps, arbitrariness (MPAD) and fact retention by arm (95% block-bootstrap CIs).")
+
+
 def main():
     hc = load("holdout_confirmatory_results.json")
     pc = load("positive_controls_results.json")
@@ -374,14 +438,16 @@ def main():
     att = load("attributes_holdout_confirmatory_results.json")
     desc = load("attributes_descriptives.json")
     pilot = load("attributes_pilot_results.json")
+    sm = load("style_mitigation_results.json")
     rep_tv, rep_flip = fig1(sec)
     fig_two_scales(mat)
     fig3(att)
     fig4(att)
     fig5(desc)
-    t1(hc, att, cbt, sec, pc)
+    t1(hc, att, cbt, sec, pc, sm)
     t5(desc, pilot)
     fig7_t7(pc)
+    fig8_t8(sm)
     (TAB / "repeat_noise.json").write_text(json.dumps({"mean_tv_rescore": rep_tv, "tier_flip_rate_rescore": rep_flip}, indent=2))
     print("figures:", sorted(p.name for p in FIG.glob("*.png")))
     print("tables:", sorted(p.name for p in TAB.glob("*.csv")))

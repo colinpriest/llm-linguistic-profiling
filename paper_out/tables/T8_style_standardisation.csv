@@ -1,0 +1,29 @@
+outcome,arm,estimate,lo,hi
+GPT-4o-mini: college − HS,M0,0.0313,0.0207,0.0423
+GPT-4o-mini: college − HS,M1,0.0019,-0.0079,0.0114
+GPT-4o-mini: college − HS,M2,0.0035,-0.0032,0.0104
+GPT-4o-mini: high − low SES,M0,0.0237,0.0123,0.0347
+GPT-4o-mini: high − low SES,M1,0.003,-0.0078,0.0137
+GPT-4o-mini: high − low SES,M2,0.0064,-0.0012,0.0136
+GPT-4o-mini: old − young,M0,0.0136,-0.0016,0.0281
+GPT-4o-mini: old − young,M1,0.0066,-0.0076,0.0198
+GPT-4o-mini: old − young,M2,0.0067,-0.0035,0.0183
+Jev: college − HS,M0,0.0079,0.0035,0.0123
+Jev: college − HS,M1,-0.0069,-0.0108,-0.003
+Jev: college − HS,M2,-0.001,-0.0041,0.0021
+Jev: high − low SES,M0,0.0096,0.0049,0.0145
+Jev: high − low SES,M1,-0.0024,-0.0069,0.0021
+Jev: high − low SES,M2,0.0011,-0.0024,0.0045
+Jev: old − young,M0,0.0149,0.009,0.021
+Jev: old − young,M1,-0.0115,-0.017,-0.006
+Jev: old − young,M2,0.0,-0.0048,0.0046
+MPAD GPT-4o-mini (tier),M0,0.1467,0.1298,0.1645
+MPAD GPT-4o-mini (tier),M1,0.1376,0.1208,0.155
+MPAD GPT-4o-mini (tier),M2,0.1204,0.1082,0.1336
+MPAD Jev (E[tier]),M0,0.0838,0.0794,0.0882
+MPAD Jev (E[tier]),M1,0.085,0.0808,0.0896
+MPAD Jev (E[tier]),M2,0.0676,0.0641,0.071
+fact retention gpt,M1,0.9905,0.9541,1.0288
+fact retention gpt,M2,0.9556,0.923,0.9882
+fact retention jev,M1,1.0179,0.9887,1.0483
+fact retention jev,M2,0.9625,0.9412,0.9857

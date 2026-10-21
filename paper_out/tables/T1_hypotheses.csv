@@ -14,3 +14,7 @@ H-A5,Jev remedy judgment driven by content,R² content 0.20 vs delivery 0.04,Sup
 PC1,Strengthening facts raises remedy (all systems),gpt-4o-mini +1.17; gpt-5-mini +0.89; jev_e_tier +0.76,Supported
 PC2,Weakening facts lowers remedy (all systems),gpt-4o-mini -0.41; gpt-5-mini -0.39; jev_e_tier -0.30,Supported
 PC4,Fact effect ≥ 5× largest persona gap,gpt-4o-mini 49×; gpt-5-mini 387×; jev_e_tier 75×,Supported
+MH1,One standard style removes GPT-4o-mini edu/SES gaps,edu +0.031→+0.002; ses +0.024→+0.003,Supported
+MH2,One standard style reduces arbitrariness (MPAD),"gpt Δ +0.009 [-0.001, 0.02]; jev Δ -0.001 [-0.003, 0.001]",Not supported
+MH3,Standardisation retains ≥ 50% of fact span,retention 0.96–1.02,Supported
+MH5,Three styles reduce arbitrariness vs one,"gpt Δ +0.017 [0.01, 0.025]; jev Δ +0.017 [0.016, 0.019]",Supported

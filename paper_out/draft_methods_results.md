@@ -255,7 +255,7 @@ The mitigation targets the channel identified in §4.5: if persona-associated *d
   The edits were fact-led but not fact-only. `weaken` also lowered perceived confidence and coherence, and `strengthen` raised argument quality.
 
 ### 4.7 Mitigation: style standardisation removes profiling, not arbitrariness
-Results are on 500 holdout complaints × 36 guises (GPT-4o-mini bank). Gaps are within-complaint contrasts in tiers (GPT-4o-mini) or E[tier] (Jev), with 95% bootstrap CIs.
+Results are on 500 holdout complaints × 36 guises (GPT-4o-mini bank); see Fig. 8 and Table 8. Gaps are within-complaint contrasts in tiers (GPT-4o-mini) or E[tier] (Jev), with 95% bootstrap CIs.
 
 - **MH1 [C], supported: one standard style removes GPT-4o-mini's profiling.**
 
