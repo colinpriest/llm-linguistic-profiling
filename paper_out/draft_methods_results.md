@@ -1,4 +1,4 @@
-# Profiling at the Group Scale, Arbitrariness at the Individual Scale: How Writing Style Moves LLM Remedy Decisions
+# Same Facts, Different Remedy: Linguistic Profiling and Arbitrariness in LLM and System One Decisions
 
 *Draft: Abstract, Introduction, Related Work, Methods, Results (21 Oct 2026). Every number comes from committed result files; see `prereg/README.md` for the claim-to-commit map. Labels: **[C]** confirmatory (pre-registered, tested once on held-out data); **[S]** pre-registered secondary; **[PH]** post hoc; **[E]** exploratory. `[CITE]` marks references to add and verify.*
 
