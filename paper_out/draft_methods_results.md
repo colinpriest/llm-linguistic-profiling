@@ -80,7 +80,8 @@ Probabilistic decision models make these questions sharper. When a system return
 - Pezeshkpour, P., & Hruschka, E. (2024). Large language models sensitivity to the order of options in multiple-choice questions. *Findings of NAACL 2024* (arXiv:2308.11483). *Venue per authors' lab page; confirm the ACL Anthology entry.*
 - Sclar, M., Choi, Y., Tsvetkov, Y., & Suhr, A. (2024). Quantifying language models' sensitivity to spurious features in prompt design. *ICLR 2024*. *Verified.*
 - U.S. Code of Federal Regulations, 29 CFR §1607.4(D) (Uniform Guidelines on Employee Selection Procedures, four-fifths rule). *Verified.*
-- *Still to add:* TypeSafe Jev 1.13.0 documentation (author to supply the URL); the prior matched-guise study (third person, anonymised).
+- TypeSafe (2026). *Jev: a System One model* (version 1.13.0 used). Documentation, https://docs.typesafe.ai/concepts/system-one. *Verified.*
+- *Still to add:* the prior matched-guise study (third person, anonymised).
 
 ---
 
@@ -90,7 +91,7 @@ Probabilistic decision models make these questions sharper. When a system return
 We study the assignment of remedies to US consumer financial complaints from the CFPB public complaint database [CFPB, 2023]. There are three ordered tiers: 0 = no action, 1 = non-monetary action, 2 = monetary remedy. Two kinds of decision interface are compared, as each is typically deployed:
 
 - **Generative LLMs that return a single label.** GPT-4o-mini (temperature 0) and GPT-5-mini (default reasoning). Both use the remedy prompt and structured-output client of a prior matched-guise study [CITE, third person].
-- **A probabilistic "System One" model.** Jev 1.13.0 (TypeSafe), which returns a probability distribution over the three tiers for a multiple-choice question whose options carry the same tier definitions.
+- **A probabilistic "System One" model.** Jev 1.13.0 (TypeSafe) [TypeSafe, 2026], which returns a probability distribution over the three tiers for a multiple-choice question whose options carry the same tier definitions.
 
 From Jev's distribution p = (p0, p1, p2) we derive:
 - the expected tier, E[tier] = p1 + 2·p2;
@@ -366,7 +367,6 @@ It did not reduce profiling, and averaging probabilities was no better than voti
 - **Misreading "immaterial."** A finding that group gaps fall below adverse-impact thresholds could be cited as clearance to deploy. It is not one. The same systems are materially arbitrary for individuals (§5.2), and our results cover one task, three systems and stylised guises.
 - **Loss of voice.** Standardisation changes how a complainant's own words reach the decision-maker. Used carelessly, it could erase signals of distress or vulnerability, or let an organisation describe a complaint in terms the complainant did not choose. We recommend standardising only the input to an automated decision, keeping the original text for the record and for human review, and auditing the standardiser itself.
 - **Gaming.** Knowing that delivery moves decisions, or which facts move them most, could help complainants present their cases more effectively. This arguably narrows existing advantages, but it could also help firms tune systems towards outcomes that favour them while passing group-rate audits. Reporting arbitrariness alongside profiling makes the second harder.
-- **Compute.** The study used inexpensive models; total API spend across all experiments was modest [AUTHOR: give total].
 
 **Pre-registration and disclosure.** Every confirmatory claim was pre-registered and tested once, and every deviation is disclosed in the analysis record (`prereg/README.md`).
 
