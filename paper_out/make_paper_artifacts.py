@@ -420,12 +420,12 @@ def fig8_t8(sm):
             b.plot([x, x], m["ci95"], color=INK, lw=1)
             rows.append({"outcome": f"MPAD {lab}", "arm": arm, "estimate": m["mpad"], "lo": m["ci95"][0], "hi": m["ci95"][1]})
     b.set_xticks([0, 1], ["GPT-4o-mini (tier)", "Jev (E[tier])"])
-    b.set_ylabel("Mean abs. pairwise difference across 36 guises")
+    b.set_ylabel("MPAD across the 36 guises")
     b.set_title("(b) Score-level instability (MPAD) by arm", loc="left")
     b.grid(axis="x", visible=False)
     fig.suptitle("Style standardisation reduces GPT-4o-mini's gaps, reverses two of Jev's, and lowers score-level\n"
                  "instability only when three styles are averaged (500 holdout complaints × 36 guises)",
-                 x=0.01, y=1.04, ha="left", fontsize=10)
+                 x=0.01, y=1.10, ha="left", fontsize=10)
     save(fig, "F8_style_standardisation")
     for k, v in sm["fact_sensitivity"].items():
         rows.append({"outcome": f"fact retention {k.split(':')[0]}", "arm": k.split(":")[1], "estimate": v["retention"],
