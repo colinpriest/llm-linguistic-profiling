@@ -431,6 +431,47 @@ def fig8_t8(sm):
                 "Style standardisation: persona gaps, arbitrariness (MPAD) and fact retention by arm (95% block-bootstrap CIs).")
 
 
+def t9_t10(rev):
+    """Post hoc review-response tables: variance components (T9) and remedy rules (T10)."""
+    labels = {"persona_main": "Persona main effect", "complaint_x_persona_replicated": "Complaint-specific persona effect (replicates across banks)",
+              "rewrite_model_systematic": "Rewrite-model difference (shifts all guises of a complaint)",
+              "guise_paraphrase": "Guise-specific paraphrase", "order_and_inference_noise": "Option order and inference noise"}
+    rows = []
+    for k, lab in labels.items():
+        row = {"component": lab}
+        for out, name in (("p_monetary", "p(monetary)"), ("e_tier", "E[tier]")):
+            v = rev["R1_variance_components_jev"][out][f"share_within_{k}"]
+            row[f"{name} share %"] = round(100 * v["estimate"], 2)
+            row[f"{name} 95% CI"] = f"[{100 * v['ci95_approx'][0]:.2f}, {100 * v['ci95_approx'][1]:.2f}]"
+        rows.append(row)
+    write_table(pd.DataFrame(rows), "T9_variance_components",
+                "Jev: shares of within-complaint variance (holdout, n = 1,000; crossed random-effects ANOVA; post hoc).")
+    names = {"gpt_label": "GPT label (tier 2)", "jev_argmax_o012": "Jev argmax (o012)",
+             "jev_p2_threshold_matched": "Jev p2 threshold, matched volume", "jev_p2_mean6orders_threshold_matched": "Jev p2 averaged over 6 orders, matched",
+             "jev_majority_6orders": "Jev majority vote over 6 orders"}
+    rows = []
+    for bank, res in rev["R2_remedy_rules_holdout"].items():
+        for k, lab in names.items():
+            x = res[k]
+            rows.append({"bank": bank, "rule": lab, "monetary rate %": round(100 * x["monetary_rate"], 1),
+                         "P(two versions differ) %": round(100 * x["p_two_versions_differ"], 2),
+                         "95% CI": f"[{100 * x['p_two_versions_differ_ci95'][0]:.2f}, {100 * x['p_two_versions_differ_ci95'][1]:.2f}]",
+                         "edu gap pp": round(x["gaps"]["edu"]["gap_pp"], 2), "SES gap pp": round(x["gaps"]["ses"]["gap_pp"], 2),
+                         "age gap pp": round(x["gaps"]["age"]["gap_pp"], 2),
+                         "fact span pp": round(res["fact_span_monetary"][k]["pp"], 1)})
+    for sysn in ("gpt", "jev"):
+        for k, x in rev["R3_mitigation_remedy_rules"][sysn].items():
+            if not isinstance(x, dict) or "monetary_rate" not in x:
+                continue
+            rows.append({"bank": f"mitigation ({sysn}, n = 500)", "rule": k, "monetary rate %": round(100 * x["monetary_rate"], 1),
+                         "P(two versions differ) %": round(100 * x["p_two_versions_differ"], 2),
+                         "95% CI": f"[{100 * x['p_two_versions_differ_ci95'][0]:.2f}, {100 * x['p_two_versions_differ_ci95'][1]:.2f}]",
+                         "edu gap pp": round(x["gaps"]["edu"]["gap_pp"], 2), "SES gap pp": round(x["gaps"]["ses"]["gap_pp"], 2),
+                         "age gap pp": round(x["gaps"]["age"]["gap_pp"], 2), "fact span pp": None})
+    write_table(pd.DataFrame(rows), "T10_remedy_rules",
+                "Monetary decisions under explicit remedy rules: volume, individual disagreement, group gaps and fact span (post hoc).")
+
+
 def main():
     hc = load("holdout_confirmatory_results.json")
     pc = load("positive_controls_results.json")
@@ -450,6 +491,7 @@ def main():
     t5(desc, pilot)
     fig7_t7(pc)
     fig8_t8(sm)
+    t9_t10(load("revision_analysis_results.json"))
     (TAB / "repeat_noise.json").write_text(json.dumps({"mean_tv_rescore": rep_tv, "tier_flip_rate_rescore": rep_flip}, indent=2))
     print("figures:", sorted(p.name for p in FIG.glob("*.png")))
     print("tables:", sorted(p.name for p in TAB.glob("*.csv")))
