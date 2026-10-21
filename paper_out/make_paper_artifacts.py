@@ -31,7 +31,7 @@ FAM_COLOR = {"delivery": BLUE, "structure": ORANGE, "content": AQUA}
 SYS_COLOR = {"GPT-4o-mini": BLUE, "GPT-5-mini": ORANGE, "Jev": AQUA}
 
 plt.rcParams.update({
-    "font.family": "DejaVu Sans", "font.size": 9, "axes.titlesize": 10, "axes.labelsize": 9,
+    "font.family": "DejaVu Sans", "font.size": 10, "axes.titlesize": 11, "axes.labelsize": 10,
     "axes.edgecolor": INK2, "axes.labelcolor": INK2, "xtick.color": INK2, "ytick.color": INK2,
     "axes.spines.top": False, "axes.spines.right": False, "axes.grid": True, "grid.color": "#e6e5e1",
     "grid.linewidth": 0.6, "axes.axisbelow": True, "figure.facecolor": SURFACE, "axes.facecolor": SURFACE,
@@ -221,25 +221,27 @@ def fig5(desc):
     cols = [("age:old-young_std", "Old − young"), ("edu:college-high_school_std", "College − HS"),
             ("ses:high-low_std", "High − low SES"), ("geo:urban-rural_std", "Urban − rural")]
     M = np.array([[eff[a][c] for c, _ in cols] for a in order])
-    fig, ax = plt.subplots(figsize=(5.2, 6.0))
+    fig, ax = plt.subplots(figsize=(6.4, 7.6))
     from matplotlib.colors import LinearSegmentedColormap
     cmap = LinearSegmentedColormap.from_list("div", [ORANGE, "#f2f1ed", BLUE])
     im = ax.imshow(M, cmap=cmap, vmin=-1.2, vmax=1.2, aspect="auto")
     for i in range(M.shape[0]):
         for j in range(M.shape[1]):
-            ax.text(j, i, f"{M[i, j]:+.2f}", ha="center", va="center", fontsize=6.5,
+            ax.text(j, i, f"{M[i, j]:+.2f}", ha="center", va="center", fontsize=8,
                     color="white" if abs(M[i, j]) > 0.7 else INK)
-    ax.set_xticks(range(len(cols)), [c[1] for c in cols], fontsize=7)
+    ax.set_xticks(range(len(cols)), [c[1] for c in cols], fontsize=9)
     names = [a.replace("_E", "").replace("obj_", "objective: ").replace("_", " ") for a in order]
-    ax.set_yticks(range(len(order)), [f"{n} ({eff[a]['family'][0].upper()})" for n, a in zip(names, order)], fontsize=7)
+    ax.set_yticks(range(len(order)), [f"{n} ({eff[a]['family'][0].upper()})" for n, a in zip(names, order)], fontsize=9)
     ax.grid(False)
     fams = [eff[a]["family"] for a in order]
     for k in range(1, len(fams)):
         if fams[k] != fams[k - 1]:
             ax.axhline(k - 0.5, color=INK, lw=1.2)
     cb = fig.colorbar(im, ax=ax, shrink=0.5)
-    cb.set_label("Standardised within-complaint effect", fontsize=7)
-    ax.set_title("What persona rewrites change (GPT-4o-mini rewrites; D/S/C = family)", loc="left", fontsize=9)
+    cb.set_label("Persona contrast in within-complaint SDs "
+                 "(mean difference / SD across the 36 guises)", fontsize=8)
+    ax.set_title("What persona rewrites change: 19 Jev attributes + 3 objective measures "
+                 "(GPT-4o-mini rewrites; D/S/C = delivery/structure/content)", loc="left", fontsize=10, wrap=True)
     save(fig, "F5_persona_effects_on_attributes")
     pd.DataFrame(M, index=order, columns=[c[1] for c in cols]).round(3).to_csv(TAB / "F5_persona_effects_on_attributes.csv")
 

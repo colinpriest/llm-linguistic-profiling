@@ -62,7 +62,7 @@ Probabilistic decision models sharpen these questions. When a system returns a d
 
 ## 2. Related work
 
-**Linguistic profiling and matched guises.** The matched-guise technique holds content constant while varying how it is expressed, to elicit evaluations of speakers \[Lambert et al., 1960\]. Applied to LLMs, dialect-based matched-guise probing reveals covert prejudice, including harsher judgments for speakers of African American English that do not surface when race is mentioned explicitly \[Hofmann et al., 2024\]. In finance, audit studies of LLM loan underwriting report disparities for otherwise-identical applicants \[Bowen et al., working paper\]. A prior study, which we cite in the third person, applied matched guises to remedy decisions on consumer complaints with single-label LLMs \[CITE\]. We extend this line of work in three ways: from labels to probabilistic outputs; from detecting disparity to decomposing its mechanism; and from significance to materiality and mitigation.
+**Linguistic profiling and matched guises.** The matched-guise technique holds content constant while varying how it is expressed, to elicit evaluations of speakers \[Lambert et al., 1960\]. Applied to LLMs, dialect-based matched-guise probing reveals covert prejudice, including harsher judgments for speakers of African American English that do not surface when race is mentioned explicitly \[Hofmann et al., 2024\]. In finance, audit studies of LLM loan underwriting report disparities for otherwise-identical applicants \[Bowen et al., working paper\]. We extend this line of work to remedy decisions on consumer complaints in three ways: from single labels to probabilistic outputs; from detecting disparity to decomposing its mechanism; and from significance to materiality and mitigation.
 
 **Arbitrariness and predictive multiplicity.** Predictive multiplicity describes competing, equally accurate models that assign conflicting predictions to the same individual \[Marx et al., 2020\]. Variance across retrained models can make decisions effectively arbitrary, and accounting for it removes much of the apparent benefit of common fairness interventions \[Cooper et al., 2024\]. Arbitrariness carries a distinct moral weight, especially when one system is applied at scale \[Creel & Hellman, 2022\]. These studies concern variance across *models*. We study *input-side* arbitrariness for a fixed deployed model (inference noise, option order and meaning-preserving rewording), and measure it on the same scale as group profiling.
 
@@ -86,9 +86,11 @@ Probabilistic decision models sharpen these questions. When a system returns a d
 
 - Consumer Financial Protection Bureau (2015). *Narrative Scrubbing Standard*. Office of Consumer Response. https://files.consumerfinance.gov/a/assets/201503_cfpb_Narrative-Scrubbing-Standard.pdf. *Verified.*
 
-- Consumer Financial Protection Bureau (2023). *Privacy Impact Assessment: Publication of Consumer Response Complaint Narratives* (2 June 2023); Consumer Complaint Database, https://www.consumerfinance.gov/data-research/consumer-complaints/. *Verified; add the data download date.*
+- Consumer Financial Protection Bureau (2023). *Privacy Impact Assessment: Publication of Consumer Response Complaint Narratives* (2 June 2023). https://files.consumerfinance.gov/f/documents/06022023_Publication-of-Consumer-Response-Complaint-Narratives.pdf. *Verified.*
 
-- Bowen, D. E. III, Price, S. M., Stein, L. C. D., & Yang, K. Racial disparities in LLM mortgage underwriting. **Working paper**; title varies by version (2024–2025). *Cite the exact version used.*
+- Consumer Financial Protection Bureau (n.d.). *Consumer Complaint Database* \[dataset\]. https://www.consumerfinance.gov/data-research/consumer-complaints/. *Add the download date.*
+
+- Bowen, D. E. III, Stein, L. C. D., Price, S. M., & Yang, K. (2025). Measuring and mitigating racial disparities in LLMs: Evidence from a mortgage underwriting experiment. Working paper, version of 17 September 2025 (earlier versions were titled "Racial bias in large language model mortgage underwriting"). *Verified.*
 
 - Cooper, A. F., Lee, K., Choksi, M. Z., Barocas, S., De Sa, C., Grimmelmann, J., Kleinberg, J., Sen, S., & Zhang, B. (2024). Arbitrariness and social prediction: The confounding role of variance in fair classification. *AAAI-24*, 38(20), 22004–22012. doi:10.1609/aaai.v38i20.30203. *Verified.*
 
@@ -114,13 +116,13 @@ Probabilistic decision models sharpen these questions. When a system returns a d
 
 - Pezeshkpour, P., & Hruschka, E. (2024). Large language models sensitivity to the order of options in multiple-choice questions. *Findings of NAACL 2024* (arXiv:2308.11483). *Venue per authors' lab page; confirm the ACL Anthology entry.*
 
+- Watkins, E. A., & Chen, J. (2024). The four-fifths rule is not disparate impact: A woeful tale of epistemic trespassing in algorithmic fairness. *FAccT '24*. Preprint arXiv:2202.09519 (with M. McKenna). *Verified.*
+
 - Sclar, M., Choi, Y., Tsvetkov, Y., & Suhr, A. (2024). Quantifying language models' sensitivity to spurious features in prompt design. *ICLR 2024*. *Verified.*
 
 - U.S. Code of Federal Regulations, 29 CFR §1607.4(D) (Uniform Guidelines on Employee Selection Procedures, four-fifths rule). *Verified.*
 
 - TypeSafe (2026). *Jev: a System One model* (version 1.13.0 used). Documentation, https://docs.typesafe.ai/concepts/system-one. *Verified.*
-
-- *Still to add:* the prior matched-guise study (third person, anonymised).
 
 ------------------------------------------------------------------------
 
@@ -128,11 +130,11 @@ Probabilistic decision models sharpen these questions. When a system returns a d
 
 ### 3.1 Task and decision systems
 
-We study the assignment of remedies to US consumer financial complaints from the CFPB public complaint database \[CFPB, 2023\]. Remedies fall into three ordered tiers: 0 = no action, 1 = non-monetary action and 2 = monetary remedy. We compare two kinds of decision interface, each configured as it is typically deployed:
+We study the assignment of remedies to US consumer financial complaints from the CFPB public complaint database \[CFPB, n.d.\]. Remedies fall into three ordered tiers: 0 = no action, 1 = non-monetary action and 2 = monetary remedy. We compare two kinds of decision interface, each configured as it is typically deployed:
 
-- **Generative LLMs that return a single label.** We use GPT-4o-mini (temperature 0) and GPT-5-mini (default reasoning). Both use the remedy prompt and structured-output client of a prior matched-guise study \[CITE, third person\].
+- **Generative LLMs that return a single label.** We use GPT-4o-mini (temperature 0) and GPT-5-mini (default reasoning). Both receive the same remedy prompt and return a validated structured response (tier, confidence, information needed); the prompt is given in Appendix A.
 
-- **A probabilistic "System One" model.** We use Jev 1.13.0 (TypeSafe) \[TypeSafe, 2026\], which returns a probability distribution over the three tiers for a multiple-choice question whose options carry the same tier definitions.
+- **A probabilistic "System One" model.** We use Jev 1.13.0 (TypeSafe) \[TypeSafe, 2026\]. We use "System One" in its provider's sense: a model that returns a probability distribution over the options of a typed question rather than generated text. Here the question's options carry the same three tier definitions as the GPT prompt.
 
 From Jev's distribution p = (p0, p1, p2) we derive:
 
@@ -148,7 +150,7 @@ Each text is scored under all six orderings of the three options, with order o01
 
 ### 3.2 Matched-guise panels
 
-- **Complaints.** Complaints were drawn from a cleaned pool of 20,000 narratives produced by the prior study's pipeline.
+- **Complaints.** Complaints were drawn from a cleaned pool of 20,000 English-language narratives from the CFPB database, after language detection, deduplication and length filtering (Appendix A).
 
 - **Guises.** Each complaint was rewritten into 36 sociolinguistic guises: age (young / old) × geography (urban / suburban / rural) × education (high school / college) × socioeconomic status (low / middle / high). The rewrites were produced independently by two models (the GPT-4o-mini bank and the GPT-5-mini bank), with an instruction to preserve every fact.
 
@@ -156,7 +158,7 @@ Each text is scored under all six orderings of the three options, with order o01
 
 - **Holdout panel.** This panel comprises 1,000 new complaints that had never previously been rewritten or scored (72,000 guises). The sample was drawn with a fixed seed and fingerprinted (SHA-256) before any holdout text existed. The panel was generated with identical prompts and settings, and the frozen confirmatory analysis was run on it exactly once.
 
-- **GPT decisions.** Each GPT model decided the guises in its own bank. GPT decisions on the original narratives are taken from the prior study's frozen run.
+- **GPT decisions.** Each GPT model decided the guises in its own bank. Comparisons between the two GPT models therefore combine differences in the decider with differences in the rewrites it saw; comparisons between Jev and a GPT model use the same bank and are not affected.
 
 ### 3.3 Controls for arbitrariness
 
@@ -218,7 +220,7 @@ All three systems decided or scored the edited texts. Effects are computed as pa
 
 - **Disclosures.** All deviations are disclosed. They comprise two code-only fixes and one amendment that was requested after a freeze but committed before any result was inspected.
 
-- **Bootstrap correction.** The pre-registered bootstrap of D under-corrected the noise term in resamples with repeated complaints. We report a corrected bootstrap (noise term s²·Σw²/C²) as a sensitivity analysis; none of our conclusions changes.
+- **Bootstrap correction.** The pre-registered bootstrap of D under-corrected the noise term in resamples with repeated complaints. All confidence intervals for D reported here use the corrected bootstrap (noise term s²·Σw²/C²); the pre-registered intervals are given in Appendix B for transparency, and no conclusion depends on the choice.
 
 ### 3.8 Style standardisation as a mitigation
 
@@ -248,7 +250,7 @@ The mitigation targets the channel identified in §4.5: if persona-associated *d
 
 - **Inference.** We use a complaint-block bootstrap with 2,000 resamples. Hypotheses MH1–MH5 were frozen with the code before any analysis-set text was standardised. The pipeline was first checked on five complaints outside the analysis set. The analysis was run once, and no code was changed after the freeze.
 
-- **Scale and cost.** The mitigation required 55,800 standardising rewrites, 55,800 GPT-4o-mini decisions and Jev scoring of 55,001 unique texts. Of the standardised texts, 799 were word-for-word identical to another text and were therefore scored only once.
+- **Scale.** The 18,000 guises and the 600 positive-control texts (the 200 originals and their `strengthen` and `weaken` edits) were each standardised into three styles, giving 55,800 standardising rewrites, 55,800 GPT-4o-mini decisions and Jev scoring of 55,001 unique texts. Of the standardised texts, 799 were word-for-word identical to another text and were therefore scored only once.
 
 ------------------------------------------------------------------------
 
