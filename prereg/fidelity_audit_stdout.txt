@@ -1,0 +1,63 @@
+{
+  "FA1_edit_flag_rate": {
+    "claude-opus-5-5": {
+      "strengthen": 1.0,
+      "weaken": 0.98,
+      "all": 0.99
+    },
+    "gpt-5.2": {
+      "strengthen": 1.0,
+      "weaken": 0.96,
+      "all": 0.98
+    }
+  },
+  "FA1_valid_auditors": [
+    "claude-opus-5-5",
+    "gpt-5.2"
+  ],
+  "FA3_instability_among_verified": {
+    "n_complaints": 40,
+    "mean_verified_per_complaint": 29.575,
+    "gpt_mon": {
+      "all": 0.05032002048131091,
+      "verified": 0.047375579332689016,
+      "ratio_verified_to_all": 0.941485692564146,
+      "ratio_ci95": [
+        0.8182805967691728,
+        1.0253947741017742
+      ],
+      "n_complaints": 39
+    },
+    "jev_mon": {
+      "all": 0.032584485407066065,
+      "verified": 0.030062704259619245,
+      "ratio_verified_to_all": 0.922607918586311,
+      "ratio_ci95": [
+        0.5536407324200046,
+        1.026332338234147
+      ],
+      "n_complaints": 39
+    },
+    "tier": {
+      "all": 0.16125192012288794,
+      "verified": 0.1609631643852017,
+      "ratio_verified_to_all": 0.9982092880663611,
+      "ratio_ci95": [
+        0.951468013911369,
+        1.0558282503865768
+      ],
+      "n_complaints": 39
+    },
+    "jev_e": {
+      "all": 0.09416061827956991,
+      "verified": 0.09360137781810278,
+      "ratio_verified_to_all": 0.994060781761153,
+      "ratio_ci95": [
+        0.9782819283567038,
+        1.0088490077144066
+      ],
+      "n_complaints": 39
+    },
+    "supported": true
+  }
+}

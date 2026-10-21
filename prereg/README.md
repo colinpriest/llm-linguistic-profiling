@@ -25,7 +25,11 @@ Every confirmatory claim maps to a document and a script frozen in git **before*
 | 20 Oct 7:19 pm | 44bfa55 | Positive-control results: PC1, PC2 and PC4 supported (`positive_controls_results.json`) |
 | 21 Oct 11:15 am | d8ab9e0 | **Pre-registration 4** (`style_mitigation.md`, `style_mitigation.py`): style standardisation MH1–MH5 |
 | 21 Oct 11:16 am – 4:05 pm | — | Rewrites, GPT-4o-mini decisions and Jev scoring of the analysis set (about $29 of the approved $55) |
-| 21 Oct 4:22 pm | (this commit) | One-shot frozen mitigation analysis (`style_mitigation_results.json`): MH1, MH3, MH5 supported; MH2 not supported |
+| 21 Oct 4:22 pm | d6a6e90 | One-shot frozen mitigation analysis (`style_mitigation_results.json`): MH1, MH3, MH5 supported; MH2 not supported |
+| 21 Oct 10:20 pm | 3b8cfe4 | **Pre-registration 5** (`fidelity_audit.md`, `fidelity_audit.py`): independent fact-fidelity audit and same-day baseline (FA1–FA6, DB1–DB2), frozen after a smoke run on complaints 501–505 |
+| 21 Oct 10:20–10:45 pm | — | Audit (1,690 pairs × 2 auditors, $20.75) and baseline (7,200 texts, $2.11) |
+| 21 Oct 10:30 pm | 8083067 | **Post hoc** review-response analyses (`revision_analysis.py`): variance components, remedy rules |
+| 21 Oct 10:47 pm | (this commit) | One-shot frozen fidelity analysis (`fidelity_audit_results.json`): FA1, FA3 supported; DB2 not supported (imprecise; DB1 shows no drift) |
 
 ## Status of each claim
 | Claim | Status | File |
@@ -44,6 +48,10 @@ Every confirmatory claim maps to a document and a script frozen in git **before*
 | MH1, MH3, MH5 | confirmatory, supported | `style_mitigation_results.json` |
 | MH2 | confirmatory, not supported | same |
 | MH4 | descriptive | same (`fidelity`) |
+| FA1, FA3 | confirmatory, supported | `fidelity_audit_results.json` |
+| FA2, FA5, FA4, FA6, DB1 | estimation / descriptive | same |
+| DB2 | confirmatory, not supported (CIs include 0 on 100 complaints) | same |
+| Variance components, remedy rules | **post hoc** | `revision_analysis_results.json` |
 
 ## Known limitations, disclosed
 - Bootstrap CIs for the noise-corrected variance-component metric D were biased upward in the pre-registered script. The corrected bootstrap changes no conclusion.
@@ -52,3 +60,4 @@ Every confirmatory claim maps to a document and a script frozen in git **before*
 - GPT persona estimates exist only for exploratory-panel guises.
 - Style mitigation: 799 standardised texts were word-for-word duplicates of another text. Jev scored each unique text once, so `scores.csv` holds duplicate rows with identical values (56,540 rows for 55,800 texts). Per-cell means, and hence results, are unaffected.
 - Style mitigation: the decide step ran twice (53,457 then the remaining 2,343, the rest coming from the cache). The first attempt's usage file was overwritten, so its cost (about $8.7) is estimated from tokens per call.
+- Fidelity audit: the second auditor was planned as a Google model, but the available key was invalid. GPT-5.2 (OpenAI) was used instead, and this was recorded in the pre-registration before freezing. The guise sample was enlarged from 24 to 40 complaints before freezing, after the smoke run showed costs were lower than expected.

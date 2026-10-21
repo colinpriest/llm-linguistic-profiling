@@ -1,22 +1,24 @@
 # Same Facts, Different Remedy: Linguistic Profiling and Arbitrariness in LLM and System One Decisions
 
-*Draft: Abstract, Introduction, Related Work, Methods, Results, Discussion, Limitations, Ethics, Conclusion (21 Oct 2026). Every number comes from committed result files; see* `prereg/README.md` *for the claim-to-commit map. Labels: **\[C\]** confirmatory (pre-registered, tested once on held-out data); **\[S\]** pre-registered secondary; **\[PH\]** post hoc; **\[E\]** exploratory.* `[CITE]` *marks references to add and verify.*
+*Draft: Abstract, Introduction, Related Work, Methods, Results, Discussion, Limitations, Ethics, Conclusion (revised 21 Oct 2026 in response to an adversarial review). Every number comes from committed result files; see* `prereg/README.md` *for the claim-to-commit map. Labels: **\[C\]** confirmatory (pre-registered, tested once on held-out data); **\[S\]** pre-registered secondary; **\[PH\]** post hoc; **\[E\]** exploratory.* `[CITE]` *marks references to add and verify.*
 
 ## Abstract (draft)
 
-Large language models are increasingly used to triage and resolve consumer complaints, and the way complainants write varies systematically with age, education and socioeconomic status. We audit three remedy-decision systems using fact-preserving sociolinguistic rewrites of US consumer financial complaints:
+Large language models are increasingly used to triage and resolve consumer complaints, and the way complainants write varies systematically with age, education and socioeconomic status (SES). We audit three remedy-decision systems using sociolinguistic rewrites of US consumer financial complaints, each instructed to preserve the facts:
 
 - two generative LLMs that return a single label (GPT-4o-mini, GPT-5-mini);
 
 - a probabilistic "System One" model that returns a distribution over remedies (Jev).
 
-Using pre-registered hypotheses tested once on held-out complaints, we separate two phenomena that standard single-label audits conflate.
+Using hypotheses pre-registered and tested once on 1,000 held-out complaints (72,000 rewrites), we separate two outcomes that single-label audits conflate.
 
-- **Profiling at the group scale.** Older, college-educated and higher-SES writing styles receive systematically more generous remedies. These effects are reliable and replicate, but each is smaller than one percentage point in the monetary-remedy rate.
+- **Average gaps at the group scale.** Older, college-educated and higher-SES writing styles receive slightly more generous remedies. On the held-out panel every gap is below 0.5 percentage points of the monetary-remedy rate, with every upper confidence bound below 1 point.
 
-- **Arbitrariness at the individual scale.** The probability that two style versions of the same complaint receive different monetary decisions (2.8–6.3%) is far larger than the largest group gap of the same system (0.22–0.84 pp). Approximately 99% of the cross-version variation in the probabilistic model's output is attributable to arbitrariness (rewording, option order and inference noise) rather than to persona.
+- **Instability at the individual scale.** Two style versions of the same complaint receive different monetary decisions 2.6–6.3% of the time. In a variance decomposition of the probabilistic model's output, persona accounts for about 1.6% of within-complaint variation. The rest comes from differences between rewrite models, paraphrase, option order and inference noise.
 
-Decomposition shows that profiling operates through persona-associated delivery (vocabulary, grammar and politeness) rather than content, and that it appears only where the style cue is recognisable. Positive controls show that all three systems respond 49–387× more strongly to remedy-relevant facts than to style. Graded probabilistic outputs reduce arbitrariness by 70–80% but leave profiling unchanged, and averaging probabilities performs no better than majority voting. In a pre-registered mitigation test, rewriting every complaint into a single standard style before the decision largely removed GPT-4o-mini's education and SES gaps (reductions of 94% and 87%, respectively) while preserving 96–102% of the systems' sensitivity to facts. It did not, however, reduce arbitrariness; averaging decisions across three standard styles reduced it by approximately one fifth. We argue that fairness audits of LLM decision systems should report profiling and arbitrariness separately, assess materiality rather than statistical significance alone, and target the delivery channel when designing mitigations.
+An independent audit by two LLMs from outside the audited systems found material fact changes in 2–13% of rewrites, depending on the auditor. Instability was almost unchanged among rewrites that neither auditor flagged. The group gaps are associated mainly with delivery (vocabulary, grammar, politeness) rather than content, and are larger where the style cue is recognisable. Positive controls show that all three systems respond 49–387× more strongly to remedy-relevant facts than to style.
+
+Graded probabilistic outputs make scores smoother, but at matched monetary volume they barely change how often actual remedy decisions disagree. In a pre-registered mitigation, rewriting each complaint into one standard style before deciding reduced GPT-4o-mini's education and SES gaps by 94% and 87% (point estimates) and retained 96–102% of fact sensitivity. It did not detectably stabilise individual decisions, and it reversed two of the probabilistic model's gaps. We argue that audits should report average disparities and individual instability as separate outcomes, evaluate both on the decisions people actually receive, and audit any mitigation with the same design.
 
 ------------------------------------------------------------------------
 
@@ -40,23 +42,23 @@ Probabilistic decision models sharpen these questions. When a system returns a d
 
 - graded outputs and averaging might offer mitigation.
 
-**We address these questions within a single design.** Complaints from the CFPB public database are rewritten into 36 fact-preserving sociolinguistic guises (age × geography × education × SES) by two independent rewrite models. Remedies are then determined by two single-label LLMs and one probabilistic System One model. The design incorporates direct controls for each non-persona source of variation: repeated scoring, all six option orders, and independent same-persona paraphrases. All main hypotheses were pre-registered and tested once on held-out complaints.
+**We address these questions within a single design.** Complaints from the CFPB public database are rewritten into 36 sociolinguistic guises, each instructed to preserve the facts, (age × geography × education × SES) by two independent rewrite models. Remedies are then determined by two single-label LLMs and one probabilistic System One model. The design incorporates direct controls for each non-persona source of variation: repeated scoring, all six option orders, and independent same-persona paraphrases. All main hypotheses were pre-registered and tested once on held-out complaints, and an independent fact audit checks how far the rewrites kept the facts.
 
 **Our contributions are as follows.**
 
-1.  **Profiling versus arbitrariness, quantified. Approximately** 99% of the probabilistic model's style sensitivity is arbitrariness (inference noise, option order, paraphrase). The persona-specific share is 1.1% (95% CI 0.7–1.5%).
+1.  **Profiling versus instability, quantified.** In a variance decomposition of the probabilistic model's output, persona accounts for about 1.6% of within-complaint variation. Rewrite-model differences (47%), guise-level paraphrase (39%), and option order and inference noise (12%) account for the rest.
 
-2.  **Two scales.** At the group scale, persona-associated profiling is real, replicated and directional, but immaterial: every monetary-rate gap is below 1 pp and passes the four-fifths rule by equivalence test. At the individual scale, arbitrariness is far larger: two style versions of the same complaint receive different monetary decisions 2.8–6.3% of the time, compared with largest group gaps of 0.22–0.84 pp.
+2.  **Two scales.** At the group scale, persona-associated gaps are reliable and directional but small in absolute terms: below 0.5 pp of the monetary-remedy rate on the held-out panel. At the individual scale, two style versions of the same complaint receive different monetary decisions 2.6–6.3% of the time. An independent fact audit shows that this instability persists among rewrites verified as fact-preserving.
 
-3.  **Mechanism.** GPT-4o-mini's education and SES gaps are 79–96% explained by interpretable attributes. Irrelevant *delivery* outweighs relevant *content* by roughly 5–8×, and the gaps appear only where the style cue is recognisable.
+3.  **Mechanism.** Interpretable attributes account statistically for 79–96% of GPT-4o-mini's education and SES gaps. The *delivery* contribution is roughly 5–8× the *content* contribution, and the gaps are larger where the style cue is recognisable.
 
 4.  **Positive controls.** All three systems respond 49–387× more to remedy-relevant fact changes than to persona style, indicating that the small profiling effects do not reflect general insensitivity.
 
-5.  **The role of probabilistic outputs. Graded outputs reduce arbitrariness by 70–80% but do not reduce profiling. Probability averaging performs no better than equal-budget hard voting, and uncertainty-based referral does not introduce** a persona disparity.
+5.  **The role of probabilistic outputs.** Graded outputs make scores smoother, but at matched monetary volume they barely change how often monetary decisions disagree. No reduction in profiling was detected. On systematic disparity, probability averaging was not superior to equal-budget hard voting, and no disparity from uncertainty-based referral was detected.
 
-6.  **Mitigation.** Rewriting complaints into one standard style before deciding removes GPT-4o-mini's education and SES profiling while preserving its sensitivity to facts. It does not remove arbitrariness. Averaging over several standard styles reduces arbitrariness by about a fifth, at three times the inference cost.
+6.  **Mitigation.** Rewriting complaints into one standard style before deciding reduced GPT-4o-mini's education and SES gaps while preserving its sensitivity to facts. It reversed two of Jev's gaps and did not detectably stabilise individual decisions. Averaging over three styles reduced score-level instability by about a fifth, but monetary-decision disagreement by only 0.4–0.5 pp.
 
-7.  **Practice.** We provide a pre-registered, materiality-aware audit protocol, incorporating paraphrase, order and repeat controls, that is applicable beyond this task.
+7.  **Practice.** We provide a pre-registered audit protocol that is applicable beyond this task. It combines paraphrase, order and repeat controls, variance components, remedy-level evaluation, positive controls and an independent fact audit.
 
 ------------------------------------------------------------------------
 
@@ -214,7 +216,7 @@ All three systems decided or scored the edited texts. Effects are computed as pa
 
 - **Resampling.** We use a complaint-cluster (block) bootstrap and within-complaint permutation tests, with Benjamini–Hochberg correction applied within the directional family.
 
-- **Pre-registration.** Four pre-registrations and two amendments were committed to version control before the data they test existed. They cover the main hypotheses (H1–H6), the attribute hypotheses (H-A1–H-A5), the positive controls (PC1–PC5) and the style-standardisation mitigation (MH1–MH5).
+- **Pre-registration.** Five pre-registrations and two amendments were committed to version control before the data they test existed. They cover the main hypotheses (H1–H6), the attribute hypotheses (H-A1–H-A5), the positive controls (PC1–PC5), the style-standardisation mitigation (MH1–MH5), and the fact-fidelity audit and same-day baseline (FA1–FA6, DB1–DB2).
 
 - **Planned extension, not run.** Following a materiality review, and before any new data were generated, we did not execute a pre-registered extension of the holdout to 4,000 complaints for H6.
 
@@ -251,6 +253,30 @@ The mitigation targets the channel identified in §4.5: if persona-associated *d
 - **Inference.** We use a complaint-block bootstrap with 2,000 resamples. Hypotheses MH1–MH5 were frozen with the code before any analysis-set text was standardised. The pipeline was first checked on five complaints outside the analysis set. The analysis was run once, and no code was changed after the freeze.
 
 - **Scale.** The 18,000 guises and the 600 positive-control texts (the 200 originals and their `strengthen` and `weaken` edits) were each standardised into three styles, giving 55,800 standardising rewrites, 55,800 GPT-4o-mini decisions and Jev scoring of 55,001 unique texts. Of the standardised texts, 799 were word-for-word identical to another text and were therefore scored only once.
+
+### 3.9 Remedy rules \[PH\]
+Score-level measures do not show what a complainant would receive. We therefore evaluate explicit monetary-decision rules on existing outputs:
+- GPT's own label (tier 2);
+- Jev's argmax;
+- a threshold on Jev's p2, set so that its monetary rate equals the GPT model's on the same texts (matched volume);
+- the same threshold rule with p2 averaged over the six option orders;
+- a majority vote over the six orders.
+
+For the mitigation arms, M2 uses a majority vote over the three styles or a volume-matched threshold on the averaged p2. For each rule we report the monetary rate, the probability that two versions of a complaint receive different monetary decisions, group gaps in percentage points, and the monetary-rate span between `strengthen` and `weaken` edits. Differences between rules use a paired complaint bootstrap.
+
+### 3.10 Fact-fidelity audit and same-day baseline (pre-registration 5)
+**Auditors.** Two LLMs from outside the audited systems (Claude Opus 5.5 and GPT-5.2) compared each original with its rewrite, without seeing any decision. Each listed every factual difference (amount, date, chronology, responsibility, negation, certainty, requested relief, event or entity), marked whether it was material (could reasonably change the remedy), and gave an overall verdict. An exact code check compared dollar amounts and years.
+
+**Sample** (GPT-4o-mini bank):
+- all 36 guises of 40 complaints (20 with unanimous and 20 with non-unanimous GPT-4o-mini monetary decisions; weighted to the population);
+- 150 standardised texts, stratified by whether GPT-4o-mini's tier changed under M1;
+- 100 positive-control edits, used to test whether the auditors detect real fact changes (an auditor counts as valid if it flags at least 80% of them).
+
+A guise is *verified* if no valid auditor rates it materially changed and the dollar amounts match. The key test (FA3) compares individual instability among verified guises with instability among all guises of the same complaints.
+
+**Same-day baseline.** For 100 random complaints, all 36 guises as written (M0) and standardised (M1) were decided again on the same day, interleaved and with a fresh cache, by GPT-4o-mini and by Jev. This measures drift since the original runs and re-estimates MH1 without it.
+
+All hypotheses, the sample, the prompts and the analysis were frozen before any analysis-set call. Appendix A gives the auditor prompt.
 
 ------------------------------------------------------------------------
 
@@ -470,6 +496,34 @@ Every lower bound lies well above the pre-registered threshold of 0.5. M2 loses 
 
   - **Mean shifts.** Standardised texts are rated as more formal (+0.38 on the \[0, 1\] scale) and less emotional (−0.14) than the guises.
 
+### 4.8 Fact fidelity and drift (pre-registration 5)
+
+**FA1 \[C\]: both auditors are valid.** They rated 99% (Claude Opus 5.5) and 98% (GPT-5.2) of the `strengthen` and `weaken` edits as materially changed, against a pre-registered bar of 80%.
+
+**FA2 \[C, estimation\]: how often persona guises change a fact.** Weighted to the population of complaints:
+- Claude Opus 5.5 flagged a material change in 3.3% of guises \[1.1, 6.6\];
+- GPT-5.2 flagged 11.7% \[6.2, 17.8\];
+- at least one auditor flagged 13.2% \[7.4, 20.0\];
+- both auditors flagged 1.8% \[0.4, 4.0\].
+
+Exact dollar amounts differed in 0.3% of guises and years in 1.0%. The flagged changes were mostly to amounts, certainty, responsibility, and events or entities. The auditors agreed on 86% of pairs (Cohen's κ = 0.46), so the rate of material change depends on the auditor. It lies somewhere between about 2% and 13% of guises, not zero. The rewrites therefore preserve the measured content attributes (H-A1), but not every individual fact.
+
+**FA3 \[C\], supported: instability is not explained by changed facts.** Among guises that neither auditor flagged and whose dollar amounts match (on average 30 of 36 per complaint), the probability that two guises receive different monetary decisions is:
+- 94% of its rate among all guises of the same complaints for GPT-4o-mini (4.7% vs 5.0%; ratio 95% CI \[0.82, 1.03\]);
+- 92% of its rate for Jev (3.0% vs 3.3%; \[0.55, 1.03\]).
+
+For tier MPAD and E\[tier\] MPAD the ratios are 1.00 and 0.99. Removing guises with possible fact changes leaves individual instability almost unchanged. FA4 (descriptive) points the same way: guises whose GPT-4o-mini monetary decision departs from the complaint's majority were only slightly more often flagged (22% vs 17%).
+
+**FA5 \[C, estimation\]: the standardising rewrites change facts less often.** At least one auditor flagged 6.5% \[2.4, 11.1\] of standardised texts as materially changed, and both auditors flagged 0.2% \[0.0, 0.7\].
+
+**DB1 \[C\]: no drift detected.** Fresh same-day GPT-4o-mini decisions matched the 19 October decisions on identical texts in 97.2% of cases (mean tier difference 0.000 \[−0.005, 0.005\]), and matched the 21 October M1 decisions in 97.6% of cases. Jev's fresh scores differed from the originals by a mean TV of 0.020, the same as its known re-scoring noise (0.021).
+
+**DB2 \[C\], not supported (imprecise).** On the 100 baseline complaints with all-fresh decisions, GPT-4o-mini's M0 − M1 reductions are:
+- education 0.004 \[−0.023, 0.032\];
+- SES 0.026 \[−0.004, 0.057\].
+
+Both intervals include zero, so the pre-registered robustness criterion is not met. Two things point to precision rather than drift as the reason. First, the original decisions on the same 100 complaints give similar, equally inconclusive estimates: 0.007 \[−0.020, 0.036\] and 0.023 \[−0.008, 0.056\]. Second, the M0 education gap in this subsample (0.018) is about half that in the full 500. Jev's reversal under M1 replicates with fresh scores (education −0.007; age −0.005).
+
 ------------------------------------------------------------------------
 
 ## 5. Discussion
@@ -536,6 +590,8 @@ No reduction in profiling was detected, and on the disparity measure D averaging
 
 - **No ground truth.** There is no known correct remedy for these complaints. Our claims concern sensitivity, disparity and arbitrariness, not accuracy: a system could be unbiased and consistently wrong.
 
+- **Imperfect fact preservation.** Depending on the auditor, 2–13% of persona guises contain a material fact change (§4.8). Our conclusions about instability hold among verified guises (FA3), but group-gap estimates include the flagged guises. The auditors agreed only moderately (κ = 0.46).
+
 - **Synthetic guises.** The persona styles were generated by LLMs following persona instructions. They are stylised representations of how groups write, not samples of real writers, and may exaggerate or miss real sociolinguistic variation. Effects on real complainants' own writing may differ in size. We did not study dialects, race, gender or English as a second language as manipulated factors.
 
 - **LLM-generated edits and standardisation.** The positive-control edits and the standardising rewrites were produced by GPT-4o-mini. The edits were fact-led but not exclusively factual (§4.6), and the standardiser partly transmitted persona vocabulary (§4.7).
@@ -544,7 +600,7 @@ No reduction in profiling was detected, and on the disparity measure D averaging
 
 - **One System One model, one version.** Jev 1.13.0 is not deterministic (mean TV 0.020 on re-scoring; 2.5% of argmax tiers flip). Results may not transfer to other probabilistic judgment models or later versions.
 
-- **Model drift.** M0 decisions come from the 19 October run; M1 and M2 were decided on 21 October with the same model name and settings. Unannounced provider updates would bias M0-versus-M1 comparisons. A same-day baseline (§4.8) measures this directly. M1 and M2 were decided on the same day, which reduces but does not eliminate exposure to temporal or batch effects.
+- **Model drift.** M0 decisions come from the 19 October run; M1 and M2 were decided on 21 October with the same model name and settings. Unannounced provider updates would bias M0-versus-M1 comparisons. A same-day baseline (§4.8) found no drift: fresh decisions on identical texts matched 97% of the originals. Its re-estimate of MH1 on 100 complaints was too imprecise to confirm the reduction (DB2). M1 and M2 were decided on the same day, which reduces but does not eliminate exposure to temporal or batch effects.
 
 - **Scope.** The study covers US consumer financial complaints in English, one remedy prompt and a coarse three-tier outcome. The mitigation was tested on only 500 complaints and a single rewrite bank.
 
