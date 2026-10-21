@@ -166,7 +166,7 @@ The mitigation targets the channel identified in §4.5: if persona-associated *d
 - **Fact sensitivity.** The `strengthen` and `weaken` texts of the first 200 complaints (§3.6) were standardised with the same three styles and decided. Retention is the fact span (strengthen − weaken) after standardisation divided by the span without it.
 - **Arbitrariness.** The per-complaint mean absolute pairwise difference (MPAD) in outcome across the 36 guises.
 - **Inference.** Complaint-block bootstrap, 2,000 resamples. Hypotheses MH1–MH5 were frozen with the code before any analysis-set text was standardised. The pipeline was first checked on five complaints outside the analysis set. The analysis was run once; no code changed after the freeze.
-- **Scale and cost.** 55,800 standardising rewrites, 55,800 GPT-4o-mini decisions and Jev scoring of 55,001 unique texts, for about US$29 in total. 799 standardised texts were word-for-word identical to another text and were scored once.
+- **Scale and cost.** 55,800 standardising rewrites, 55,800 GPT-4o-mini decisions and Jev scoring of 55,001 unique texts. 799 standardised texts were word-for-word identical to another text and were scored once.
 
 ---
 
@@ -327,7 +327,7 @@ We suggest five practices that generalise beyond complaint handling.
 5. **Identify the channel before mitigating.** The attribute decomposition predicted that standardising delivery would work, and it did. A mitigation aimed at content, or a generic "debiasing" instruction, would have targeted the wrong channel.
 
 ### 5.4 Style standardisation in practice
-Standardisation is cheap and, by our measures, faithful. One rewrite costs about US$0.0002 with gpt-4o-mini. Content attributes are preserved almost exactly, and sensitivity to remedy-relevant facts is kept within a few percent. A deployer can apply it without changing the decision model. It also composes with graded outputs, which address the variance that standardisation leaves.
+Standardisation is cheap and, by our measures, faithful. A standardising rewrite with gpt-4o-mini averaged about 390 input and 220 output tokens, one extra call of roughly the size of the remedy decision itself. Content attributes are preserved almost exactly, and sensitivity to remedy-relevant facts is kept within a few percent. A deployer can apply it without changing the decision model. It also composes with graded outputs, which address the variance that standardisation leaves.
 
 It has three caveats.
 - **The standardiser is itself a model that needs auditing.** It passed on part of the vocabulary cue (η² 0.32). For Jev, a single canonical style overshot and reversed the age and education gaps. A mitigation can create a new directional bias, so it must be audited with the same matched-guise design as the decision system.
