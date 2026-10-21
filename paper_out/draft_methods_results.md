@@ -365,4 +365,4 @@ It did not reduce profiling, and averaging probabilities was no better than voti
 
 **Pre-registration and disclosure.** Every confirmatory claim was pre-registered and tested once, and every deviation is disclosed in the analysis record (`prereg/README.md`).
 
-**Competing interests and positionality.** [AUTHOR TO COMPLETE: any relationship with TypeSafe, the provider of Jev, or with OpenAI; funding; researcher positionality statement.]
+**Competing interests.** The author declares no competing interests.
