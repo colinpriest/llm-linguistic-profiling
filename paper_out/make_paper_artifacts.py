@@ -176,7 +176,7 @@ def fig3(att):
     ax.set_yticks([0, 1], [labels["edu"], labels["ses"]])
     ax.set_ylim(1.62, -0.72)                      # inverted, with headroom for the small-segment labels
     ax.set_xlabel("Contribution to GPT-4o-mini's within-complaint tier gap (Gelbach decomposition, holdout)")
-    ax.set_title("GPT-4o-mini's education and SES gaps run mostly through delivery, not content", loc="left")
+    ax.set_title("GPT-4o-mini's education and SES gaps are associated mainly with delivery, not content", loc="left")
     ax.grid(axis="y", visible=False)
     ax.set_xlim(0, 0.05)
     from matplotlib.patches import Patch
@@ -205,7 +205,7 @@ def fig4(att):
     ax.set_yticks([0, 1], [r[0] for r in rows])
     ax.invert_yaxis()
     ax.set_xlabel("GPT-4o-mini college − high-school tier gap (complaint-demeaned), 95% CI")
-    ax.set_title(f"The education effect appears only where the style cue is recognisable (difference {a3['difference']:+.3f})", loc="left")
+    ax.set_title(f"The education gap is larger where the style cue is recognisable (difference {a3['difference']:+.3f})", loc="left")
     ax.grid(axis="y", visible=False)
     ax.set_xlim(-0.01, 0.1)
     save(fig, "F4_recognition_moderation")
