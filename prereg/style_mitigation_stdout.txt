@@ -1,0 +1,23 @@
+{
+  "MH1_profiling_removed_M1": {
+    "edu": true,
+    "ses": true
+  },
+  "MH1_supported": true,
+  "MH2_arbitrariness_M1_lt_M0": {
+    "gpt": false,
+    "jev": false
+  },
+  "MH2_supported": false,
+  "MH3_fact_retention": {
+    "gpt:M1": true,
+    "gpt:M2": true,
+    "jev:M1": true,
+    "jev:M2": true
+  },
+  "MH3_supported": true,
+  "MH5_M2_lt_M1": {
+    "gpt": true,
+    "jev": true
+  }
+}

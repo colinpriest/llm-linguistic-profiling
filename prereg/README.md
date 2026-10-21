@@ -23,6 +23,9 @@ Every confirmatory claim maps to a document and a script frozen in git **before*
 | 20 Oct 6:49 pm | 80f55dd | **Pre-registration 3** (`positive_controls.md`, `positive_controls.py`): fact-edit positive controls PC1–PC5 |
 | 20 Oct 7:15 pm | e3a8fef | Disclosed code-only fix (index join) before any result was produced |
 | 20 Oct 7:19 pm | 44bfa55 | Positive-control results: PC1, PC2 and PC4 supported (`positive_controls_results.json`) |
+| 21 Oct 11:15 am | d8ab9e0 | **Pre-registration 4** (`style_mitigation.md`, `style_mitigation.py`): style standardisation MH1–MH5 |
+| 21 Oct 11:16 am – 4:05 pm | — | Rewrites, GPT-4o-mini decisions and Jev scoring of the analysis set (about $29 of the approved $55) |
+| 21 Oct 4:22 pm | (this commit) | One-shot frozen mitigation analysis (`style_mitigation_results.json`): MH1, MH3, MH5 supported; MH2 not supported |
 
 ## Status of each claim
 | Claim | Status | File |
@@ -38,9 +41,14 @@ Every confirmatory claim maps to a document and a script frozen in git **before*
 | Attribute descriptives D1–D4 | descriptive | `attributes_descriptives.json` |
 | PC1, PC2, PC4 | confirmatory, supported | `positive_controls_results.json` |
 | PC3, PC5 | exploratory / descriptive | same |
+| MH1, MH3, MH5 | confirmatory, supported | `style_mitigation_results.json` |
+| MH2 | confirmatory, not supported | same |
+| MH4 | descriptive | same (`fidelity`) |
 
 ## Known limitations, disclosed
 - Bootstrap CIs for the noise-corrected variance-component metric D were biased upward in the pre-registered script. The corrected bootstrap changes no conclusion.
 - Jev 1.13 is not deterministic: rescoring the same text gives a mean TV of 0.020, and 2.5% of chosen tiers flip.
 - There is no ground truth for remedy correctness. Claims concern sensitivity and disparity, not accuracy.
 - GPT persona estimates exist only for exploratory-panel guises.
+- Style mitigation: 799 standardised texts were word-for-word duplicates of another text. Jev scored each unique text once, so `scores.csv` holds duplicate rows with identical values (56,540 rows for 55,800 texts). Per-cell means, and hence results, are unaffected.
+- Style mitigation: the decide step ran twice (53,457 then the remaining 2,343, the rest coming from the cache). The first attempt's usage file was overwritten, so its cost (about $8.7) is estimated from tokens per call.
