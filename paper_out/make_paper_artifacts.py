@@ -85,7 +85,7 @@ def fig1(sec):
     ax.set_xlabel("Mean total-variation distance between Jev remedy distributions")
     share = h["cross_bank"]["persona_specific_share"]
     ax.set_title(f"Jev only: how far the remedy distribution moves between versions of one complaint\n"
-                 f"(changing persona adds {100*share:.1f}% beyond paraphrase: arbitrariness ≫ profiling)", loc="left")
+                 f"(different-persona pairs are {100*share:.1f}% further apart than same-persona pairs)", loc="left")
     ax.set_xlim(0, 0.11)
     ax.grid(axis="y", visible=False)
     save(fig, "F1_variation_sources")
@@ -409,7 +409,7 @@ def fig8_t8(sm):
     a.set_yticks(range(len(gaps)), [g[1] for g in gaps])
     a.invert_yaxis()
     a.set_xlabel("Within-complaint gap (tier or E[tier]), 95% CI")
-    a.set_title("(a) Profiling: gaps by arm", loc="left")
+    a.set_title("(a) Persona gaps by arm", loc="left")
     a.grid(axis="y", visible=False)
     a.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=3, fontsize=7)
     for i, (sysn, lab) in enumerate((("gpt", "GPT-4o-mini (tier)"), ("jev", "Jev (E[tier])"))):
@@ -421,9 +421,10 @@ def fig8_t8(sm):
             rows.append({"outcome": f"MPAD {lab}", "arm": arm, "estimate": m["mpad"], "lo": m["ci95"][0], "hi": m["ci95"][1]})
     b.set_xticks([0, 1], ["GPT-4o-mini (tier)", "Jev (E[tier])"])
     b.set_ylabel("Mean abs. pairwise difference across 36 guises")
-    b.set_title("(b) Arbitrariness by arm", loc="left")
+    b.set_title("(b) Score-level instability (MPAD) by arm", loc="left")
     b.grid(axis="x", visible=False)
-    fig.suptitle("Style standardisation removes profiling, not arbitrariness (500 holdout complaints × 36 guises)",
+    fig.suptitle("Style standardisation reduces GPT-4o-mini's gaps, reverses two of Jev's, and lowers score-level\n"
+                 "instability only when three styles are averaged (500 holdout complaints × 36 guises)",
                  x=0.01, y=1.04, ha="left", fontsize=10)
     save(fig, "F8_style_standardisation")
     for k, v in sm["fact_sensitivity"].items():
