@@ -1,0 +1,13 @@
+system,contrast,gap_pp,lo,hi,AIR,cohen_h,within_1pp_AIR>0.8
+GPT-4o-mini,SES high − low,0.836,0.575,1.117,0.917,0.028,True
+GPT-4o-mini,College − high school,0.633,0.38,0.874,0.936,0.022,True
+GPT-4o-mini,Old − young,0.352,0.07,0.661,0.964,0.012,True
+Jev (matched to GPT-4o-mini),SES high − low,0.197,-0.086,0.475,0.98,0.007,True
+Jev (matched to GPT-4o-mini),College − high school,0.246,0.013,0.483,0.975,0.008,True
+Jev (matched to GPT-4o-mini),Old − young,0.309,0.018,0.6,0.969,0.01,True
+GPT-5-mini,SES high − low,0.056,-0.197,0.314,0.996,0.002,True
+GPT-5-mini,College − high school,0.057,-0.169,0.289,0.996,0.002,True
+GPT-5-mini,Old − young,0.22,0.015,0.437,0.983,0.007,True
+Jev (matched to GPT-5-mini),SES high − low,0.397,0.219,0.589,0.971,0.012,True
+Jev (matched to GPT-5-mini),College − high school,0.261,0.096,0.422,0.981,0.008,True
+Jev (matched to GPT-5-mini),Old − young,0.013,-0.165,0.204,0.999,0.0,True

@@ -1,4 +1,4 @@
-# Profiling or Arbitrariness? Auditing Style Sensitivity in Probabilistic Judgments of Consumer Complaints
+# Profiling at the Group Scale, Arbitrariness at the Individual Scale: How Writing Style Moves LLM Remedy Decisions
 
 *Draft, Methods and Results only (21 Oct 2026). Every number comes from committed result files; see `prereg/README.md` for the claim-to-commit map. Labels: **[C]** confirmatory (pre-registered, tested once on held-out data); **[S]** pre-registered secondary; **[PH]** post hoc; **[E]** exploratory. `[CITE]` marks references to add and verify.*
 
@@ -77,7 +77,7 @@ All three systems decided or scored the edits. Effects are paired edit-minus-ori
 
 ### 4.1 Single labels hide variation, but almost none of it is persona-specific
 - **Hidden variation [S].** On the holdout, Jev's argmax tier is identical across all 36 guises for 63% of complaints (GPT-4o-mini bank) and 74% (GPT-5-mini bank). Yet within those complaints the monetary probability still varies, by more than 0.10 in about a quarter of them.
-- **What drives it (Fig. 1).**
+- **What drives it (Fig. 1, Jev only).**
 
 | Comparison | Mean TV |
 |---|---|
@@ -88,7 +88,7 @@ All three systems decided or scored the edits. Effects are paired edit-minus-ori
 
 - **H1 [C], supported.** The persona-specific share is 1.1% (95% CI 0.7–1.5%), far below the pre-registered 5% bound. About 99% of the style-induced variation in Jev's distributions is arbitrariness (inference noise, option order, paraphrase), not profiling.
 
-### 4.2 Systematic persona effects are real but immaterial
+### 4.2 Two scales: group profiling is real but immaterial; individual arbitrariness is material
 - **H2 [C]: 9 of 12 directional contrasts supported.** Older, college-educated and higher-SES styles receive slightly more remedy. On E[tier], all six contrasts hold in both banks; for example, in the GPT-4o-mini bank:
   - old − young: +0.014 tier [0.010, 0.019];
   - college − high school: +0.006 [0.003, 0.009];
@@ -96,10 +96,10 @@ All three systems decided or scored the edits. Effects are paired edit-minus-ori
 
   On the argmax tier, 3 of 6 hold. Geography shows no effect.
 - **Materiality [PH].**
-  - In monetary-rate units (Fig. 2), every gap for every system lies within ±1 percentage point.
+  - In monetary-rate units (Fig. 2a), every gap for every system lies within ±1 percentage point.
   - Every AIR is above the four-fifths bound by equivalence test, and every |h| is below 0.2.
   - The largest disparity is GPT-4o-mini's SES gap (pooled n = 3,000): +0.84 pp [0.56, 1.11], AIR 0.917, h = 0.028. It is the only gap that cannot be bounded below 1 pp, and the only one that fails a stricter AIR > 0.90 bound.
-- **Individual arbitrariness [PH].** It is far larger (Fig. 6). The probability that two style versions of the same complaint receive different monetary decisions is:
+- **Individual arbitrariness [PH].** It is far larger (Fig. 2b): 5–29× the largest group gap of the same system. The probability that two style versions of the same complaint receive different monetary decisions is:
   - GPT-4o-mini: 4.1%;
   - GPT-5-mini: 6.3%;
   - Jev: 2.8–3.6%.

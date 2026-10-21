@@ -84,7 +84,8 @@ def fig1(sec):
     ax.set_yticks(y, [r[0] for r in rows])
     ax.set_xlabel("Mean total-variation distance between Jev remedy distributions")
     share = h["cross_bank"]["persona_specific_share"]
-    ax.set_title(f"Persona adds {100*share:.1f}% to paraphrase variation: arbitrariness, not profiling", loc="left")
+    ax.set_title(f"Jev only: how far the remedy distribution moves between versions of one complaint\n"
+                 f"(changing persona adds {100*share:.1f}% beyond paraphrase: arbitrariness ≫ profiling)", loc="left")
     ax.set_xlim(0, 0.11)
     ax.grid(axis="y", visible=False)
     save(fig, "F1_variation_sources")
@@ -96,9 +97,9 @@ def fig1(sec):
 # F2: materiality - monetary-rate gaps with 95% CIs vs +/-1 pp (holdout)
 # ---------------------------------------------------------------------------
 
-def fig2(mat):
+def fig2(mat, ax=None, panel="holdout_n1000"):
     rows = []
-    m = mat["holdout_n1000"]
+    m = mat[panel]
     for bank, gname in (("gpt-4o-mini", "GPT-4o-mini"), ("gpt-5-mini", "GPT-5-mini")):
         for sysname, key in ((gname, "GPT"), (f"Jev (matched to {gname})", "Jev_matched")):
             for dim, lab in (("ses", "SES high − low"), ("edu", "College − high school"), ("age", "Old − young")):
@@ -107,7 +108,9 @@ def fig2(mat):
                              "hi": s["gap_pp_ci95"][1], "AIR": s["AIR"], "cohen_h": s["cohen_h"],
                              "within_1pp_AIR>0.8": s["non_material_AIR_gt_0.80"]})
     df = pd.DataFrame(rows)
-    fig, ax = plt.subplots(figsize=(6.2, 3.6))
+    standalone = ax is None
+    if standalone:
+        fig, ax = plt.subplots(figsize=(6.2, 3.6))
     systems = list(dict.fromkeys(df.system))
     colors = [BLUE, AQUA, ORANGE, AQUA]
     contrasts = list(dict.fromkeys(df.contrast))
@@ -123,14 +126,19 @@ def fig2(mat):
     ax.axvline(0, color=INK2, lw=0.8)
     ax.set_yticks([ci_ * (len(systems) + 1.2) + 1.5 for ci_ in range(len(contrasts))], contrasts)
     ax.invert_yaxis()
-    ax.set_xlabel("Within-complaint gap in monetary-remedy rate (percentage points), 95% CI")
-    ax.set_title("Every persona gap and its 95% CI lies inside ±1 pp (shaded band)", loc="left")
+    n_lab = "pooled, n = 3,000" if panel.startswith("pooled") else "holdout, n = 1,000"
+    ax.set_xlabel("Within-complaint gap in monetary-remedy rate\n" f"(percentage points, 95% CI; {n_lab})")
+    outside = df[(df.lo < -1) | (df.hi > 1)]
+    note = ("every 95% CI also lies inside" if outside.empty else
+            "only the CI for " + ", ".join(f"{r.system} ({r.contrast})" for r in outside.itertuples()) + " crosses it")
+    ax.set_title(f"(a) Group scale: profiling. Every persona gap is below 1 pp (shaded);\n{note}", loc="left")
     handles = [plt.Line2D([], [], color=colors[i], marker="o" if i % 2 == 0 else "s", lw=2, label=s,
                           mfc=SURFACE if i == 3 else colors[i], mec=colors[i]) for i, s in enumerate(systems)]
-    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2, fontsize=7)
+    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.24), ncol=2, fontsize=7)
     ax.grid(axis="y", visible=False)
-    save(fig, "F2_materiality_monetary_gaps")
-    write_table(df.round(3), "T2_materiality_holdout", "Monetary-remedy gaps, adverse impact ratios and Cohen's h (holdout, n = 1,000).")
+    if standalone:
+        save(fig, "F2_materiality_monetary_gaps")
+    write_table(df.round(3), f"T2_materiality_{panel}", f"Monetary-remedy gaps, adverse impact ratios and Cohen's h ({panel}).")
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +248,7 @@ def fig5(desc):
 # F6: individual arbitrariness vs largest group gap (pooled)
 # ---------------------------------------------------------------------------
 
-def fig6(mat):
+def fig6(mat, ax=None):
     m = mat["pooled_n3000"]
     rows = []
     for bank, gname in (("gpt-4o-mini", "GPT-4o-mini"), ("gpt-5-mini", "GPT-5-mini")):
@@ -251,7 +259,9 @@ def fig6(mat):
                          "complaints_not_unanimous_pct": 100 * s["arbitrariness"]["share_complaints_monetary_not_unanimous"],
                          "largest_group_gap_pp": maxgap})
     df = pd.DataFrame(rows)
-    fig, ax = plt.subplots(figsize=(6.2, 2.6))
+    standalone = ax is None
+    if standalone:
+        fig, ax = plt.subplots(figsize=(6.2, 2.6))
     y = np.arange(len(df))[::-1]
     ax.barh(y + 0.18, df.p_two_guises_disagree_pct, height=0.34, color=BLUE, label="Individual: two style versions get different monetary decisions (%)")
     ax.barh(y - 0.18, df.largest_group_gap_pp, height=0.34, color=ORANGE, label="Group: largest persona gap in monetary rate (pp)")
@@ -260,10 +270,12 @@ def fig6(mat):
         ax.text(g + 0.1, yi - 0.18, f"{g:.2f} pp", va="center", fontsize=7, color=INK)
     ax.set_yticks(y, df.system, fontsize=8)
     ax.set_xlabel("Percent / percentage points (pooled, n = 3,000)")
-    ax.set_title("Individual-level arbitrariness dwarfs group-level profiling", loc="left")
+    ratios = df.p_two_guises_disagree_pct / df.largest_group_gap_pp
+    ax.set_title(f"(b) Individual scale: arbitrariness is {ratios.min():.0f}–{ratios.max():.0f}× the largest group gap", loc="left")
     ax.legend(loc="upper center", bbox_to_anchor=(0.45, -0.22), ncol=1, fontsize=7)
     ax.grid(axis="y", visible=False)
-    save(fig, "F6_arbitrariness_vs_group_gap")
+    if standalone:
+        save(fig, "F6_arbitrariness_vs_group_gap")
     write_table(df.round(2), "T4_arbitrariness_vs_profiling", "Individual-level arbitrariness vs group-level gaps in monetary decisions (pooled, n = 3,000).")
 
 
@@ -312,6 +324,15 @@ def t5(desc, pilot):
                 "Largest attribute contributions to GPT-4o-mini's tier gaps (holdout; 95% block-bootstrap CIs).")
 
 
+def fig_two_scales(mat):
+    """F2: profiling (group scale) and arbitrariness (individual scale) on one figure."""
+    fig, (a, b) = plt.subplots(2, 1, figsize=(6.6, 7.4), gridspec_kw={"height_ratios": [3.4, 2.4], "hspace": 0.75})
+    fig2(mat, ax=a, panel="pooled_n3000")
+    fig2(mat, ax=plt.figure().gca(), panel="holdout_n1000")   # writes the holdout T2 table only
+    fig6(mat, ax=b)
+    save(fig, "F2_profiling_and_arbitrariness_two_scales")
+
+
 def fig7_t7(pc):
     systems = [("gpt_tier|gpt-4o-mini", "GPT-4o-mini (tier)"), ("gpt_tier|gpt-5-mini", "GPT-5-mini (tier)"),
                ("jev_e_tier", "Jev (E[tier])")]
@@ -355,11 +376,10 @@ def main():
     desc = load("attributes_descriptives.json")
     pilot = load("attributes_pilot_results.json")
     rep_tv, rep_flip = fig1(sec)
-    fig2(mat)
+    fig_two_scales(mat)
     fig3(att)
     fig4(att)
     fig5(desc)
-    fig6(mat)
     t1(hc, att, cbt, sec, pc)
     t5(desc, pilot)
     fig7_t7(pc)
