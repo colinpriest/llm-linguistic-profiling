@@ -433,7 +433,7 @@ The delivery contribution is roughly 5–8× the content contribution. Gelbach's
 
 ### 4.6 Positive controls: the systems respond to facts that matter
 
-- **PC1 and PC2 \[C\], supported (Fig. 7).**
+- **PC1 and PC2 \[C\], supported (Fig. 6).**
 
 | System        | `strengthen` effect       | Share moved up | `weaken` effect |
 |---------------|---------------------------|----------------|-----------------|
@@ -461,7 +461,7 @@ All confidence intervals for the `weaken` effect lie below zero.
 
 ### 4.7 Mitigation: style standardisation reduces selected average gaps, not individual instability
 
-Results are based on 500 holdout complaints × 36 guises (GPT-4o-mini bank); see Fig. 8 and Table 8. Gaps are within-complaint contrasts in tiers (GPT-4o-mini) or E\[tier\] (Jev), with 95% bootstrap CIs.
+Results are based on 500 holdout complaints × 36 guises (GPT-4o-mini bank); see Fig. 7 and Table 8. Gaps are within-complaint contrasts in tiers (GPT-4o-mini) or E\[tier\] (Jev), with 95% bootstrap CIs.
 
 - **MH1 \[C\], supported: one standard style reduces GPT-4o-mini's education and SES gaps.**
 
