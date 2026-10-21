@@ -1,6 +1,81 @@
 # Profiling at the Group Scale, Arbitrariness at the Individual Scale: How Writing Style Moves LLM Remedy Decisions
 
-*Draft, Methods and Results only (21 Oct 2026). Every number comes from committed result files; see `prereg/README.md` for the claim-to-commit map. Labels: **[C]** confirmatory (pre-registered, tested once on held-out data); **[S]** pre-registered secondary; **[PH]** post hoc; **[E]** exploratory. `[CITE]` marks references to add and verify.*
+*Draft: Abstract, Introduction, Related Work, Methods, Results (21 Oct 2026). Every number comes from committed result files; see `prereg/README.md` for the claim-to-commit map. Labels: **[C]** confirmatory (pre-registered, tested once on held-out data); **[S]** pre-registered secondary; **[PH]** post hoc; **[E]** exploratory. `[CITE]` marks references to add and verify.*
+
+## Abstract (draft; mitigation results pending)
+Large language models are increasingly used to triage and resolve consumer complaints, and the way complainants write varies systematically with age, education and socioeconomic status. We audit three remedy-decision systems on fact-preserving sociolinguistic rewrites of US consumer financial complaints:
+- two generative LLMs that return a single label (GPT-4o-mini, GPT-5-mini);
+- a probabilistic "System One" model that returns a distribution over remedies (Jev).
+
+Using pre-registered hypotheses tested once on held-out complaints, we separate two phenomena that standard single-label audits conflate.
+- **Profiling at the group scale.** Older, college-educated and higher-SES writing styles receive systematically more remedy. These effects are real and replicated, but every one is below one percentage point of the monetary-remedy rate.
+- **Arbitrariness at the individual scale.** The probability that two style versions of the same complaint receive different monetary decisions (2.8–6.3%) is 5–29× the largest group gap of the same system (0.22–0.84 pp). About 99% of the variation in the probabilistic model's output across versions is arbitrariness (rewording, option order, inference noise), not persona.
+
+Decomposing the profiling, it runs through persona-associated delivery (vocabulary, grammar, politeness) rather than content, and appears only where the style cue is recognisable. Positive controls show all three systems respond 49–387× more to remedy-relevant facts than to style. Graded probabilistic outputs cut arbitrariness by 70–80% but do not reduce profiling, and averaging probabilities is no better than majority voting. [Mitigation result: style standardisation, pending.] We argue that fairness audits of LLM decision systems should report profiling and arbitrariness separately, test materiality rather than significance alone, and target the delivery channel when mitigating.
+
+---
+
+## 1. Introduction
+LLMs are moving into consequential administrative decisions, including the triage and resolution of consumer complaints. Complainants differ in how they write, and those differences are not random: vocabulary, grammar, formality and politeness vary with age, education and socioeconomic status.
+
+A system that responds to *how* a complaint is written rather than *what* it says can disadvantage some groups without ever seeing a demographic attribute. Sociolinguistics has studied this kind of *linguistic profiling* since the matched-guise experiments of Lambert et al. [1960]. Recent work shows that LLMs exhibit covert dialect prejudice that standard alignment does not remove [Hofmann et al., 2024], and that LLM underwriting recommendations can differ across otherwise-identical applicants [Bowen et al., working paper].
+
+Most audits of such systems compare a single predicted label across demographic groups. This misses two things.
+
+*First*, a single label sensitive to wording, option order or sampling noise produces disagreements that look like disparities, but are better described as **arbitrariness**. It is well established that prediction variance can be large enough to make individual decisions effectively arbitrary, and that it confounds fairness measurement [Cooper et al., 2024; Marx et al., 2020]. Arbitrariness carries its own normative weight [Creel & Hellman, 2022]. An audit that does not separate it from **profiling** cannot say which problem it has found.
+
+*Second*, audits rarely ask whether a statistically detectable disparity is **material**, or *through what channel* it operates. Both matter for deciding whether, and how, to intervene.
+
+Probabilistic decision models make these questions sharper. When a system returns a distribution over remedies rather than a label:
+- the distribution may reveal differences that labels hide;
+- decision rules built on it (monetary thresholds, uncertainty-based referral) may create new disparities, as abstention has been shown to do [Jones et al., 2021];
+- graded outputs and averaging might offer mitigation.
+
+**We study all of this in one design.** Complaints from the CFPB public database are rewritten into 36 fact-preserving sociolinguistic guises (age × geography × education × SES) by two independent rewrite models. Remedies are then decided by two single-label LLMs and one probabilistic System One model. The design adds direct controls for each non-persona source of variation: repeated scoring, all six option orders, and independent same-persona paraphrases. All main hypotheses were pre-registered and tested once on fresh complaints.
+
+**Contributions.**
+1. **Profiling vs arbitrariness, quantified.** About 99% of the probabilistic model's style sensitivity is arbitrariness (inference noise, option order, paraphrase). The persona-specific share is 1.1% (95% CI 0.7–1.5%).
+2. **Two scales.** At the group scale, persona-associated profiling is real, replicated and directional, but immaterial: every monetary-rate gap is below 1 pp and passes the four-fifths rule by equivalence test. At the individual scale, arbitrariness is 5–29× larger than the largest group gap.
+3. **Mechanism.** GPT-4o-mini's education and SES gaps are 79–96% explained by interpretable attributes. Irrelevant *delivery* outweighs relevant *content* by roughly 5–8×, and the gaps appear only where the style cue is recognisable.
+4. **Positive controls.** All three systems respond 49–387× more to remedy-relevant fact changes than to persona style, so the small profiling effects are not a sign of insensitivity.
+5. **What probabilities do.** Graded outputs cut arbitrariness by 70–80% but do not reduce profiling. Probability averaging is no better than equal-budget hard voting, and uncertainty-based referral did not create a persona disparity.
+6. **Mitigation.** [Style standardisation results, pending.]
+7. **Practice.** A pre-registered, materiality-aware audit protocol with paraphrase, order and repeat controls, applicable beyond this task.
+
+---
+
+## 2. Related work
+
+**Linguistic profiling and matched guises.** The matched-guise technique holds content constant while varying how it is expressed, to elicit evaluations of speakers [Lambert et al., 1960]. Applied to LLMs, dialect-based matched-guise probing reveals covert prejudice, including harsher judgments for speakers of African American English that do not surface when race is mentioned explicitly [Hofmann et al., 2024]. In finance, audit studies of LLM loan underwriting report disparities for otherwise-identical applicants [Bowen et al., working paper]. A prior study, which we cite in the third person, applied matched guises to remedy decisions on consumer complaints with single-label LLMs [CITE]. We extend this line in three ways: from labels to probabilistic outputs; from detecting disparity to decomposing its mechanism; and from significance to materiality and mitigation.
+
+**Arbitrariness and predictive multiplicity.** Predictive multiplicity describes competing, equally accurate models that assign conflicting predictions to the same individual [Marx et al., 2020]. Variance across retrained models can make decisions effectively arbitrary, and accounting for it removes much of the apparent benefit of common fairness interventions [Cooper et al., 2024]. Arbitrariness carries a distinct moral weight, especially when one system is applied at scale [Creel & Hellman, 2022]. These works concern variance across *models*. We study *input-side* arbitrariness for a fixed deployed model (inference noise, option order and meaning-preserving rewording), and measure it on the same scale as group profiling.
+
+**Prompt and option sensitivity in LLMs.** LLM outputs are highly sensitive to meaning-preserving prompt formatting [Sclar et al., 2024] and to the order of answer options in multiple-choice questions [Pezeshkpour & Hruschka, 2024]. We treat these sensitivities as fairness-relevant arbitrariness in a decision task. We measure them for a probabilistic judgment model and test whether they interact with persona; for education and SES, they do not.
+
+**Probabilistic outputs, abstention and decision policies.** Abstaining on uncertain cases can magnify disparities between groups [Jones et al., 2021]. With access to a full remedy distribution, we evaluate decision policies, not only scores:
+- monetary-probability thresholds at matched budgets;
+- uncertainty-based referral;
+- graded outputs;
+- probability averaging versus equal-budget hard voting.
+
+**Materiality and decomposition.** Regulatory practice in the US screens for adverse impact with the four-fifths rule [29 CFR 1607.4(D)]. Equivalence testing provides positive evidence that an effect is smaller than a smallest effect of interest [Lakens, 2017]. We use both to judge whether detected disparities matter. To attribute persona gaps to interpretable attributes we use Gelbach's order-invariant decomposition [Gelbach, 2016].
+
+---
+
+## References (verification status, 21 Oct 2026)
+- Bowen, D. E. III, Price, S. M., Stein, L. C. D., & Yang, K. Racial disparities in LLM mortgage underwriting. **Working paper**; title varies by version (2024–2025). *Cite the exact version used.*
+- Cooper, A. F., Lee, K., Choksi, M. Z., Barocas, S., De Sa, C., Grimmelmann, J., Kleinberg, J., Sen, S., & Zhang, B. (2024). Arbitrariness and social prediction: The confounding role of variance in fair classification. *AAAI-24*, 38(20), 22004–22012. doi:10.1609/aaai.v38i20.30203. *Verified.*
+- Creel, K., & Hellman, D. (2022). The algorithmic Leviathan: Arbitrariness, fairness, and opportunity in algorithmic decision-making systems. *Canadian Journal of Philosophy*, 52(1), 26–43. *Verified; confirm the article DOI on the Cambridge page.*
+- Gelbach, J. B. (2016). When do covariates matter? And which ones, and how much? *Journal of Labor Economics*, 34(2), 509–543. doi:10.1086/683668. *Verified.*
+- Hofmann, V., Kalluri, P. R., Jurafsky, D., & King, S. (2024). AI generates covertly racist decisions about people based on their dialect. *Nature*, 633, 147–154. doi:10.1038/s41586-024-07856-5. *Verified.*
+- Jones, E., Sagawa, S., Koh, P. W., Kumar, A., & Liang, P. (2021). Selective classification can magnify disparities across groups. *ICLR 2021*. *Verified.*
+- Lakens, D. (2017). Equivalence tests: A practical primer for t tests, correlations, and meta-analyses. *Social Psychological and Personality Science*, 8(4), 355–362. doi:10.1177/1948550617697177. *Verified.*
+- Lambert, W. E., Hodgson, R. C., Gardner, R. C., & Fillenbaum, S. (1960). Evaluational reactions to spoken languages. *Journal of Abnormal and Social Psychology*, 60(1), 44–51. *Venue verified; DOI to confirm.*
+- Marx, C., Calmon, F., & Ustun, B. (2020). Predictive multiplicity in classification. *ICML 2020, PMLR* 119, 6765–6774. *Verified.*
+- Pezeshkpour, P., & Hruschka, E. (2024). Large language models sensitivity to the order of options in multiple-choice questions. *Findings of NAACL 2024* (arXiv:2308.11483). *Venue per authors' lab page; confirm the ACL Anthology entry.*
+- Sclar, M., Choi, Y., Tsvetkov, Y., & Suhr, A. (2024). Quantifying language models' sensitivity to spurious features in prompt design. *ICLR 2024*. *Verified.*
+- U.S. Code of Federal Regulations, 29 CFR §1607.4(D) (Uniform Guidelines on Employee Selection Procedures, four-fifths rule). *Verified.*
+- *Still to add:* CFPB Consumer Complaint Database; TypeSafe Jev documentation; VADER; Flesch–Kincaid; the prior matched-guise study (third person, anonymised).
 
 ---
 
