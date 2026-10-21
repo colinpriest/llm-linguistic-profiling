@@ -66,6 +66,8 @@ Respond with a JSON object:
 }}
 ~~~
 
+The base rates in this prompt (66/31/3% and 65.6/31.8/2.6%) are anchors derived from CFPB company-response categories, not adjudicated findings; see §3.1.
+
 ## A.2 Persona rewrite (both rewrite banks)
 
 **System**
@@ -103,6 +105,21 @@ CRITICAL RULES:
 3. Do NOT change the requested outcome or remedy
 4. ONLY change vocabulary, sentence structure, tone, and communication style
 ~~~
+
+**Values substituted into the template** (`{dim}_value` is the level name; `{dim}_description` is shown here). The 36 guises are all combinations of these levels.
+
+| Dimension | Level | Description |
+|---|---|---|
+| age | young | 25-35 years old |
+| age | old | 65+ years old |
+| geo | urban | Lives in a major city |
+| geo | suburban | Lives in a suburban area |
+| geo | rural | Lives in a rural area |
+| edu | high_school | High school education |
+| edu | college | College/university education |
+| ses | low | Lower income bracket |
+| ses | middle | Middle income bracket |
+| ses | high | Higher income bracket |
 
 ## A.3 Jev remedy question (six option orders)
 

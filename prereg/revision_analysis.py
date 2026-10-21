@@ -148,8 +148,24 @@ def paired_diff(X1: np.ndarray, X2: np.ndarray) -> Dict[str, Any]:
     return {"estimate": float(d.mean()), "ci95": [float(np.quantile(b, .025)), float(np.quantile(b, .975))]}
 
 
+def matched_rule(score: np.ndarray, rate: float, seed: int = SEED):
+    """Monetary iff the score is among the top round(rate * N) cells of the calibration panel.
+
+    Jev probabilities are reported to limited precision, so many cells tie at any cut-off; a plain quantile
+    threshold then overshoots the target volume (21 Oct version: 9.0% vs 8.6%). Ties are broken by a fixed,
+    seeded uniform jitter of 1e-9, which matches the volume exactly. The threshold (and jitter) is calibrated
+    once on the full panel and held fixed in bootstrap resamples and when scoring the fact edits.
+    Returns (decisions, threshold_value)."""
+    u = np.random.default_rng(seed).random(score.shape) * 1e-9
+    z = np.where(np.isnan(score), -np.inf, score + u)
+    flat = np.sort(z[np.isfinite(z)])[::-1]
+    k = int(round(rate * len(flat)))
+    t = flat[k - 1]
+    return (z >= t).astype(float), float(t)
+
+
 def matched_threshold(score: np.ndarray, rate: float) -> float:
-    return float(np.quantile(score[~np.isnan(score)], 1 - rate))
+    return matched_rule(score, rate)[1]
 
 
 def fact_span(mon: Dict[str, np.ndarray]) -> Dict[str, Any]:
@@ -178,21 +194,27 @@ def r2() -> Dict[str, Any]:
         rate = float(gm.mean())
         p = {o: P[f"{b}|{o}"][keep] for o in orders}
         p2_mean = np.mean([p[o][..., 2] for o in orders], 0)
-        t1 = matched_threshold(p[ca.PRIMARY_ORDER][..., 2], rate)
-        t2 = matched_threshold(p2_mean, rate)
+        x1, t1 = matched_rule(p[ca.PRIMARY_ORDER][..., 2], rate)
+        x2, t2 = matched_rule(p2_mean, rate)
         votes = np.sum([p[o].argmax(-1) == 2 for o in orders], 0)
         rules = {
             "gpt_label": gm,
             "jev_argmax_o012": (p[ca.PRIMARY_ORDER].argmax(-1) == 2).astype(float),
-            "jev_p2_threshold_matched": (p[ca.PRIMARY_ORDER][..., 2] >= t1).astype(float),
-            "jev_p2_mean6orders_threshold_matched": (p2_mean >= t2).astype(float),
+            "jev_p2_threshold_matched": x1,
+            "jev_p2_mean6orders_threshold_matched": x2,
             "jev_majority_6orders": (votes > len(orders) / 2).astype(float),
         }
         res = {k: summarise_rule(v, personas) for k, v in rules.items()}
         res["paired_diff_p_differ"] = {f"{a}_minus_{b_}": paired_diff(rules[a], rules[b_]) for a, b_ in (
             ("gpt_label", "jev_p2_threshold_matched"), ("jev_p2_threshold_matched", "jev_p2_mean6orders_threshold_matched"),
             ("jev_p2_threshold_matched", "jev_majority_6orders"), ("jev_argmax_o012", "jev_majority_6orders"))}
-        res["thresholds"] = {"p2_o012": t1, "p2_mean6": t2, "gpt_monetary_rate": rate}
+        res["thresholds"] = {"p2_o012": t1, "p2_mean6": t2, "gpt_monetary_rate": rate,
+                             "calibration": "full holdout panel of this bank; exact volume via seeded tie-break; fixed thereafter"}
+        # sensitivity: operating points 1 pp either side of the matched volume
+        res["sensitivity_volume_pm1pp"] = {f"{d:+.0f}pp": {
+            "rate": float(np.nanmean(xx)), "p_two_versions_differ": float(pairwise_disagree_rate(xx).mean()),
+            "p_differ_minus_gpt_label": paired_diff(gm, xx)["estimate"] * -1}
+            for d in (-1, 1) for xx in [matched_rule(p[ca.PRIMARY_ORDER][..., 2], rate + d / 100)[0]]}
         # fact responsiveness of each rule (positive-control edits; first 200 holdout complaints)
         fs = {}
         d = pcd[pcd.model == b].pivot_table(index="case_id", columns="edit", values="tier")
@@ -201,8 +223,8 @@ def r2() -> Dict[str, Any]:
         piv = {e: j[j.persona_label == e].set_index("case_id").sort_index() for e in ("strengthen", "weaken")}
         common = piv["strengthen"].index.intersection(piv["weaken"].index)
         for rule, fn in (("jev_argmax_o012", lambda x: (x["argmax_o012"] == 2)),
-                         ("jev_p2_threshold_matched", lambda x: x["p2_o012"] >= t1),
-                         ("jev_p2_mean6orders_threshold_matched", lambda x: x[[f"p2_{o}" for o in orders]].mean(1) >= t2),
+                         ("jev_p2_threshold_matched", lambda x: x["p2_o012"] + 1e-9 >= t1),
+                         ("jev_p2_mean6orders_threshold_matched", lambda x: x[[f"p2_{o}" for o in orders]].mean(1) + 1e-9 >= t2),
                          ("jev_majority_6orders", lambda x: sum((x[[f"p0_{o}", f"p1_{o}", f"p2_{o}"]].to_numpy().argmax(1) == 2) for o in orders) > len(orders) / 2)):
             fs[rule] = fact_span({e: np.asarray(fn(piv[e].loc[common]), float) for e in ("strengthen", "weaken")})
         res["fact_span_monetary"] = fs
@@ -241,8 +263,8 @@ def r3() -> Dict[str, Any]:
            "M2_majority": (np.sum([jarg[s] for s in styles], 0) >= 2).astype(float)}
     rate0 = float(np.nanmean(jmm["M0"]))
     p2avg = np.mean([jp2[s] for s in styles], 0)
-    t = matched_threshold(p2avg, rate0)
-    jmm["M2_mean_p2_threshold_matched_to_M0"] = (p2avg >= t).astype(float)
+    xm, t = matched_rule(p2avg, rate0)
+    jmm["M2_mean_p2_threshold_matched_to_M0"] = xm
 
     def rows_ok(X):
         return ~np.isnan(X).any(1)
@@ -280,9 +302,14 @@ def r3() -> Dict[str, Any]:
 
 
 def main():
+    out = Path("prereg/revision_analysis_results.json")
+    if "--skip-r1" in sys.argv and out.exists():      # R1 is unchanged and slow (bootstrap); reuse it
+        r1_res = json.loads(out.read_text(encoding="utf-8"))["R1_variance_components_jev"]
+    else:
+        r1_res = r1()
     res = {"label": "POST HOC (responding to the 21 Oct review); no new API calls",
-           "R1_variance_components_jev": r1(), "R2_remedy_rules_holdout": r2(), "R3_mitigation_remedy_rules": r3()}
-    Path("prereg/revision_analysis_results.json").write_text(json.dumps(res, indent=2, default=float), encoding="utf-8")
+           "R1_variance_components_jev": r1_res, "R2_remedy_rules_holdout": r2(), "R3_mitigation_remedy_rules": r3()}
+    out.write_text(json.dumps(res, indent=2, default=float), encoding="utf-8")
     v = res["R1_variance_components_jev"]
     for name in ("p_monetary", "e_tier"):
         print(name, {k: round(x["estimate"], 4) for k, x in v[name].items() if k.startswith("share")})

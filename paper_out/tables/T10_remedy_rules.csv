@@ -1,18 +1,18 @@
 bank,rule,monetary rate %,P(two versions differ) %,95% CI,edu gap pp,SES gap pp,age gap pp,fact span pp
 gpt-4o-mini,GPT label (tier 2),8.6,3.78,"[3.10, 4.44]",0.47,0.41,0.11,91.5
-gpt-4o-mini,Jev argmax (o012),6.6,2.53,"[1.95, 3.16]",0.02,0.1,0.23,72.5
-gpt-4o-mini,"Jev p2 threshold, matched volume",9.0,3.37,"[2.71, 4.06]",0.13,0.01,0.16,77.0
-gpt-4o-mini,"Jev p2 averaged over 6 orders, matched",8.6,3.23,"[2.57, 3.91]",0.04,-0.08,0.0,78.0
-gpt-4o-mini,Jev majority vote over 6 orders,7.0,2.53,"[1.96, 3.09]",-0.06,0.08,0.03,73.0
-gpt-5-mini,GPT label (tier 2),11.4,6.33,"[5.48, 7.21]",0.11,-0.04,0.36,71.5
-gpt-5-mini,Jev argmax (o012),7.9,1.74,"[1.30, 2.21]",0.12,0.1,0.07,72.5
-gpt-5-mini,"Jev p2 threshold, matched volume",11.4,2.62,"[2.04, 3.24]",0.05,0.22,0.21,77.0
-gpt-5-mini,"Jev p2 averaged over 6 orders, matched",11.5,2.41,"[1.87, 2.99]",0.22,0.22,0.33,77.5
-gpt-5-mini,Jev majority vote over 6 orders,8.6,2.05,"[1.56, 2.56]",0.12,0.22,0.02,73.0
-"mitigation (gpt, n = 500)",M0,7.7,4.13,"[3.11, 5.18]",0.63,0.8,-0.01,
-"mitigation (gpt, n = 500)",M1,7.7,4.43,"[3.45, 5.53]",0.14,0.42,0.52,
-"mitigation (gpt, n = 500)",M2_majority,7.2,3.65,"[2.72, 4.75]",0.21,0.52,0.43,
-"mitigation (jev, n = 500)",M0,6.2,2.28,"[1.52, 3.08]",0.19,0.23,0.23,
-"mitigation (jev, n = 500)",M1,6.5,2.34,"[1.62, 3.20]",-0.36,-0.02,-0.36,
-"mitigation (jev, n = 500)",M2_majority,6.0,1.86,"[1.24, 2.54]",-0.31,-0.1,-0.22,
-"mitigation (jev, n = 500)",M2_mean_p2_threshold_matched_to_M0,6.2,2.07,"[1.33, 2.84]",-0.26,-0.47,-0.19,
+gpt-4o-mini,Jev argmax (o012),6.6,2.53,"[1.95, 3.12]",0.02,0.1,0.23,72.5
+gpt-4o-mini,"Jev p2 threshold, matched volume",8.6,3.32,"[2.66, 3.96]",0.21,0.08,0.12,77.0
+gpt-4o-mini,"Jev p2 averaged over 6 orders, matched",8.6,3.24,"[2.60, 3.92]",0.02,-0.06,-0.02,78.0
+gpt-4o-mini,Jev majority vote over 6 orders,7.0,2.53,"[1.95, 3.12]",-0.06,0.08,0.03,73.0
+gpt-5-mini,GPT label (tier 2),11.4,6.33,"[5.48, 7.30]",0.11,-0.04,0.36,71.5
+gpt-5-mini,Jev argmax (o012),7.9,1.74,"[1.32, 2.19]",0.12,0.1,0.07,72.5
+gpt-5-mini,"Jev p2 threshold, matched volume",11.4,2.62,"[2.04, 3.24]",0.04,0.21,0.2,77.0
+gpt-5-mini,"Jev p2 averaged over 6 orders, matched",11.4,2.38,"[1.87, 2.99]",0.21,0.22,0.33,77.5
+gpt-5-mini,Jev majority vote over 6 orders,8.6,2.05,"[1.56, 2.64]",0.12,0.22,0.02,73.0
+"mitigation (gpt, n = 500)",M0,7.7,4.13,"[3.24, 5.18]",0.63,0.8,-0.01,
+"mitigation (gpt, n = 500)",M1,7.7,4.43,"[3.49, 5.52]",0.14,0.42,0.52,
+"mitigation (gpt, n = 500)",M2_majority,7.2,3.65,"[2.75, 4.68]",0.21,0.52,0.43,
+"mitigation (jev, n = 500)",M0,6.2,2.28,"[1.54, 3.13]",0.19,0.23,0.23,
+"mitigation (jev, n = 500)",M1,6.5,2.34,"[1.64, 3.13]",-0.36,-0.02,-0.36,
+"mitigation (jev, n = 500)",M2_majority,6.0,1.86,"[1.24, 2.58]",-0.31,-0.1,-0.22,
+"mitigation (jev, n = 500)",M2_mean_p2_threshold_matched_to_M0,6.2,2.07,"[1.37, 2.81]",-0.26,-0.47,-0.19,

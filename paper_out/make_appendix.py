@@ -18,7 +18,7 @@ import jev_arms as jarms  # noqa: E402
 import jev_attributes as jattr  # noqa: E402
 import positive_controls as pc  # noqa: E402
 import style_mitigation as sm  # noqa: E402
-from src.prompts import (PERSONA_REWRITE_SYSTEM, PERSONA_REWRITE_USER, PROMPT_VERSIONS,  # noqa: E402
+from src.prompts import (DEMOGRAPHIC_DESCRIPTIONS, PERSONA_REWRITE_SYSTEM, PERSONA_REWRITE_USER, PROMPT_VERSIONS,  # noqa: E402
                          REMEDY_DECISION_SYSTEM, REMEDY_DECISION_USER)
 
 FENCE = "~~~"
@@ -34,8 +34,14 @@ def main() -> None:
              f"Prompt versions: `{json.dumps(PROMPT_VERSIONS)}`.\n",
              "## A.1 Remedy decision (GPT-4o-mini, GPT-5-mini)\n",
              block("System", REMEDY_DECISION_SYSTEM), block("User (the complaint is inserted at {narrative})", REMEDY_DECISION_USER),
+             "The base rates in this prompt (66/31/3% and 65.6/31.8/2.6%) are anchors derived from CFPB company-response "
+             "categories, not adjudicated findings; see §3.1.\n",
              "## A.2 Persona rewrite (both rewrite banks)\n",
              block("System", PERSONA_REWRITE_SYSTEM), block("User template", PERSONA_REWRITE_USER),
+             "**Values substituted into the template** (`{dim}_value` is the level name; `{dim}_description` is shown here). "
+             "The 36 guises are all combinations of these levels.\n",
+             "| Dimension | Level | Description |\n|---|---|---|\n" + "".join(
+                 f"| {dim} | {lvl} | {desc} |\n" for dim, m in DEMOGRAPHIC_DESCRIPTIONS.items() for lvl, desc in m.items()),
              "## A.3 Jev remedy question (six option orders)\n",
              block("Question definition, primary order o012 (JSON)", json.dumps(jarms.order_questions(["o012"], with_persona=False), indent=2)),
              "## A.4 Jev attribute questions (19 attributes)\n",

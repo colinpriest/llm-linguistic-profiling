@@ -6,22 +6,22 @@
 bank & rule & monetary rate \% & P(two versions differ) \% & 95\% CI & edu gap pp & SES gap pp & age gap pp & fact span pp \\
 \midrule
 gpt-4o-mini & GPT label (tier 2) & 8.600 & 3.780 & [3.10, 4.44] & 0.470 & 0.410 & 0.110 & 91.500 \\
-gpt-4o-mini & Jev argmax (o012) & 6.600 & 2.530 & [1.95, 3.16] & 0.020 & 0.100 & 0.230 & 72.500 \\
-gpt-4o-mini & Jev p2 threshold, matched volume & 9.000 & 3.370 & [2.71, 4.06] & 0.130 & 0.010 & 0.160 & 77.000 \\
-gpt-4o-mini & Jev p2 averaged over 6 orders, matched & 8.600 & 3.230 & [2.57, 3.91] & 0.040 & -0.080 & 0.000 & 78.000 \\
-gpt-4o-mini & Jev majority vote over 6 orders & 7.000 & 2.530 & [1.96, 3.09] & -0.060 & 0.080 & 0.030 & 73.000 \\
-gpt-5-mini & GPT label (tier 2) & 11.400 & 6.330 & [5.48, 7.21] & 0.110 & -0.040 & 0.360 & 71.500 \\
-gpt-5-mini & Jev argmax (o012) & 7.900 & 1.740 & [1.30, 2.21] & 0.120 & 0.100 & 0.070 & 72.500 \\
-gpt-5-mini & Jev p2 threshold, matched volume & 11.400 & 2.620 & [2.04, 3.24] & 0.050 & 0.220 & 0.210 & 77.000 \\
-gpt-5-mini & Jev p2 averaged over 6 orders, matched & 11.500 & 2.410 & [1.87, 2.99] & 0.220 & 0.220 & 0.330 & 77.500 \\
-gpt-5-mini & Jev majority vote over 6 orders & 8.600 & 2.050 & [1.56, 2.56] & 0.120 & 0.220 & 0.020 & 73.000 \\
-mitigation (gpt, n = 500) & M0 & 7.700 & 4.130 & [3.11, 5.18] & 0.630 & 0.800 & -0.010 & NaN \\
-mitigation (gpt, n = 500) & M1 & 7.700 & 4.430 & [3.45, 5.53] & 0.140 & 0.420 & 0.520 & NaN \\
-mitigation (gpt, n = 500) & M2\_majority & 7.200 & 3.650 & [2.72, 4.75] & 0.210 & 0.520 & 0.430 & NaN \\
-mitigation (jev, n = 500) & M0 & 6.200 & 2.280 & [1.52, 3.08] & 0.190 & 0.230 & 0.230 & NaN \\
-mitigation (jev, n = 500) & M1 & 6.500 & 2.340 & [1.62, 3.20] & -0.360 & -0.020 & -0.360 & NaN \\
-mitigation (jev, n = 500) & M2\_majority & 6.000 & 1.860 & [1.24, 2.54] & -0.310 & -0.100 & -0.220 & NaN \\
-mitigation (jev, n = 500) & M2\_mean\_p2\_threshold\_matched\_to\_M0 & 6.200 & 2.070 & [1.33, 2.84] & -0.260 & -0.470 & -0.190 & NaN \\
+gpt-4o-mini & Jev argmax (o012) & 6.600 & 2.530 & [1.95, 3.12] & 0.020 & 0.100 & 0.230 & 72.500 \\
+gpt-4o-mini & Jev p2 threshold, matched volume & 8.600 & 3.320 & [2.66, 3.96] & 0.210 & 0.080 & 0.120 & 77.000 \\
+gpt-4o-mini & Jev p2 averaged over 6 orders, matched & 8.600 & 3.240 & [2.60, 3.92] & 0.020 & -0.060 & -0.020 & 78.000 \\
+gpt-4o-mini & Jev majority vote over 6 orders & 7.000 & 2.530 & [1.95, 3.12] & -0.060 & 0.080 & 0.030 & 73.000 \\
+gpt-5-mini & GPT label (tier 2) & 11.400 & 6.330 & [5.48, 7.30] & 0.110 & -0.040 & 0.360 & 71.500 \\
+gpt-5-mini & Jev argmax (o012) & 7.900 & 1.740 & [1.32, 2.19] & 0.120 & 0.100 & 0.070 & 72.500 \\
+gpt-5-mini & Jev p2 threshold, matched volume & 11.400 & 2.620 & [2.04, 3.24] & 0.040 & 0.210 & 0.200 & 77.000 \\
+gpt-5-mini & Jev p2 averaged over 6 orders, matched & 11.400 & 2.380 & [1.87, 2.99] & 0.210 & 0.220 & 0.330 & 77.500 \\
+gpt-5-mini & Jev majority vote over 6 orders & 8.600 & 2.050 & [1.56, 2.64] & 0.120 & 0.220 & 0.020 & 73.000 \\
+mitigation (gpt, n = 500) & M0 & 7.700 & 4.130 & [3.24, 5.18] & 0.630 & 0.800 & -0.010 & NaN \\
+mitigation (gpt, n = 500) & M1 & 7.700 & 4.430 & [3.49, 5.52] & 0.140 & 0.420 & 0.520 & NaN \\
+mitigation (gpt, n = 500) & M2\_majority & 7.200 & 3.650 & [2.75, 4.68] & 0.210 & 0.520 & 0.430 & NaN \\
+mitigation (jev, n = 500) & M0 & 6.200 & 2.280 & [1.54, 3.13] & 0.190 & 0.230 & 0.230 & NaN \\
+mitigation (jev, n = 500) & M1 & 6.500 & 2.340 & [1.64, 3.13] & -0.360 & -0.020 & -0.360 & NaN \\
+mitigation (jev, n = 500) & M2\_majority & 6.000 & 1.860 & [1.24, 2.58] & -0.310 & -0.100 & -0.220 & NaN \\
+mitigation (jev, n = 500) & M2\_mean\_p2\_threshold\_matched\_to\_M0 & 6.200 & 2.070 & [1.37, 2.81] & -0.260 & -0.470 & -0.190 & NaN \\
 \bottomrule
 \end{tabular}
 \end{table}
