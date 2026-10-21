@@ -1,6 +1,6 @@
 # Same Facts, Different Remedy: Linguistic Profiling and Arbitrariness in LLM and System One Decisions
 
-*Draft: Abstract, Introduction, Related Work, Methods, Results, Discussion, Limitations, Ethics (21 Oct 2026). Every number comes from committed result files; see `prereg/README.md` for the claim-to-commit map. Labels: **[C]** confirmatory (pre-registered, tested once on held-out data); **[S]** pre-registered secondary; **[PH]** post hoc; **[E]** exploratory. `[CITE]` marks references to add and verify.*
+*Draft: Abstract, Introduction, Related Work, Methods, Results, Discussion, Limitations, Ethics, Conclusion (21 Oct 2026). Every number comes from committed result files; see `prereg/README.md` for the claim-to-commit map. Labels: **[C]** confirmatory (pre-registered, tested once on held-out data); **[S]** pre-registered secondary; **[PH]** post hoc; **[E]** exploratory. `[CITE]` marks references to add and verify.*
 
 ## Abstract (draft)
 Large language models are increasingly used to triage and resolve consumer complaints, and the way complainants write varies systematically with age, education and socioeconomic status. We audit three remedy-decision systems on fact-preserving sociolinguistic rewrites of US consumer financial complaints:
@@ -366,3 +366,12 @@ It did not reduce profiling, and averaging probabilities was no better than voti
 **Pre-registration and disclosure.** Every confirmatory claim was pre-registered and tested once, and every deviation is disclosed in the analysis record (`prereg/README.md`).
 
 **Competing interests.** The author declares no competing interests.
+
+**Funding.** This research received no external funding.
+
+---
+
+## 8. Conclusion
+When an LLM decides remedies from complainants' own words, writing style matters in two ways. At the group scale, older, college-educated and higher-SES styles receive slightly more remedy. That profiling is real and replicated, runs through how complaints are written rather than what they say, and in these systems is too small to fail an adverse-impact screen. At the individual scale, the same complaint worded differently receives a different monetary decision several times more often than any group gap would suggest. That arbitrariness is mostly not about persona at all.
+
+The two problems respond to different fixes. Rewriting complaints into a standard style removed GPT-4o-mini's education and SES profiling and kept its sensitivity to the facts, but left arbitrariness unchanged. Averaging, over standard styles or over a probability distribution, reduced arbitrariness but not profiling. Audits that report a single disparity figure cannot tell these problems apart, and mitigations evaluated on one can leave the other in place. We recommend that fairness audits of LLM decision systems control for arbitrariness directly, report it alongside profiling, judge both against materiality bounds, and confirm with positive controls that the system responds to the facts that should matter.
