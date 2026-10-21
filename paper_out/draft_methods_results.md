@@ -63,26 +63,31 @@ Probabilistic decision models make these questions sharper. When a system return
 ---
 
 ## References (verification status, 21 Oct 2026)
+- Consumer Financial Protection Bureau (2015). *Narrative Scrubbing Standard*. Office of Consumer Response. https://files.consumerfinance.gov/a/assets/201503_cfpb_Narrative-Scrubbing-Standard.pdf. *Verified.*
+- Consumer Financial Protection Bureau (2023). *Privacy Impact Assessment: Publication of Consumer Response Complaint Narratives* (2 June 2023); Consumer Complaint Database, https://www.consumerfinance.gov/data-research/consumer-complaints/. *Verified; add the data download date.*
 - Bowen, D. E. III, Price, S. M., Stein, L. C. D., & Yang, K. Racial disparities in LLM mortgage underwriting. **Working paper**; title varies by version (2024–2025). *Cite the exact version used.*
 - Cooper, A. F., Lee, K., Choksi, M. Z., Barocas, S., De Sa, C., Grimmelmann, J., Kleinberg, J., Sen, S., & Zhang, B. (2024). Arbitrariness and social prediction: The confounding role of variance in fair classification. *AAAI-24*, 38(20), 22004–22012. doi:10.1609/aaai.v38i20.30203. *Verified.*
 - Creel, K., & Hellman, D. (2022). The algorithmic Leviathan: Arbitrariness, fairness, and opportunity in algorithmic decision-making systems. *Canadian Journal of Philosophy*, 52(1), 26–43. *Verified; confirm the article DOI on the Cambridge page.*
+- Financial Conduct Authority (2021). *FG21/1: Guidance for firms on the fair treatment of vulnerable customers* (23 February 2021). *Verified.*
 - Gelbach, J. B. (2016). When do covariates matter? And which ones, and how much? *Journal of Labor Economics*, 34(2), 509–543. doi:10.1086/683668. *Verified.*
 - Hofmann, V., Kalluri, P. R., Jurafsky, D., & King, S. (2024). AI generates covertly racist decisions about people based on their dialect. *Nature*, 633, 147–154. doi:10.1038/s41586-024-07856-5. *Verified.*
+- Hutto, C. J., & Gilbert, E. (2014). VADER: A parsimonious rule-based model for sentiment analysis of social media text. *Proceedings of ICWSM*, 8(1), 216–225. doi:10.1609/icwsm.v8i1.14550. *Verified.*
 - Jones, E., Sagawa, S., Koh, P. W., Kumar, A., & Liang, P. (2021). Selective classification can magnify disparities across groups. *ICLR 2021*. *Verified.*
+- Kincaid, J. P., Fishburne, R. P., Rogers, R. L., & Chissom, B. S. (1975). *Derivation of new readability formulas (Automated Readability Index, Fog Count and Flesch Reading Ease formula) for Navy enlisted personnel*. Research Branch Report 8-75, Naval Technical Training Command. DTIC ADA006655. *Verified.*
 - Lakens, D. (2017). Equivalence tests: A practical primer for t tests, correlations, and meta-analyses. *Social Psychological and Personality Science*, 8(4), 355–362. doi:10.1177/1948550617697177. *Verified.*
 - Lambert, W. E., Hodgson, R. C., Gardner, R. C., & Fillenbaum, S. (1960). Evaluational reactions to spoken languages. *Journal of Abnormal and Social Psychology*, 60(1), 44–51. *Venue verified; DOI to confirm.*
 - Marx, C., Calmon, F., & Ustun, B. (2020). Predictive multiplicity in classification. *ICML 2020, PMLR* 119, 6765–6774. *Verified.*
 - Pezeshkpour, P., & Hruschka, E. (2024). Large language models sensitivity to the order of options in multiple-choice questions. *Findings of NAACL 2024* (arXiv:2308.11483). *Venue per authors' lab page; confirm the ACL Anthology entry.*
 - Sclar, M., Choi, Y., Tsvetkov, Y., & Suhr, A. (2024). Quantifying language models' sensitivity to spurious features in prompt design. *ICLR 2024*. *Verified.*
 - U.S. Code of Federal Regulations, 29 CFR §1607.4(D) (Uniform Guidelines on Employee Selection Procedures, four-fifths rule). *Verified.*
-- *Still to add:* CFPB Consumer Complaint Database; TypeSafe Jev documentation; VADER; Flesch–Kincaid; the prior matched-guise study (third person, anonymised).
+- *Still to add:* TypeSafe Jev 1.13.0 documentation (author to supply the URL); the prior matched-guise study (third person, anonymised).
 
 ---
 
 ## 3. Methods
 
 ### 3.1 Task and decision systems
-We study the assignment of remedies to US consumer financial complaints from the CFPB public complaint database [CITE]. There are three ordered tiers: 0 = no action, 1 = non-monetary action, 2 = monetary remedy. Two kinds of decision interface are compared, as each is typically deployed:
+We study the assignment of remedies to US consumer financial complaints from the CFPB public complaint database [CFPB, 2023]. There are three ordered tiers: 0 = no action, 1 = non-monetary action, 2 = monetary remedy. Two kinds of decision interface are compared, as each is typically deployed:
 
 - **Generative LLMs that return a single label.** GPT-4o-mini (temperature 0) and GPT-5-mini (default reasoning). Both use the remedy prompt and structured-output client of a prior matched-guise study [CITE, third person].
 - **A probabilistic "System One" model.** Jev 1.13.0 (TypeSafe), which returns a probability distribution over the three tiers for a multiple-choice question whose options carry the same tier definitions.
@@ -117,7 +122,7 @@ Cross-bank comparisons isolate persona-specific variation. The persona-specific 
 - **Materiality [PH].** Adverse impact ratios (AIR) and Cohen's h. Equivalence (TOST) is tested against AIR > 0.80, |h| < 0.20 and |gap| < 1 pp, alongside minimum-effect tests.
 
 ### 3.5 Interpretable attributes
-Jev also scored every guise on 19 attributes (3-level choice questions; expected score in [0, 1]), plus three objective measures (mean sentence length, Flesch–Kincaid grade, |VADER compound|) [CITE]. The attributes fall into three families, whose normative relevance to the remedy decision was fixed in advance:
+Jev also scored every guise on 19 attributes (3-level choice questions; expected score in [0, 1]), plus three objective measures (mean sentence length, Flesch–Kincaid grade, |VADER compound|) [Kincaid et al., 1975; Hutto & Gilbert, 2014]. The attributes fall into three families, whose normative relevance to the remedy decision was fixed in advance:
 
 | Family | Relevance | Attributes |
 |---|---|---|
@@ -125,7 +130,7 @@ Jev also scored every guise on 19 attributes (3-level choice questions; expected
 | Structure (how it is organised) | procedurally relevant only | coherence, chronology, argument quality, clarity of the request, concision |
 | Content (what is said) | relevant; should not change under fact-preserving rewrites | evidence cited, harm severity, alleged bank error, monetary demand, legal basis, prior attempts |
 
-**Decomposition.** Within-complaint persona gaps are decomposed into attribute and family contributions with Gelbach's order-invariant decomposition [CITE].
+**Decomposition.** Within-complaint persona gaps are decomposed into attribute and family contributions with Gelbach's order-invariant decomposition [Gelbach, 2016].
 
 **Recognition.** Moderation by recognisability uses Jev's probability of the intended persona level; a guise counts as "recognised" if that probability is ≥ 0.60.
 
@@ -326,7 +331,7 @@ Standardisation is cheap and, by our measures, faithful. One rewrite costs about
 It has three caveats.
 - **The standardiser is itself a model that needs auditing.** It passed on part of the vocabulary cue (η² 0.32). For Jev, a single canonical style overshot and reversed the age and education gaps. A mitigation can create a new directional bias, so it must be audited with the same matched-guise design as the decision system.
 - **Averaging buys arbitrariness reduction at a cost.** Three styles cost three times as much at inference, and the 18–19% reduction is modest next to the 70–80% from graded outputs (H3a). Where a probabilistic decider is available, graded outputs are the cheaper lever against arbitrariness; standardisation is the lever against profiling.
-- **Standardisation removes signals as well as noise.** It made complaints less emotional (−0.14) and more formal. For most remedy decisions that is the intent. But distress can signal consumer vulnerability, which some regulators require firms to recognise [CITE: verify, e.g. UK FCA FG21/1]. A standardised text should feed the remedy decision, not replace the original in the case record or in human review.
+- **Standardisation removes signals as well as noise.** It made complaints less emotional (−0.14) and more formal. For most remedy decisions that is the intent. But distress can signal consumer vulnerability, which some regulators expect firms to recognise [e.g. FCA, 2021]. A standardised text should feed the remedy decision, not replace the original in the case record or in human review.
 
 ### 5.5 Generative LLMs and System One models
 The three systems were practically equivalent in group disparity (§4.4), and all three responded strongly to facts (§4.6). The probabilistic interface still mattered:
@@ -353,7 +358,7 @@ It did not reduce profiling, and averaging probabilities was no better than voti
 
 ## 7. Ethical considerations and adverse impact
 
-**Data.** We use narratives from the CFPB public Consumer Complaint Database, which consumers consented to publish and which the CFPB scrubs of personal information before release [CITE]. No new data were collected from people, and no attempt was made to re-identify complainants. Rewritten guises and edits are synthetic.
+**Data.** We use narratives from the CFPB public Consumer Complaint Database, which consumers consented to publish and which the CFPB scrubs of personal information before release [CFPB, 2015; CFPB, 2023]. The CFPB states that scrubbing minimises, but does not eliminate, re-identification risk. No new data were collected from people, and no attempt was made to re-identify complainants. Rewritten guises and edits are synthetic.
 
 **Representing groups through stereotyped style.** Matched-guise designs necessarily write in the stereotyped style of a group. We use these texts as measurement instruments, not as portraits, and release them with that caveat. We recommend they not be used to train or prompt systems that infer demographics from writing.
 
