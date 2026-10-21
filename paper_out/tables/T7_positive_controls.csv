@@ -1,0 +1,4 @@
+system,strengthen_delta,strengthen_lo,strengthen_hi,share_up,weaken_delta,weaken_lo,weaken_hi,share_down,largest_persona_gap,ratio
+GPT-4o-mini (tier),1.165,1.08,1.255,0.885,-0.41,-0.49,-0.33,0.39,0.032,49.219
+GPT-5-mini (tier),0.885,0.78,0.995,0.685,-0.385,-0.465,-0.305,0.36,0.003,387.458
+Jev (E[tier]),0.763,0.702,0.822,0.98,-0.297,-0.337,-0.257,0.94,0.014,74.508

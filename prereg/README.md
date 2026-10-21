@@ -19,6 +19,10 @@ Every confirmatory claim maps to a document and a script frozen in git **before*
 | 20 Oct 1:13 pm | e847152 | **Amendment 2b** (`attributes_confirmatory.md`, `attributes_confirmatory.py`): H-A1–H-A5 |
 | 20 Oct 2:51 pm | f1dfdca | One-shot confirmatory attribute results (`attributes_holdout_confirmatory_results.json`) |
 | 20 Oct 4:03 pm | 1d78bcd | Secondary analyses (pre-registered as "reported") and H4 on a difference scale (`secondary_analysis.py`) |
+| 20 Oct 5:35 pm | c2ca667 | Attribute descriptives, paper figures F1–F6 and tables T1–T6 |
+| 20 Oct 6:49 pm | 80f55dd | **Pre-registration 3** (`positive_controls.md`, `positive_controls.py`): fact-edit positive controls PC1–PC5 |
+| 20 Oct 7:15 pm | e3a8fef | Disclosed code-only fix (index join) before any result was produced |
+| 20 Oct 7:19 pm | 44bfa55 | Positive-control results: PC1, PC2 and PC4 supported (`positive_controls_results.json`) |
 
 ## Status of each claim
 | Claim | Status | File |
@@ -32,6 +36,8 @@ Every confirmatory claim maps to a document and a script frozen in git **before*
 | H-A1–H-A5 | confirmatory, all supported | `attributes_holdout_confirmatory_results.json` |
 | Secondary S0–S4 | pre-registered as reported, not confirmatory | `secondary_results.json` |
 | Attribute descriptives D1–D4 | descriptive | `attributes_descriptives.json` |
+| PC1, PC2, PC4 | confirmatory, supported | `positive_controls_results.json` |
+| PC3, PC5 | exploratory / descriptive | same |
 
 ## Known limitations, disclosed
 - Bootstrap CIs for the noise-corrected variance-component metric D were biased upward in the pre-registered script. The corrected bootstrap changes no conclusion.

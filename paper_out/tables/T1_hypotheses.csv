@@ -11,3 +11,6 @@ H-A2,Delivery drives GPT-4o-mini edu/SES gaps,"edu 79%, SES 96% explained",Suppo
 H-A3,Effect only where cue is recognisable,"difference +0.045 [0.025, 0.063]",Supported
 H-A4,"Jev infers persona from delivery, not content",6/6 differences > 0,Supported
 H-A5,Jev remedy judgment driven by content,R² content 0.20 vs delivery 0.04,Supported
+PC1,Strengthening facts raises remedy (all systems),gpt-4o-mini +1.17; gpt-5-mini +0.89; jev_e_tier +0.76,Supported
+PC2,Weakening facts lowers remedy (all systems),gpt-4o-mini -0.41; gpt-5-mini -0.39; jev_e_tier -0.30,Supported
+PC4,Fact effect ≥ 5× largest persona gap,gpt-4o-mini 49×; gpt-5-mini 387×; jev_e_tier 75×,Supported

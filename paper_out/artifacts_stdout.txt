@@ -1,0 +1,5 @@
+D:\dev\LLM-linguistic-profiling\paper_out\make_paper_artifacts.py:119: UserWarning: marker is redundantly defined by the 'marker' keyword argument and the fmt string "o" (-> marker='o'). The keyword argument will take precedence.
+  ax.plot(r.gap_pp, y, "o", ms=6, color=colors[si], mec=SURFACE, mew=1.5,
+figures: ['F1_variation_sources.png', 'F2_materiality_monetary_gaps.png', 'F3_decomposition_delivery_structure_content.png', 'F4_recognition_moderation.png', 'F5_persona_effects_on_attributes.png', 'F6_arbitrariness_vs_group_gap.png']
+tables: ['F1_variation_sources.csv', 'F5_persona_effects_on_attributes.csv', 'T1_hypotheses.csv', 'T2_materiality_holdout.csv', 'T3_decomposition_holdout.csv', 'T4_arbitrariness_vs_profiling.csv', 'T5_attribute_certainty_reliability.csv', 'T6_top_attribute_contributions.csv']
+artifacts exit 0

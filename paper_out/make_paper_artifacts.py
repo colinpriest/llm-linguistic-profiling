@@ -271,7 +271,7 @@ def fig6(mat):
 # T1: hypothesis summary
 # ---------------------------------------------------------------------------
 
-def t1(hc, att, cbt, sec):
+def t1(hc, att, cbt, sec, pc):
     s0 = sec["holdout_n1000"]["S0_H4_difference_scale"]
     rows = [
         ("H1", "Persona-specific share of style variation < 5%", f"{100*hc['H1']['estimate']:.1f}% [{100*hc['H1']['ci95'][0]:.1f}, {100*hc['H1']['ci95'][1]:.1f}]", "Supported"),
@@ -286,6 +286,9 @@ def t1(hc, att, cbt, sec):
         ("H-A3", "Effect only where cue is recognisable", f"difference {att['H-A3']['difference']:+.3f} {np.round(att['H-A3']['difference_ci95'], 3).tolist()}", "Supported"),
         ("H-A4", "Jev infers persona from delivery, not content", "6/6 differences > 0", "Supported"),
         ("H-A5", "Jev remedy judgment driven by content", f"R² content {att['H-A5']['gpt-4o-mini']['r2_content']:.2f} vs delivery {att['H-A5']['gpt-4o-mini']['r2_delivery']:.2f}", "Supported"),
+        ("PC1", "Strengthening facts raises remedy (all systems)", "; ".join(f"{k.split('|')[-1]} {pc['deltas'][f'strengthen|{k}']['mean_delta']:+.2f}" for k in ("gpt_tier|gpt-4o-mini", "gpt_tier|gpt-5-mini", "jev_e_tier")), "Supported" if pc["PC1_supported"] else "Not supported"),
+        ("PC2", "Weakening facts lowers remedy (all systems)", "; ".join(f"{k.split('|')[-1]} {pc['deltas'][f'weaken|{k}']['mean_delta']:+.2f}" for k in ("gpt_tier|gpt-4o-mini", "gpt_tier|gpt-5-mini", "jev_e_tier")), "Supported" if pc["PC2_supported"] else "Not supported"),
+        ("PC4", "Fact effect ≥ 5× largest persona gap", "; ".join(f"{k.split('|')[-1]} {v['ratio']:.0f}×" for k, v in pc["PC4_fact_vs_style"].items()), "Supported" if pc["PC4_supported"] else "Not supported"),
     ]
     write_table(pd.DataFrame(rows, columns=["Hypothesis", "Claim", "Estimate [95% CI]", "Verdict"]),
                 "T1_hypotheses", "Pre-registered hypotheses and confirmatory results (holdout, n = 1,000).")
@@ -309,8 +312,42 @@ def t5(desc, pilot):
                 "Largest attribute contributions to GPT-4o-mini's tier gaps (holdout; 95% block-bootstrap CIs).")
 
 
+def fig7_t7(pc):
+    systems = [("gpt_tier|gpt-4o-mini", "GPT-4o-mini (tier)"), ("gpt_tier|gpt-5-mini", "GPT-5-mini (tier)"),
+               ("jev_e_tier", "Jev (E[tier])")]
+    fig, ax = plt.subplots(figsize=(6.2, 2.8))
+    rows = []
+    for i, (key, lab) in enumerate(systems):
+        s, w = pc["deltas"][f"strengthen|{key}"], pc["deltas"][f"weaken|{key}"]
+        g = pc["PC4_fact_vs_style"][key]
+        y = i * 1.0
+        for off, val, ci_, col, name in ((-0.25, s["mean_delta"], s["ci95"], BLUE, "strengthen"),
+                                         (0.0, w["mean_delta"], w["ci95"], ORANGE, "weaken"),
+                                         (0.25, g["largest_persona_gap"], None, GRAY, "largest persona gap")):
+            ax.barh(y + off, val, height=0.22, color=col, label=name if i == 0 else None)
+            if ci_:
+                ax.plot(ci_, [y + off, y + off], color=INK, lw=1)
+        ax.text(1.32, y, f"fact span {g['fact_span']:.2f} = {g['ratio']:.0f}× largest persona gap", va="center", fontsize=7, color=INK)
+        rows.append({"system": lab, "strengthen_delta": s["mean_delta"], "strengthen_lo": s["ci95"][0], "strengthen_hi": s["ci95"][1],
+                     "share_up": s["share_increased"], "weaken_delta": w["mean_delta"], "weaken_lo": w["ci95"][0],
+                     "weaken_hi": w["ci95"][1], "share_down": w["share_decreased"],
+                     "largest_persona_gap": g["largest_persona_gap"], "ratio": g["ratio"]})
+    ax.axvline(0, color=INK2, lw=0.8)
+    ax.set_yticks(range(len(systems)), [s[1] for s in systems])
+    ax.invert_yaxis()
+    ax.set_xlim(-0.6, 2.6)
+    ax.set_xlabel("Paired change in remedy (edit − original), 95% CI; persona gap from the full holdout")
+    ax.set_title("Positive controls: relevant facts move decisions 49–387× more than writing style", loc="left")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.24), ncol=3, fontsize=7)
+    ax.grid(axis="y", visible=False)
+    save(fig, "F7_positive_controls_fact_vs_style")
+    write_table(pd.DataFrame(rows).round(3), "T7_positive_controls",
+                "Positive controls: remedy change after fact edits vs the largest persona gap (200 holdout complaints).")
+
+
 def main():
     hc = load("holdout_confirmatory_results.json")
+    pc = load("positive_controls_results.json")
     mat = load("materiality_results.json")
     cbt = load("corrected_bootstrap_results.json")
     sec = load("secondary_results.json")
@@ -323,8 +360,9 @@ def main():
     fig4(att)
     fig5(desc)
     fig6(mat)
-    t1(hc, att, cbt, sec)
+    t1(hc, att, cbt, sec, pc)
     t5(desc, pilot)
+    fig7_t7(pc)
     (TAB / "repeat_noise.json").write_text(json.dumps({"mean_tv_rescore": rep_tv, "tier_flip_rate_rescore": rep_flip}, indent=2))
     print("figures:", sorted(p.name for p in FIG.glob("*.png")))
     print("tables:", sorted(p.name for p in TAB.glob("*.csv")))
