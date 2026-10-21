@@ -131,7 +131,7 @@ def fig2(mat, ax=None, panel="holdout_n1000"):
     outside = df[(df.lo < -1) | (df.hi > 1)]
     note = ("every 95% CI also lies inside" if outside.empty else
             "only the CI for " + ", ".join(f"{r.system} ({r.contrast})" for r in outside.itertuples()) + " crosses it")
-    ax.set_title(f"(a) Group scale: profiling. Every persona gap is below 1 pp (shaded);\n{note}", loc="left")
+    ax.set_title(f"(a) Group scale: net persona gaps in monetary-remedy rate. All below 1 pp (shaded);\n{note}", loc="left")
     handles = [plt.Line2D([], [], color=colors[i], marker="o" if i % 2 == 0 else "s", lw=2, label=s,
                           mfc=SURFACE if i == 3 else colors[i], mec=colors[i]) for i, s in enumerate(systems)]
     ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.24), ncol=2, fontsize=7)
@@ -250,8 +250,8 @@ def fig5(desc):
 # F6: individual arbitrariness vs largest group gap (pooled)
 # ---------------------------------------------------------------------------
 
-def fig6(mat, ax=None):
-    m = mat["pooled_n3000"]
+def fig6(mat, ax=None, panel="holdout_n1000"):
+    m = mat[panel]
     rows = []
     for bank, gname in (("gpt-4o-mini", "GPT-4o-mini"), ("gpt-5-mini", "GPT-5-mini")):
         for key, name in (("GPT", gname), ("Jev_matched", f"Jev (matched to {gname})")):
@@ -271,13 +271,15 @@ def fig6(mat, ax=None):
         ax.text(a + 0.1, yi + 0.18, f"{a:.1f}%", va="center", fontsize=7, color=INK)
         ax.text(g + 0.1, yi - 0.18, f"{g:.2f} pp", va="center", fontsize=7, color=INK)
     ax.set_yticks(y, df.system, fontsize=8)
-    ax.set_xlabel("Percent / percentage points (pooled, n = 3,000)")
-    ax.set_title("(b) Individual scale: arbitrariness vs the largest group gap", loc="left")
+    n_lab = "pooled, n = 3,000" if panel.startswith("pooled") else "holdout, n = 1,000"
+    ax.set_xlabel(f"Percent / percentage points ({n_lab})")
+    ax.set_title("(b) Individual scale: unsigned disagreement between two versions, beside the\n"
+                 "largest net group gap. The two measure different things", loc="left")
     ax.legend(loc="upper center", bbox_to_anchor=(0.45, -0.22), ncol=1, fontsize=7)
     ax.grid(axis="y", visible=False)
     if standalone:
         save(fig, "F6_arbitrariness_vs_group_gap")
-    write_table(df.round(2), "T4_arbitrariness_vs_profiling", "Individual-level arbitrariness vs group-level gaps in monetary decisions (pooled, n = 3,000).")
+    write_table(df.round(2), "T4_arbitrariness_vs_profiling", f"Individual-level disagreement and the largest group gap in monetary decisions ({n_lab}).")
 
 
 # ---------------------------------------------------------------------------
@@ -341,8 +343,8 @@ def t5(desc, pilot):
 def fig_two_scales(mat):
     """F2: profiling (group scale) and arbitrariness (individual scale) on one figure."""
     fig, (a, b) = plt.subplots(2, 1, figsize=(6.6, 7.4), gridspec_kw={"height_ratios": [3.4, 2.4], "hspace": 0.75})
-    fig2(mat, ax=a, panel="pooled_n3000")
-    fig2(mat, ax=plt.figure().gca(), panel="holdout_n1000")   # writes the holdout T2 table only
+    fig2(mat, ax=a, panel="holdout_n1000")
+    fig2(mat, ax=plt.figure().gca(), panel="pooled_n3000")    # writes the pooled T2 table only (post hoc, descriptive)
     fig6(mat, ax=b)
     save(fig, "F2_profiling_and_arbitrariness_two_scales")
 
