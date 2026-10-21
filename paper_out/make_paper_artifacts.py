@@ -270,8 +270,7 @@ def fig6(mat, ax=None):
         ax.text(g + 0.1, yi - 0.18, f"{g:.2f} pp", va="center", fontsize=7, color=INK)
     ax.set_yticks(y, df.system, fontsize=8)
     ax.set_xlabel("Percent / percentage points (pooled, n = 3,000)")
-    ratios = df.p_two_guises_disagree_pct / df.largest_group_gap_pp
-    ax.set_title(f"(b) Individual scale: arbitrariness is {ratios.min():.0f}–{ratios.max():.0f}× the largest group gap", loc="left")
+    ax.set_title("(b) Individual scale: arbitrariness vs the largest group gap", loc="left")
     ax.legend(loc="upper center", bbox_to_anchor=(0.45, -0.22), ncol=1, fontsize=7)
     ax.grid(axis="y", visible=False)
     if standalone:
