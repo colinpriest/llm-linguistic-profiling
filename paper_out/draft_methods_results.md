@@ -9,7 +9,7 @@ Large language models are increasingly used to triage and resolve consumer compl
 
 Using pre-registered hypotheses tested once on held-out complaints, we separate two phenomena that standard single-label audits conflate.
 - **Profiling at the group scale.** Older, college-educated and higher-SES writing styles receive systematically more remedy. These effects are real and replicated, but every one is below one percentage point of the monetary-remedy rate.
-- **Arbitrariness at the individual scale.** The probability that two style versions of the same complaint receive different monetary decisions (2.8–6.3%) is 5–29× the largest group gap of the same system (0.22–0.84 pp). About 99% of the variation in the probabilistic model's output across versions is arbitrariness (rewording, option order, inference noise), not persona.
+- **Arbitrariness at the individual scale.** The probability that two style versions of the same complaint receive different monetary decisions (2.8–6.3%) is far larger than the largest group gap of the same system (0.22–0.84 pp). About 99% of the variation in the probabilistic model's output across versions is arbitrariness (rewording, option order, inference noise), not persona.
 
 Decomposing the profiling, it runs through persona-associated delivery (vocabulary, grammar, politeness) rather than content, and appears only where the style cue is recognisable. Positive controls show all three systems respond 49–387× more to remedy-relevant facts than to style. Graded probabilistic outputs cut arbitrariness by 70–80% but do not reduce profiling, and averaging probabilities is no better than majority voting. [Mitigation result: style standardisation, pending.] We argue that fairness audits of LLM decision systems should report profiling and arbitrariness separately, test materiality rather than significance alone, and target the delivery channel when mitigating.
 
@@ -35,7 +35,7 @@ Probabilistic decision models make these questions sharper. When a system return
 
 **Contributions.**
 1. **Profiling vs arbitrariness, quantified.** About 99% of the probabilistic model's style sensitivity is arbitrariness (inference noise, option order, paraphrase). The persona-specific share is 1.1% (95% CI 0.7–1.5%).
-2. **Two scales.** At the group scale, persona-associated profiling is real, replicated and directional, but immaterial: every monetary-rate gap is below 1 pp and passes the four-fifths rule by equivalence test. At the individual scale, arbitrariness is 5–29× larger than the largest group gap.
+2. **Two scales.** At the group scale, persona-associated profiling is real, replicated and directional, but immaterial: every monetary-rate gap is below 1 pp and passes the four-fifths rule by equivalence test. At the individual scale, arbitrariness is far larger: two style versions of the same complaint receive different monetary decisions 2.8–6.3% of the time, against largest group gaps of 0.22–0.84 pp.
 3. **Mechanism.** GPT-4o-mini's education and SES gaps are 79–96% explained by interpretable attributes. Irrelevant *delivery* outweighs relevant *content* by roughly 5–8×, and the gaps appear only where the style cue is recognisable.
 4. **Positive controls.** All three systems respond 49–387× more to remedy-relevant fact changes than to persona style, so the small profiling effects are not a sign of insensitivity.
 5. **What probabilities do.** Graded outputs cut arbitrariness by 70–80% but do not reduce profiling. Probability averaging is no better than equal-budget hard voting, and uncertainty-based referral did not create a persona disparity.
@@ -174,7 +174,7 @@ All three systems decided or scored the edits. Effects are paired edit-minus-ori
   - In monetary-rate units (Fig. 2a), every gap for every system lies within ±1 percentage point.
   - Every AIR is above the four-fifths bound by equivalence test, and every |h| is below 0.2.
   - The largest disparity is GPT-4o-mini's SES gap (pooled n = 3,000): +0.84 pp [0.56, 1.11], AIR 0.917, h = 0.028. It is the only gap that cannot be bounded below 1 pp, and the only one that fails a stricter AIR > 0.90 bound.
-- **Individual arbitrariness [PH].** It is far larger (Fig. 2b): 5–29× the largest group gap of the same system. The probability that two style versions of the same complaint receive different monetary decisions is:
+- **Individual arbitrariness [PH].** It is far larger than the largest group gap of the same system (Fig. 2b). The probability that two style versions of the same complaint receive different monetary decisions is:
   - GPT-4o-mini: 4.1%;
   - GPT-5-mini: 6.3%;
   - Jev: 2.8–3.6%.
