@@ -24,7 +24,7 @@ Graded probabilistic outputs make scores smoother, but at matched monetary volum
 
 ## 1. Introduction
 
-Large language models (LLMs) are increasingly deployed in consequential administrative decisions, including the triage and resolution of consumer complaints. Complainants differ in how they write, and these differences are not random: vocabulary, grammar, formality and politeness vary with age, education and socioeconomic status.
+Large language models (LLMs) are increasingly deployed in consequential administrative decisions, including the triage and resolution of consumer complaints. Complainants differ in how they write, and these differences are not random: vocabulary, grammar, formality and politeness vary with age, education and socioeconomic status (SES).
 
 A system that responds to *how* a complaint is written rather than *what* it says can disadvantage particular groups without ever observing a demographic attribute. Sociolinguists have studied such *linguistic profiling* since the matched-guise experiments of Lambert et al. \[1960\]. Recent work shows that LLMs exhibit covert dialect prejudice that standard alignment does not remove \[Hofmann et al., 2024\], and that LLM underwriting recommendations can differ across otherwise-identical applicants \[Bowen et al., working paper\].
 
