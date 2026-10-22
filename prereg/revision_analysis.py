@@ -301,6 +301,47 @@ def r3() -> Dict[str, Any]:
     return out
 
 
+def r4() -> Dict[str, Any]:
+    """Group gaps among guises that passed the fact-fidelity screen vs all guises, on the 40 audited complaints
+    (GPT-4o-mini bank). Descriptive: weighted to the complaint population, complaint bootstrap."""
+    ps = pd.read_csv("holdout_out/fidelity_audit/pairs_scored.csv")
+    g = ps[ps.set == "guise"].rename(columns={"label": "persona_label"})
+    d0 = pd.read_csv("holdout_out/decisions_n1000.csv")
+    d0 = d0[d0.model == BANK].rename(columns={"variant": "persona_label"})[["case_id", "persona_label", "tier"]]
+    j0 = pd.read_csv("holdout_out/jev/scores.csv")
+    j0 = j0[(j0.source == "guise") & (j0.rewrite_model == BANK)].drop_duplicates(["case_id", "persona_label"])
+    j0 = j0.assign(e=j0.p1_o012 + 2 * j0.p2_o012)[["case_id", "persona_label", "e"]]
+    g = g.merge(d0, on=["case_id", "persona_label"], how="left").merge(j0, on=["case_id", "persona_label"], how="left")
+    g["gpt_mon"] = (g.tier == 2).astype(float)
+    cases = sorted(g.case_id.unique())
+    w = g.groupby("case_id").weight.first().reindex(cases).to_numpy()
+    personas = ca.PERSONAS
+    out: Dict[str, Any] = {"n_complaints": len(cases), "share_guises_screened": float(g.verified.mean()),
+                           "note": "descriptive; 40 complaints; gaps use the guises available in each complaint"}
+    for val in ("tier", "gpt_mon", "e"):
+        full = g.pivot_table(index="case_id", columns="persona_label", values=val).reindex(index=cases, columns=personas).to_numpy(float)
+        scr = g[g.verified == 1].pivot_table(index="case_id", columns="persona_label", values=val).reindex(index=cases, columns=personas).to_numpy(float)
+        res = {}
+        for dim, (hi, lo) in CONTR.items():
+            lv = np.array([lvl(p, dim) for p in personas])
+            with np.errstate(all="ignore"):
+                ca_ = np.nanmean(full[:, lv == hi], 1) - np.nanmean(full[:, lv == lo], 1)
+                cs_ = np.nanmean(scr[:, lv == hi], 1) - np.nanmean(scr[:, lv == lo], 1)
+            ok = ~np.isnan(ca_) & ~np.isnan(cs_)
+            A_, S_, W_ = ca_[ok], cs_[ok], w[ok]
+            est = lambda x, ww: float(np.sum(x * ww) / np.sum(ww))  # noqa: E731
+            bs = []
+            for _ in range(N_BOOT):
+                ix = rng.integers(0, len(A_), len(A_))
+                bs.append((est(A_[ix], W_[ix]), est(S_[ix], W_[ix]), est(A_[ix] - S_[ix], W_[ix])))
+            bs = np.array(bs)
+            q = lambda k: [float(np.quantile(bs[:, k], .025)), float(np.quantile(bs[:, k], .975))]  # noqa: E731
+            res[dim] = {"all": est(A_, W_), "all_ci95": q(0), "screened": est(S_, W_), "screened_ci95": q(1),
+                        "all_minus_screened": est(A_ - S_, W_), "diff_ci95": q(2), "n_complaints": int(ok.sum())}
+        out[val] = res
+    return out
+
+
 def main():
     out = Path("prereg/revision_analysis_results.json")
     if "--skip-r1" in sys.argv and out.exists():      # R1 is unchanged and slow (bootstrap); reuse it
@@ -308,7 +349,8 @@ def main():
     else:
         r1_res = r1()
     res = {"label": "POST HOC (responding to the 21 Oct review); no new API calls",
-           "R1_variance_components_jev": r1_res, "R2_remedy_rules_holdout": r2(), "R3_mitigation_remedy_rules": r3()}
+           "R1_variance_components_jev": r1_res, "R2_remedy_rules_holdout": r2(), "R3_mitigation_remedy_rules": r3(),
+           "R4_group_gaps_screened_guises": r4()}
     out.write_text(json.dumps(res, indent=2, default=float), encoding="utf-8")
     v = res["R1_variance_components_jev"]
     for name in ("p_monetary", "e_tier"):

@@ -56,8 +56,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="D:/tmp/anon_pkg")
     out = Path(ap.parse_args().out)
-    if out.exists():
-        shutil.rmtree(out)
+    if out.exists():                      # keep any .git (the staged repo's history); replace everything else
+        for child in out.iterdir():
+            if child.name == ".git":
+                continue
+            shutil.rmtree(child) if child.is_dir() else child.unlink()
     files = sorted({p for pat in INCLUDE for p in Path(".").glob(pat) if p.is_file() and p.name not in EXCLUDE_NAMES
                     and "__pycache__" not in p.parts})
     for f in files:

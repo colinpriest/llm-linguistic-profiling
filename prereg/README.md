@@ -30,7 +30,8 @@ Every confirmatory claim maps to a document and a script frozen in git **before*
 | 21 Oct 10:20–10:45 pm | — | Audit (1,690 pairs × 2 auditors, $20.75) and baseline (7,200 texts, $2.11) |
 | 21 Oct 10:30 pm | 8083067 | **Post hoc** review-response analyses (`revision_analysis.py`): variance components, remedy rules |
 | 21 Oct 10:46 pm | 098654a | One-shot frozen fidelity analysis (`fidelity_audit_results.json`): FA1, FA3 supported; DB2 not supported (imprecise; DB1 shows no drift) |
-| 22 Oct 8:05 am | (this commit) | **Post hoc** remedy rules re-run with exact volume matching (seeded tie-break; threshold fixed after calibration), after the second review noted 9.0% vs 8.6%. Conclusions unchanged |
+| 22 Oct 8:05 am | 29ddd6e | **Post hoc** remedy rules re-run with exact volume matching (seeded tie-break; threshold fixed after calibration), after the second review noted 9.0% vs 8.6%. Conclusions unchanged |
+| 22 Oct 4:40 pm | (this commit) | **Post hoc, descriptive** R4: group gaps among guises that passed the fidelity screen vs all guises (40 audited complaints); differences all near zero |
 
 ## Status of each claim
 | Claim | Status | File |
