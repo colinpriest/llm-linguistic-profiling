@@ -225,7 +225,7 @@ All three systems decided or scored the edited texts. Effects are computed as pa
 
 - **Resampling.** We use a complaint-cluster (block) bootstrap and within-complaint permutation tests, with Benjamini–Hochberg correction applied within the directional family.
 
-- **Pre-registration.** Five pre-registrations and two amendments were committed to version control before the data they test existed. The frozen documents, analysis scripts, result files and commit timestamps are in the anonymised repository \[anonymous URL to be inserted\]. Appendix B gives the chronology, and Appendix D the status of every registered hypothesis. They cover the main hypotheses (H1–H6), the attribute hypotheses (H-A1–H-A5), the positive controls (PC1–PC5), the style-standardisation mitigation (MH1–MH5), and the fact-fidelity audit and same-day baseline (FA1–FA6, DB1–DB2).
+- **Pre-registration.** Five pre-registrations and two amendments were committed to version control before the data they test existed. The frozen documents, analysis scripts, result files and commit timestamps are in the anonymised repository https://anonymous.4open.science/r/llm-jev-linguistic-profiling-6AC8/. Appendix B gives the chronology, and Appendix D the status of every registered hypothesis. They cover the main hypotheses (H1–H6), the attribute hypotheses (H-A1–H-A5), the positive controls (PC1–PC5), the style-standardisation mitigation (MH1–MH5), and the fact-fidelity audit and same-day baseline (FA1–FA6, DB1–DB2).
 
 - **Planned extension, not run.** Following a materiality review, and before any new data were generated, we did not execute a pre-registered extension of the holdout to 4,000 complaints for H6.
 
@@ -657,7 +657,7 @@ No reduction in profiling was detected, and no superiority of averaging over vot
 
 - **Gaming.** Knowing that delivery moves decisions, or which facts move them most, could help complainants to present their cases more effectively. This arguably narrows existing advantages, but it could also help firms tune systems towards outcomes that favour them while passing group-rate audits. Reporting arbitrariness alongside profiling makes the latter more difficult.
 
-**Pre-registration and disclosure.** Every confirmatory claim was pre-registered and tested once, and every deviation is disclosed in the analysis record (`prereg``/README.md`).
+**Pre-registration and disclosure.** Every confirmatory claim was pre-registered and tested once, and every deviation is disclosed in the analysis record (`prereg/README.md` in the anonymised repository).
 
 **Competing interests.** The author declares no competing interests.
 
@@ -676,7 +676,7 @@ The two problems respond differently to intervention. Rewriting complaints into 
 
 ## Appendix B. Pre-registration chronology and code changes
 
-Times are Australian Eastern Standard Time (AEST, UTC+10), taken from the commit timestamps in the anonymised repository \[anonymous URL to be inserted\]. The commit identifiers will be verifiable in the de-anonymised repository.
+Times are Australian Eastern Standard Time (AEST, UTC+10), taken from the commit timestamps in the anonymised repository https://anonymous.4open.science/r/llm-jev-linguistic-profiling-6AC8/. The commit identifiers will be verifiable in the de-anonymised repository.
 
 | Time (AEST) | Commit | Event |
 |---|---|---|

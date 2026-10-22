@@ -22,7 +22,7 @@ INCLUDE = [
     "paper_out/*.py", "paper_out/appendix_A_prompts.md",
     "paper_out/tables/*", "paper_out/figures/*.png", "paper_out/figures/*.pdf",
 ]
-EXCLUDE_NAMES = {"README.md", "make_anon_package.py"}            # prereg/README.md references internal branch names; replaced by README_ANON.md
+EXCLUDE_NAMES = {"make_anon_package.py"}            # prereg/README.md is included, with branch names and names redacted
 REDACT = [
     (re.compile(r"Colin( Priest)?", re.I), "the author"),
     (re.compile(r"colinpriest", re.I), "anonymous"),
@@ -44,8 +44,9 @@ This package accompanies a submission under blind review. It contains:
   and Appendix A (verbatim prompts, generated from the code).
 
 Not included: the CFPB narratives (public; https://www.consumerfinance.gov/data-research/consumer-complaints/),
-rewritten texts and raw model outputs (available after review), API keys, and version-control history. The
-pre-registration chronology (commit times and hashes) will be released with the de-anonymised repository.
+rewritten texts and raw model outputs (available after review), API keys, and version-control history.
+`prereg/README.md` gives the pre-registration chronology (AEST timestamps and commit identifiers, verifiable in the
+de-anonymised repository) and the status of every claim.
 
 Environment: Python 3.10+, `pip install -r requirements.txt`; keys for OpenAI, TypeSafe and (for the fidelity audit)
 Anthropic are read from a `.env` file.
