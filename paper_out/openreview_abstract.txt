@@ -1,0 +1,15 @@
+TITLE
+Same Facts, Different Remedy: Linguistic Profiling and Arbitrariness in LLM and System One Decisions
+
+ABSTRACT
+Large language models are increasingly used to triage and resolve consumer complaints, and the way complainants write varies systematically with age, education and socioeconomic status (SES). We audit three remedy-decision systems on sociolinguistic rewrites of US consumer financial complaints, each instructed to preserve the facts: two generative LLMs that return a single label (GPT-4o-mini, GPT-5-mini) and a probabilistic "System One" model that returns a distribution over remedies (Jev). Using hypotheses pre-registered and tested once on 1,000 held-out complaints (72,000 rewrites), we separate two outcomes that single-label audits conflate. At the group scale, older, college-educated and higher-SES writing styles receive slightly more generous remedies, but every held-out gap is below 0.5 percentage points of the monetary-remedy rate. At the individual scale, two style versions of the same complaint receive different monetary decisions 2.6-6.3% of the time; in a variance-component model, persona components shared across rewrite models account for an estimated 1.6-1.7% of within-complaint variation. In an independent audit by two LLMs from outside the audited systems, individual auditors flagged a material fact change in 3.3% and 11.7% of rewrites, and instability was similar among rewrites that passed this screen. The group gaps are associated mainly with delivery (vocabulary, grammar, politeness) rather than content, and positive controls show that all three systems respond 49-387 times more strongly to remedy-relevant facts than to style. Graded probabilistic outputs make scores smoother but, at matched monetary volume, barely change how often actual remedy decisions disagree. In a pre-registered mitigation, rewriting each complaint into one standard style reduced GPT-4o-mini's education and SES gaps by 94% and 87% (point estimates) while retaining fact sensitivity, but it did not detectably stabilise individual decisions and it reversed two of the probabilistic model's gaps. We argue that audits should report average disparities and individual instability as separate outcomes, evaluate both on the decisions people actually receive, and audit any mitigation with the same design.
+
+KEYWORDS (if asked)
+algorithmic fairness; linguistic profiling; matched guise; arbitrariness; LLM auditing; consumer complaints; pre-registration
+
+FOCUS AREAS
+Primary: Evaluations and evaluation practices
+Secondary (optional): System development and deployment
+
+SUBMISSION TYPE
+Archival (cannot be changed after registration)

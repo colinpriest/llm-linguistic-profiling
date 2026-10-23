@@ -659,9 +659,9 @@ No reduction in profiling was detected, and no superiority of averaging over vot
 
 **Pre-registration and disclosure.** Every confirmatory claim was pre-registered and tested once, and every deviation is disclosed in the analysis record (`prereg/README.md` in the anonymised repository).
 
-**Competing interests.** The author declares no competing interests.
+**Generative AI usage statement.** \[AUTHOR TO CONFIRM MODEL VERSIONS\] Claude (Anthropic; Claude Opus 5.5 in Claude Code) was used to write and run the analysis code, draft and revise the text of all sections from the author's instructions, build the figures and tables, and check citations against primary sources. ChatGPT (OpenAI; \[version\]) was used to produce adversarial reviews of two drafts, which the author used to direct revisions. The author reviewed and takes responsibility for all code, analyses, text and references. The language models studied, and the LLM auditors used in the fact-fidelity audit (Claude Opus 5.5, GPT-5.2), are part of the method and are described in §3.
 
-**Funding.** This research received no external funding.
+<!-- Camera-ready only (omit from the anonymous submission, per the FAccT 2027 Author Guide): Competing interests: The author declares no competing interests. Funding: This research received no external funding. -->
 
 ------------------------------------------------------------------------
 
